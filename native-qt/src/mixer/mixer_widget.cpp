@@ -32,6 +32,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSaveFile>
+#include <QSignalBlocker>
 #include <QScrollArea>
 #include <QShortcut>
 #include <QSlider>
@@ -43,6 +44,7 @@
 #include <QUuid>
 #include <algorithm>
 #include <cmath>
+#include <climits>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -81,6 +83,10 @@ struct Source {
     std::atomic<bool> muted{false}, followsScene{true}, onProgram{false};
     std::atomic<bool> monitored{true};
     bool transparent = false;
+    int cameraWidth = Width, cameraHeight = Height;
+    double cameraFps = 30;
+    QJsonObject cameraControls;
+    unsigned cameraGeneration = 0;
     std::atomic<int64_t> lastFrame{0};
     std::atomic<unsigned> frames{0};
     std::unique_ptr<video::WindowCapture> window;
@@ -170,7 +176,7 @@ struct MixerWidget::Impl {
     QPointer<BrowserSource> talkback;
     QString room = "mix"+newId().remove('-').left(24), roomPassword = newId().remove('-');
     QLabel *sourceHealth = nullptr, *outputStatus = nullptr;
-    QPushButton *startOutput = nullptr, *recordOutput = nullptr;
+    QPushButton *startOutput = nullptr, *recordOutput = nullptr, *cameraSettingsButton = nullptr;
     QCheckBox *monitorEnable = nullptr;
     QComboBox *monitorDevice = nullptr;
     std::atomic<bool> monitoring{false};
@@ -370,6 +376,9 @@ struct MixerWidget::Impl {
         auto *editButtons = new QHBoxLayout;
         auto *edit = button("Edit source", "editSource", editButtons, q);
         auto *reconnect = button("Reconnect", "reconnectSource", editButtons, q);
+        cameraSettingsButton = button("Camera settings...", "cameraSettings", editButtons, q);
+        cameraSettingsButton->setEnabled(false);
+        QObject::connect(cameraSettingsButton, &QPushButton::clicked, q, [this] { openCameraSettings(); });
         sourceLayout->addLayout(editButtons);
         sourceHealth = new QLabel("Select a source to inspect its status.", q);
         sourceHealth->setObjectName("sourceHealth"); sourceHealth->setWordWrap(true); sourceLayout->addWidget(sourceHealth);
@@ -509,6 +518,8 @@ struct MixerWidget::Impl {
     }
     void syncInspector() {
         rebuilding = true; const auto *layer = selectedLayer();
+        const auto selected = source(selectedSource);
+        cameraSettingsButton->setEnabled(selected && selected->kind == "camera");
         for (auto *spin : {x, y, w, h}) spin->setEnabled(layer != nullptr);
         opacity->setEnabled(layer != nullptr);
         if (layer) {
@@ -539,6 +550,149 @@ struct MixerWidget::Impl {
             QObject::connect(listen, &QCheckBox::toggled, q, [this, item](bool value) { item->monitored = value; changed(); });
         }
         audioRows->addStretch();
+    }
+
+    void applyCameraControl(const std::shared_ptr<Source> &item, const QString &id, int value, bool automatic,
+                            std::function<void(const video::CameraControlResult&)> done = {}, bool persist = true) {
+        if (!item->camera) { if (done) done({false, {}, "Camera is not running."}); return; }
+        const auto generation = item->cameraGeneration;
+        auto future = std::make_shared<std::future<video::CameraControlResult>>(item->camera->setControl(id.toStdString(), value, automatic));
+        auto *poll = new QTimer(q);
+        std::weak_ptr<Source> weak = item;
+        QObject::connect(poll, &QTimer::timeout, q, [this, weak, generation, id, future, poll, done, persist] {
+            if (future->wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+            poll->stop(); poll->deleteLater();
+            auto result = future->get();
+            const auto item = weak.lock();
+            if (!item || item->cameraGeneration != generation) result = {false, {}, "Camera changed before the setting completed."};
+            if (result.success && persist) {
+                item->cameraControls[id] = QJsonObject{{"value", result.control.value}, {"auto", result.control.automatic}};
+                changed();
+            } else if (!result.success && item) message(item->name+": "+QString::fromStdString(result.error));
+            if (done) done(result);
+        });
+        poll->start(25);
+    }
+
+    void openCameraSettings() {
+        const auto item = source(selectedSource);
+        if (!item || item->kind != "camera") return;
+        if (!item->camera || !item->camera->isCapturing()) {
+            message(item->name+": Camera is not running. Use Reconnect or select another device in Edit source."); return;
+        }
+        QDialog dialog(q); dialog.setWindowTitle("Camera settings - "+item->name); dialog.resize(1100, 670);
+        QPointer<QDialog> guard(&dialog);
+        auto *root = new QVBoxLayout(&dialog);
+        auto *modeRow = new QHBoxLayout;
+        modeRow->addWidget(new QLabel("Capture mode", &dialog));
+        auto *mode = new QComboBox(&dialog); mode->setObjectName("cameraMode"); modeRow->addWidget(mode, 1);
+        auto *applyMode = button("Apply capture mode", "cameraApplyMode", modeRow, &dialog);
+        root->addLayout(modeRow);
+        auto *active = new QLabel(&dialog); active->setObjectName("cameraActiveMode"); root->addWidget(active);
+        auto *body = new QHBoxLayout;
+        auto *left = new QVBoxLayout;
+        auto *picture = new QLabel(&dialog); picture->setObjectName("cameraPreview"); picture->setFixedSize(400, 225);
+        picture->setAlignment(Qt::AlignCenter); picture->setStyleSheet("background:#080d12"); left->addWidget(picture);
+        auto *help = new QLabel("Settings change the physical camera immediately, including when it is on Program.\n\n"
+            "Capture mode restarts this camera briefly. Program output stays at 1280x720 / 30 fps.\n\n"
+            "Only controls supported by this camera are shown. Turn Auto off for manual adjustments. "
+            "Exposure can affect frame rate in low light.\n\n"
+            "Changes are saved with this source and reapplied on reconnect. Other apps may share these camera settings.", &dialog);
+        help->setWordWrap(true); help->setMaximumWidth(400); left->addWidget(help); left->addStretch(); body->addLayout(left);
+        auto *scroll = new QScrollArea(&dialog); scroll->setWidgetResizable(true); body->addWidget(scroll, 1); root->addLayout(body, 1);
+        auto *feedback = new QLabel("Adjust a setting to see the result in the live preview.", &dialog);
+        feedback->setObjectName("cameraSettingsStatus"); feedback->setWordWrap(true); root->addWidget(feedback);
+        QDialogButtonBox buttons(QDialogButtonBox::Close); root->addWidget(&buttons);
+        QObject::connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        std::vector<video::CameraFormat> formats;
+        auto formatText = [](const video::CameraFormat &format) {
+            return QString("%1x%2 @ %3 fps").arg(format.width).arg(format.height).arg(format.fps, 0, 'g', 5);
+        };
+        auto refreshModes = [&] {
+            const auto settings = item->camera->settings(); formats = settings.formats;
+            mode->clear(); int selected = 0;
+            for (size_t i = 0; i < formats.size(); ++i) {
+                mode->addItem(formatText(formats[i]));
+                if (formats[i].width == settings.activeFormat.width && formats[i].height == settings.activeFormat.height &&
+                    std::abs(formats[i].fps-settings.activeFormat.fps) < .001) selected = static_cast<int>(i);
+            }
+            mode->setCurrentIndex(selected);
+            active->setText("Active camera: "+formatText(settings.activeFormat));
+        };
+        auto rebuildControls = [&] {
+            auto *panel = new QWidget;
+            auto *rows = new QVBoxLayout(panel);
+            const auto settings = item->camera->settings();
+            for (const auto &control : settings.controls) {
+                const auto id = QString::fromStdString(control.id);
+                auto *label = new QLabel(QString::fromStdString(control.name), panel); rows->addWidget(label);
+                auto *row = new QHBoxLayout;
+                auto *slider = new QSlider(Qt::Horizontal, panel); slider->setObjectName("cameraSlider_"+id);
+                const int steps = static_cast<int>(std::min<int64_t>((static_cast<int64_t>(control.maximum)-control.minimum)/control.step, INT_MAX));
+                slider->setRange(0, steps); slider->setValue((control.value-control.minimum)/control.step);
+                slider->setTracking(false); row->addWidget(slider, 1);
+                auto *number = new QSpinBox(panel); number->setObjectName("cameraValue_"+id);
+                number->setRange(control.minimum, control.maximum); number->setSingleStep(control.step);
+                number->setValue(control.value); number->setKeyboardTracking(false); number->setMinimumWidth(78); row->addWidget(number);
+                auto *automatic = new QCheckBox("Auto", panel); automatic->setObjectName("cameraAuto_"+id);
+                automatic->setChecked(control.automatic); automatic->setEnabled(control.supportsAuto && control.supportsManual); row->addWidget(automatic);
+                auto *reset = button("Reset", "cameraReset_"+id, row, panel);
+                reset->setToolTip("Use the driver's default value, with automatic mode when supported.");
+                const auto range = QString("Range %1 to %2; step %3. Values are camera driver units.").arg(control.minimum).arg(control.maximum).arg(control.step);
+                number->setToolTip(range); slider->setToolTip(range); label->setToolTip(range);
+                if (id == "exposure") label->setToolTip("Exposure uses powers of two seconds: -7 is 1/128 second. Longer exposure can reduce frame rate.");
+                number->setEnabled(control.supportsManual && !control.automatic); slider->setEnabled(number->isEnabled());
+                rows->addLayout(row);
+                auto submit = [&, control, id, panel, slider, number, automatic, guard](int value, bool autoMode) {
+                    // Automatic values can fall between the driver's manual steps.
+                    if (!autoMode) {
+                        const auto offset = static_cast<int64_t>(std::clamp(value, control.minimum, control.maximum))-control.minimum;
+                        value = static_cast<int>(control.minimum+(offset/control.step)*control.step);
+                    }
+                    panel->setEnabled(false); applyMode->setEnabled(false);
+                    feedback->setText("Applying "+QString::fromStdString(control.name)+"...");
+                    applyCameraControl(item, id, value, autoMode, [&, control, panel, slider, number, automatic, guard](const auto &result) {
+                        if (!guard) return;
+                        panel->setEnabled(true); applyMode->setEnabled(true);
+                        const auto current = result.control.id.empty() ? control : result.control;
+                        const QSignalBlocker blockNumber(number), blockSlider(slider), blockAuto(automatic);
+                        number->setValue(current.value); slider->setValue((current.value-current.minimum)/current.step);
+                        automatic->setChecked(current.automatic);
+                        automatic->setEnabled(current.supportsAuto && current.supportsManual);
+                        number->setEnabled(current.supportsManual && !current.automatic); slider->setEnabled(number->isEnabled());
+                        feedback->setText(result.success ? QString("%1: %2%3").arg(QString::fromStdString(current.name)).arg(current.value).arg(current.automatic ? " (Auto)" : "")
+                            : QString::fromStdString(result.error));
+                    });
+                };
+                QObject::connect(slider, &QSlider::valueChanged, &dialog, [submit, control](int index) { submit(control.minimum+index*control.step, false); });
+                QObject::connect(number, &QSpinBox::valueChanged, &dialog, [submit](int value) { submit(value, false); });
+                QObject::connect(automatic, &QCheckBox::toggled, &dialog, [submit, number](bool on) { submit(number->value(), on); });
+                QObject::connect(reset, &QPushButton::clicked, &dialog, [submit, control] { submit(control.defaultValue, control.supportsAuto); });
+            }
+            if (settings.controls.empty()) rows->addWidget(new QLabel("This camera's driver exposes no adjustable image controls.", panel));
+            rows->addStretch(); scroll->setWidget(panel);
+        };
+        QObject::connect(applyMode, &QPushButton::clicked, &dialog, [&] {
+            const auto index = mode->currentIndex(); if (index < 0 || static_cast<size_t>(index) >= formats.size()) return;
+            const auto requested = formats[index];
+            const video::CameraFormat previous{item->cameraWidth, item->cameraHeight, item->cameraFps};
+            item->cameraWidth = requested.width; item->cameraHeight = requested.height; item->cameraFps = requested.fps;
+            stopSource(item); startSource(item);
+            if (!item->camera->isCapturing()) {
+                const auto failure = item->error;
+                item->cameraWidth = previous.width; item->cameraHeight = previous.height; item->cameraFps = previous.fps;
+                stopSource(item); startSource(item);
+                feedback->setText("Could not apply capture mode: "+failure+" Previous mode requested again.");
+            } else feedback->setText("Capture mode applied. Active camera mode is shown above.");
+            refreshModes(); rebuildControls(); changed();
+        });
+        QTimer previewTimer;
+        QObject::connect(&previewTimer, &QTimer::timeout, &dialog, [&] {
+            QImage image; { std::lock_guard lock(item->imageMutex); image = item->image; }
+            if (!image.isNull()) picture->setPixmap(QPixmap::fromImage(image).scaled(picture->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            if (!item->camera->isCapturing()) feedback->setText(QString::fromStdString(item->camera->lastError()));
+        });
+        refreshModes(); rebuildControls(); previewTimer.start(100); dialog.exec();
     }
 
     void addSourceDialog(bool editing = false) {
@@ -609,7 +763,11 @@ struct MixerWidget::Impl {
             if (existing) stopSource(item);
             item->kind = kind; item->transparent = transparent.isChecked();
             item->audioDelayMs = audioDelay.value();
-            item->locator = device.isVisible() ? device.currentData().toString() : value.text().trimmed();
+            const auto locator = device.isVisible() ? device.currentData().toString() : value.text().trimmed();
+            if (kind == "camera" && locator != item->locator) {
+                item->cameraControls = {}; item->cameraWidth = Width; item->cameraHeight = Height; item->cameraFps = 30;
+            }
+            item->locator = locator;
             item->name = name.text().trimmed();
             if (item->name.isEmpty()) item->name = device.isVisible() ? device.currentText() : type.currentText();
             if (kind == "color") item->color = QColor(item->locator);
@@ -668,7 +826,12 @@ struct MixerWidget::Impl {
             }
         } else if (item->kind == "camera") {
             item->camera = std::make_unique<video::CameraCapture>(); item->camera->setFrameCallback(frame);
-            if (!item->camera->startCapture(item->locator.toStdString(), Width, Height, 30)) item->error = QString::fromStdString(item->camera->lastError());
+            if (!item->camera->startCapture(item->locator.toStdString(), item->cameraWidth, item->cameraHeight, item->cameraFps))
+                item->error = QString::fromStdString(item->camera->lastError());
+            else for (auto it = item->cameraControls.begin(); it != item->cameraControls.end(); ++it) {
+                const auto setting = it.value().toObject();
+                applyCameraControl(item, it.key(), setting["value"].toInt(), setting["auto"].toBool(), {}, false);
+            }
         } else if (item->kind == "spout") {
             item->spout = std::make_unique<video::SpoutCapture>(); item->spout->setFrameCallback(frame);
             if (!item->spout->startCapture(item->locator.toStdString(), Width, Height, 30)) item->error = "Spout sender unavailable. Start the sender and add it again.";
@@ -716,6 +879,7 @@ struct MixerWidget::Impl {
     }
 
     void stopSource(const std::shared_ptr<Source> &item) {
+        ++item->cameraGeneration;
         if (item->window) item->window->stopCapture(); item->window.reset();
         if (item->camera) item->camera->stopCapture(); item->camera.reset();
         if (item->spout) item->spout->stopCapture(); item->spout.reset();
@@ -884,6 +1048,13 @@ struct MixerWidget::Impl {
                     if (item->kind == "microphone" || item->kind == "desktop") text = "Audio capture active";
                     else if (item->kind == "image" || item->kind == "title" || item->kind == "color") text = "Ready";
                     else text = QString("%1 fps received").arg(fps, 0, 'f', 1);
+                    if (item->camera) {
+                        if (!item->camera->isCapturing()) text = QString::fromStdString(item->camera->lastError());
+                        else {
+                            const auto format = item->camera->settings().activeFormat;
+                            text += QString(" / %1x%2 @ %3 fps").arg(format.width).arg(format.height).arg(format.fps, 0, 'g', 5);
+                        }
+                    }
                     if (item->browser) text += " / " + item->browser->captureDescription();
                 }
                 sourceHealth->setText(item->name+": "+text);
@@ -948,7 +1119,8 @@ struct MixerWidget::Impl {
         QJsonArray jsonSources, jsonScenes;
         for (const auto &item : sources) jsonSources.append(QJsonObject{{"id", item->id}, {"name", item->name}, {"kind", item->kind},
             {"locator", item->locator}, {"invite", item->invite}, {"color", item->color.name()}, {"gain", item->gain.load()},
-            {"muted", item->muted.load()}, {"followsScene", item->followsScene.load()}, {"monitored", item->monitored.load()}, {"transparent", item->transparent}, {"audioDelayMs", item->audioDelayMs.load()}});
+            {"muted", item->muted.load()}, {"followsScene", item->followsScene.load()}, {"monitored", item->monitored.load()}, {"transparent", item->transparent}, {"audioDelayMs", item->audioDelayMs.load()},
+            {"cameraWidth", item->cameraWidth}, {"cameraHeight", item->cameraHeight}, {"cameraFps", item->cameraFps}, {"cameraControls", item->cameraControls}});
         for (const auto &scene : scenes) {
             QJsonArray layers;
             for (const auto &layer : scene.layers) layers.append(QJsonObject{{"source", layer.source}, {"x", layer.rect.x()}, {"y", layer.rect.y()},
@@ -986,6 +1158,11 @@ struct MixerWidget::Impl {
             item->monitored = obj["monitored"].toBool(item->kind != "microphone"); item->transparent = obj["transparent"].toBool(item->kind == "chat");
             const bool browserAudio = item->kind == "browser" || item->kind == "guest" || item->kind == "wireless";
             item->audioDelayMs = std::clamp(obj["audioDelayMs"].toInt(browserAudio ? 60 : 0), 0, 500);
+            item->cameraWidth = std::clamp(obj["cameraWidth"].toInt(Width), 160, 7680);
+            item->cameraHeight = std::clamp(obj["cameraHeight"].toInt(Height), 120, 4320);
+            item->cameraFps = std::clamp(obj["cameraFps"].toDouble(30), 1.0, 240.0);
+            item->cameraControls = obj["cameraControls"].toObject();
+            if (item->cameraControls.size() > 32) { message("Too many saved camera controls."); return false; }
             incoming.push_back(item);
         }
         for (const auto &value : sceneData) {

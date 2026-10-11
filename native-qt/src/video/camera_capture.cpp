@@ -21,6 +21,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <dshow.h>
 #include <mfapi.h>
 #include <mferror.h>
 #include <mfidl.h>
@@ -152,6 +153,47 @@ struct NativeMediaTypeChoice {
     int64_t score = std::numeric_limits<int64_t>::max();
 };
 
+struct ControlDefinition { const char *id; const char *name; bool camera; long property; };
+constexpr ControlDefinition controlDefinitions[] = {
+    {"zoom", "Zoom", true, CameraControl_Zoom},
+    {"exposure", "Exposure", true, CameraControl_Exposure},
+    {"focus", "Focus", true, CameraControl_Focus},
+    {"brightness", "Brightness", false, VideoProcAmp_Brightness},
+    {"contrast", "Contrast", false, VideoProcAmp_Contrast},
+    {"white_balance", "White balance", false, VideoProcAmp_WhiteBalance},
+    {"saturation", "Saturation", false, VideoProcAmp_Saturation},
+    {"sharpness", "Sharpness", false, VideoProcAmp_Sharpness},
+    {"gain", "Gain", false, VideoProcAmp_Gain},
+    {"backlight", "Backlight compensation", false, VideoProcAmp_BacklightCompensation},
+    {"gamma", "Gamma", false, VideoProcAmp_Gamma},
+    {"hue", "Hue", false, VideoProcAmp_Hue},
+    {"pan", "Pan", true, CameraControl_Pan},
+    {"tilt", "Tilt", true, CameraControl_Tilt}
+};
+
+bool readControl(IMFMediaSource *source, const ControlDefinition &definition, CameraControl &control) {
+    long minimum = 0, maximum = 0, step = 1, defaultValue = 0, capabilities = 0, value = 0, flags = 0;
+    HRESULT range = E_NOINTERFACE, current = E_NOINTERFACE;
+    if (definition.camera) {
+        ComPtr<IAMCameraControl> camera;
+        if (SUCCEEDED(source->QueryInterface(IID_PPV_ARGS(&camera)))) {
+            range = camera->GetRange(definition.property, &minimum, &maximum, &step, &defaultValue, &capabilities);
+            current = camera->Get(definition.property, &value, &flags);
+        }
+    } else {
+        ComPtr<IAMVideoProcAmp> image;
+        if (SUCCEEDED(source->QueryInterface(IID_PPV_ARGS(&image)))) {
+            range = image->GetRange(definition.property, &minimum, &maximum, &step, &defaultValue, &capabilities);
+            current = image->Get(definition.property, &value, &flags);
+        }
+    }
+    if (FAILED(range) || FAILED(current) || maximum < minimum) return false;
+    // Both Windows interfaces use the same Auto=1 and Manual=2 flag values.
+    control = {definition.id, definition.name, minimum, maximum, std::max(1L, step), defaultValue, value,
+        (capabilities & 1) != 0, (capabilities & 2) != 0, (flags & 1) != 0};
+    return true;
+}
+
 struct SourceReaderSampleEvent {
     HRESULT status = E_FAIL;
     DWORD streamIndex = 0;
@@ -263,14 +305,14 @@ int64_t mediaTypeScore(UINT32 width,
                        UINT32 fpsDenominator,
                        int requestedWidth,
                        int requestedHeight,
-                       int requestedFps,
+                       double requestedFps,
                        const GUID &subtype) {
     const int safeWidth = std::max(1, requestedWidth);
     const int safeHeight = std::max(1, requestedHeight);
     const double actualFps = fpsDenominator > 0
         ? static_cast<double>(fpsNumerator) / static_cast<double>(fpsDenominator)
         : 0.0;
-    const double targetFps = static_cast<double>(std::max(1, requestedFps));
+    const double targetFps = std::max(1.0, requestedFps);
 
     const int64_t widthDelta = std::llabs(static_cast<int64_t>(width) - safeWidth);
     const int64_t heightDelta = std::llabs(static_cast<int64_t>(height) - safeHeight);
@@ -297,7 +339,7 @@ int64_t mediaTypeScore(UINT32 width,
 std::vector<NativeMediaTypeChoice> enumerateNativeTypes(IMFSourceReader *reader,
                                                          int requestedWidth,
                                                          int requestedHeight,
-                                                         int requestedFps) {
+                                                         double requestedFps) {
     std::vector<NativeMediaTypeChoice> choices;
     if (!reader) {
         return choices;
@@ -511,9 +553,10 @@ class CameraCapture::Impl {
     bool startCapture(const std::string &deviceId,
                       int requestedWidth,
                       int requestedHeight,
-                      int requestedFps,
+                      double requestedFps,
                       FrameCallback callback) {
         stopCapture();
+        { std::lock_guard lock(settingsMutex_); settings_ = {}; }
         if (deviceId.empty()) {
             setLastError("No camera was selected");
             return false;
@@ -561,6 +604,7 @@ class CameraCapture::Impl {
 
     void stopCapture() {
         capturing_.store(false, std::memory_order_release);
+        cancelControls();
 
         ComPtr<IMFSourceReader> reader;
         ComPtr<SourceReaderCallback> callback;
@@ -599,7 +643,72 @@ class CameraCapture::Impl {
         return lastError_;
     }
 
+    CameraSettings settings() const {
+        std::lock_guard lock(settingsMutex_);
+        return settings_;
+    }
+
+    std::future<CameraControlResult> setControl(const std::string &id, int value, bool automatic) {
+        ControlRequest request{id, value, automatic, {}};
+        auto future = request.result.get_future();
+        std::lock_guard lock(settingsMutex_);
+        if (!capturing_ || requests_.size() >= 64) {
+            request.result.set_value({false, {}, "Camera unavailable or still applying settings. Reconnect and try again."});
+        } else requests_.push_back(std::move(request));
+        return future;
+    }
+
   private:
+    struct ControlRequest {
+        std::string id;
+        int value;
+        bool automatic;
+        std::promise<CameraControlResult> result;
+    };
+
+    void cancelControls() {
+        std::lock_guard lock(settingsMutex_);
+        for (auto &request : requests_) request.result.set_value({false, {}, "Camera stopped before the setting was applied."});
+        requests_.clear();
+    }
+
+    void processControls(IMFMediaSource *source) {
+        std::deque<ControlRequest> requests;
+        { std::lock_guard lock(settingsMutex_); requests.swap(requests_); }
+        for (auto &request : requests) {
+            CameraControlResult result;
+            const auto definition = std::find_if(std::begin(controlDefinitions), std::end(controlDefinitions),
+                [&](const auto &entry) { return request.id == entry.id; });
+            if (!capturing_ || definition == std::end(controlDefinitions) || !readControl(source, *definition, result.control)) {
+                result.error = "This camera does not expose that setting. Reconnect if it was disconnected.";
+            } else if ((request.automatic && !result.control.supportsAuto) || (!request.automatic && !result.control.supportsManual)) {
+                result.error = "The camera does not support the selected automatic/manual mode.";
+            } else if (!request.automatic && (request.value < result.control.minimum || request.value > result.control.maximum ||
+                (static_cast<int64_t>(request.value) - result.control.minimum) % result.control.step != 0)) {
+                result.error = "Choose a value within the camera's range and step size.";
+            } else {
+                HRESULT hr = E_NOINTERFACE;
+                const long flags = request.automatic ? 1 : 2;
+                if (definition->camera) {
+                    ComPtr<IAMCameraControl> camera;
+                    if (SUCCEEDED(source->QueryInterface(IID_PPV_ARGS(&camera)))) hr = camera->Set(definition->property, request.value, flags);
+                } else {
+                    ComPtr<IAMVideoProcAmp> image;
+                    if (SUCCEEDED(source->QueryInterface(IID_PPV_ARGS(&image)))) hr = image->Set(definition->property, request.value, flags);
+                }
+                const bool readBack = readControl(source, *definition, result.control);
+                if (FAILED(hr)) result.error = "Camera rejected the setting (" + hresultText(hr) + ").";
+                else if (!readBack) result.error = "Camera accepted the setting but its current value could not be read.";
+                else result.success = true;
+                if (readBack) {
+                    std::lock_guard lock(settingsMutex_);
+                    for (auto &control : settings_.controls) if (control.id == request.id) control = result.control;
+                }
+            }
+            request.result.set_value(std::move(result));
+        }
+    }
+
     void setLastError(std::string error) {
         std::lock_guard<std::mutex> lock(errorMutex_);
         lastError_ = std::move(error);
@@ -695,7 +804,7 @@ class CameraCapture::Impl {
     void captureLoop(const std::string &deviceId,
                      int requestedWidth,
                      int requestedHeight,
-                     int requestedFps,
+                     double requestedFps,
                      FrameCallback callback,
                      std::promise<bool> initializedPromise) {
         bool initializationReported = false;
@@ -807,7 +916,7 @@ class CameraCapture::Impl {
             reader.Get(),
             std::max(1, requestedWidth),
             std::max(1, requestedHeight),
-            std::max(1, requestedFps));
+            std::max(1.0, requestedFps));
         if (choices.empty()) {
             source->Shutdown();
             failInitialization("The camera reported no supported video formats");
@@ -854,6 +963,25 @@ class CameraCapture::Impl {
             ? static_cast<double>(selectedChoice->fpsNumerator) /
                 static_cast<double>(selectedChoice->fpsDenominator)
             : 0.0;
+        CameraSettings settings;
+        settings.activeFormat = {static_cast<int>(activeWidth), static_cast<int>(activeHeight), activeFps};
+        for (const auto &choice : choices) {
+            const CameraFormat format{static_cast<int>(choice.width), static_cast<int>(choice.height),
+                static_cast<double>(choice.fpsNumerator) / choice.fpsDenominator};
+            if (std::none_of(settings.formats.begin(), settings.formats.end(), [&](const auto &entry) {
+                return entry.width == format.width && entry.height == format.height && std::abs(entry.fps-format.fps) < .001;
+            })) settings.formats.push_back(format);
+        }
+        std::sort(settings.formats.begin(), settings.formats.end(), [](const auto &a, const auto &b) {
+            if (a.width != b.width) return a.width > b.width;
+            if (a.height != b.height) return a.height > b.height;
+            return a.fps > b.fps;
+        });
+        for (const auto &definition : controlDefinitions) {
+            CameraControl control;
+            if (readControl(source.Get(), definition, control)) settings.controls.push_back(std::move(control));
+        }
+        { std::lock_guard lock(settingsMutex_); settings_ = std::move(settings); }
         spdlog::info(
             "[CameraCapture] Opening {}x{} at {:.2f} fps; waiting for first frame",
             activeWidth,
@@ -875,6 +1003,7 @@ class CameraCapture::Impl {
         }
 
         while (capturing_.load(std::memory_order_acquire)) {
+            processControls(source.Get());
             SourceReaderSampleEvent event;
             const SourceReaderWaitResult waitResult =
                 sampleCallback->waitForSample(event, std::chrono::milliseconds(200));
@@ -994,6 +1123,7 @@ class CameraCapture::Impl {
             reportInitialization(false);
         }
         capturing_.store(false, std::memory_order_release);
+        cancelControls();
         sampleCallback->cancel();
         reader->Flush(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
         source->Shutdown();
@@ -1014,6 +1144,9 @@ class CameraCapture::Impl {
     ComPtr<SourceReaderCallback> activeCallback_;
     mutable std::mutex errorMutex_;
     std::string lastError_;
+    mutable std::mutex settingsMutex_;
+    CameraSettings settings_;
+    std::deque<ControlRequest> requests_;
 };
 
 #else
@@ -1021,10 +1154,15 @@ class CameraCapture::Impl {
 class CameraCapture::Impl {
   public:
     std::vector<WindowInfo> enumerateCameras() { return {}; }
-    bool startCapture(const std::string &, int, int, int, FrameCallback) { return false; }
+    bool startCapture(const std::string &, int, int, double, FrameCallback) { return false; }
     void stopCapture() {}
     bool isCapturing() const { return false; }
     std::string lastError() const { return "Camera capture is only available on Windows"; }
+    CameraSettings settings() const { return {}; }
+    std::future<CameraControlResult> setControl(const std::string &, int, bool) {
+        std::promise<CameraControlResult> result; auto future = result.get_future();
+        result.set_value({false, {}, lastError()}); return future;
+    }
 };
 
 #endif
@@ -1040,7 +1178,7 @@ std::vector<WindowInfo> CameraCapture::getCameras() {
     return impl_->enumerateCameras();
 }
 
-bool CameraCapture::startCapture(const std::string &deviceId, int width, int height, int fps) {
+bool CameraCapture::startCapture(const std::string &deviceId, int width, int height, double fps) {
     return impl_->startCapture(deviceId, width, height, fps, frameCallback_);
 }
 
@@ -1054,6 +1192,11 @@ bool CameraCapture::isCapturing() const {
 
 std::string CameraCapture::lastError() const {
     return impl_->lastError();
+}
+
+CameraSettings CameraCapture::settings() const { return impl_->settings(); }
+std::future<CameraControlResult> CameraCapture::setControl(const std::string &id, int value, bool automatic) {
+    return impl_->setControl(id, value, automatic);
 }
 
 void CameraCapture::setFrameCallback(FrameCallback cb) {

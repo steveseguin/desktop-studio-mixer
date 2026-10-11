@@ -4,13 +4,13 @@ Unicode True
 !include "LogicLib.nsh"
 !include "x64.nsh"
 !ifndef VERSION
-!define VERSION "0.2.0"
+!define VERSION "0.3.0"
 !endif
 !ifndef BUILD_BIN_DIR
 !define BUILD_BIN_DIR "dist\video-mixer-portable"
 !endif
 !ifndef OUTFILE
-!define OUTFILE "dist\video-mixer-0.2.0-setup.exe"
+!define OUTFILE "dist\video-mixer-0.3.0-setup.exe"
 !endif
 Name "Video Mixer"
 OutFile "${OUTFILE}"
