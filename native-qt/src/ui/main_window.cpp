@@ -2287,8 +2287,9 @@ void MainWindow::setupUI() {
 
     auto *scrollArea = new QScrollArea(this);
     scrollArea->setObjectName("mainScrollArea");
+    scrollArea->setStyleSheet("QScrollArea { border:1px solid #50667b; background:#101b27; }");
     scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
+    scrollArea->setFrameShape(QFrame::StyledPanel);
     scrollArea->setWidget(content);
     setCentralWidget(scrollArea);
     resize(980, 720);
@@ -2395,6 +2396,17 @@ void MainWindow::applyDarkTheme() {
         QMainWindow, QWidget {
             background-color: %1;
             color: %2;
+        }
+        QAbstractScrollArea, QScrollArea {
+            background-color: #101b27;
+            border: 1px solid #50667b;
+            border-radius: 4px;
+        }
+        QScrollArea > QWidget > QWidget {
+            background-color: #101b27;
+        }
+        QScrollArea QLabel, QScrollArea QCheckBox {
+            background-color: transparent;
         }
         QLineEdit, QComboBox, QSpinBox {
             background-color: %3;

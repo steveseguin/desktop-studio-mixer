@@ -4,7 +4,7 @@ Unicode True
 !include "LogicLib.nsh"
 !include "x64.nsh"
 !ifndef VERSION
-!define VERSION "0.3.1"
+!define VERSION "0.3.2"
 !endif
 !ifndef BUILD_BIN_DIR
 !define BUILD_BIN_DIR "dist\video-mixer-portable"

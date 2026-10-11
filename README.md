@@ -2,7 +2,7 @@
 
 A native Windows video mixer based on [Game Capture](https://github.com/steveseguin/game-capture), with a separate executable, settings, installer identity, browser profiles, logs, and update feed.
 
-Development version: **0.3.1**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
+Development version: **0.3.2**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
 
 ## Use the studio
 
@@ -10,7 +10,7 @@ Development version: **0.3.1**. Fork baseline: `a76d44feaf01ad228aa99ed35531454b
 2. Add windows/games, webcams, Spout2 feeds, microphones, desktop audio, images, titles, colors, or browser URLs. Check a source to include it in Preview.
 3. Drag sources in Preview or use X/Y/W/H, opacity, layer order, and the Full, Side by side, and Picture in picture presets.
 4. **Take / Cut** or **Fade** copies the staged scene to Program. Editing Preview does not change the current Program layout.
-5. Adjust source gain/mute in **Audio mixer**. **Scene** makes audio follow Program; microphones default to always on. A master fader and peak limiter control the final mix.
+5. Adjust source gain/mute in **Audio mixer**. Each track and the master have a visual dBFS level meter with colored segments, peak hold and a clip indicator. **Scene** makes audio follow Program; microphones default to always on. A master fader and peak limiter control the final mix.
 6. Choose **Output settings**, leave **Mixer program** selected, and choose a destination. **Record to file (MKV)** writes H.264/AAC to a new file. Stop output to finalize it. Existing recordings are never overwritten.
 7. Studio's **Record...** chooses a new recording file and starts recording directly. Its start/stop button controls the selected output and displays connection status.
 
@@ -71,13 +71,13 @@ powershell -ExecutionPolicy Bypass -File native-qt/build-mixer.ps1 -Installer
 
 Portable executable: `native-qt/dist/video-mixer-portable/video-mixer.exe`.
 
-Archives and setup: `native-qt/dist/video-mixer-0.3.1-windows-x64.zip` and `video-mixer-0.3.1-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Video Mixer`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
+Archives and setup: `native-qt/dist/video-mixer-0.3.2-windows-x64.zip` and `video-mixer-0.3.2-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Video Mixer`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
 
 The pinned SDK is fetched from NuGet; other native dependencies use CMake FetchContent. Downloaded dependencies, build outputs, local shows, and QA artifacts are excluded from Git.
 
 ## Validation and provenance
 
-[Performance review and measurements](docs/mixer-performance-review.md) covers 0.3.1's scene caching, capture buffer ownership, audio-loop savings and canvas selection fixes, plus remaining camera-startup and browser-capture limits. [Camera-control validation](docs/mixer-camera-validation.md) covers 0.3.0. [0.2.0 installed-app validation](docs/mixer-0.2-validation.md) and [initial 0.1.0 validation](docs/mixer-validation.md) retain earlier workflow results and remaining gaps. Inherited gates remain under `native-qt/tests`, `qa`, and `e2e`. A successful build or gate is not end-to-end testing.
+[Audio meters and scroll-panel validation](docs/mixer-0.3.2-validation.md) covers 0.3.2's visible track/master meters and distinct scroll surfaces. [Performance review and measurements](docs/mixer-performance-review.md) covers 0.3.1's scene caching, capture buffer ownership, audio-loop savings and canvas selection fixes, plus remaining camera-startup and browser-capture limits. [Camera-control validation](docs/mixer-camera-validation.md) covers 0.3.0. [0.2.0 installed-app validation](docs/mixer-0.2-validation.md) and [initial 0.1.0 validation](docs/mixer-validation.md) retain earlier workflow results and remaining gaps. Inherited gates remain under `native-qt/tests`, `qa`, and `e2e`. A successful build or gate is not end-to-end testing.
 
 [Original Game Capture documentation](docs/game-capture-base.md) is historical reference; its release numbers and screenshots describe the base application.
 

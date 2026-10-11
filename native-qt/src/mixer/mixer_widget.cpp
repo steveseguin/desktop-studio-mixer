@@ -1,6 +1,7 @@
 #include "versus/mixer/mixer_widget.h"
 #include "versus/mixer/browser_source.h"
 #include "versus/mixer/audio_monitor.h"
+#include "versus/mixer/audio_level_meter.h"
 #include "versus/app/versus_app.h"
 #include <QApplication>
 #include <QCheckBox>
@@ -29,7 +30,6 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPointer>
-#include <QProgressBar>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QSignalBlocker>
@@ -209,8 +209,8 @@ struct MixerWidget::Impl {
     QString healthSource;
     QLabel *status = nullptr, *previewTitle = nullptr, *programTitle = nullptr;
     QVBoxLayout *audioRows = nullptr;
-    std::vector<std::pair<std::weak_ptr<Source>, QProgressBar*>> meters;
-    QProgressBar *masterMeter = nullptr;
+    std::vector<std::pair<std::weak_ptr<Source>, AudioLevelMeter*>> meters;
+    AudioLevelMeter *masterMeter = nullptr;
     QDoubleSpinBox *x = nullptr, *y = nullptr, *w = nullptr, *h = nullptr;
     QSlider *opacity = nullptr;
     std::atomic<bool> running{true};
@@ -499,14 +499,18 @@ struct MixerWidget::Impl {
         };
 
         auto *audioBox = new QGroupBox("Audio mixer", panels); auto *audioLayout = new QVBoxLayout(audioBox);
-        auto *scroll = new QScrollArea(audioBox); scroll->setWidgetResizable(true);
+        auto *scroll = new QScrollArea(audioBox); scroll->setObjectName("audioTracksScroll"); scroll->setWidgetResizable(true);
+        scroll->setStyleSheet("QScrollArea { border:1px solid #50667b; background:#101b27; }");
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        scroll->setMinimumHeight(170);
         auto *audioWidget = new QWidget(scroll); audioRows = new QVBoxLayout(audioWidget); scroll->setWidget(audioWidget);
         audioLayout->addWidget(scroll);
         auto *master = new QHBoxLayout; master->addWidget(new QLabel("Master", q));
         auto *masterSlider = new QSlider(Qt::Horizontal, q); masterSlider->setRange(0, 150); masterSlider->setValue(100);
         masterSlider->setObjectName("masterGain"); master->addWidget(masterSlider);
-        masterMeter = new QProgressBar(q); masterMeter->setRange(0, 100); masterMeter->setTextVisible(false); masterMeter->setMaximumWidth(90); master->addWidget(masterMeter);
         audioLayout->addLayout(master);
+        masterMeter = new AudioLevelMeter(audioBox); masterMeter->setObjectName("masterAudioMeter");
+        masterMeter->setAccessibleName("Master audio level (dBFS)"); audioLayout->addWidget(masterMeter);
         QObject::connect(masterSlider, &QSlider::valueChanged, q, [this](int value) { masterGain = value/100.0f; changed(); });
         monitorEnable = new QCheckBox("Headphone monitor", q); monitorEnable->setObjectName("monitorEnable");
         monitorDevice = new QComboBox(q); monitorDevice->setObjectName("monitorDevice");
@@ -559,16 +563,18 @@ struct MixerWidget::Impl {
         while (auto *item = audioRows->takeAt(0)) { delete item->widget(); delete item; }
         for (const auto &item : sources) {
             if (!item->hasAudio()) continue;
-            auto *row = new QWidget(q); auto *layout = new QVBoxLayout(row); layout->setContentsMargins(0, 0, 0, 6);
-            layout->addWidget(new QLabel(item->name, row));
+            auto *row = new QWidget(q); row->setObjectName("audioTrack_"+item->id);
+            auto *layout = new QVBoxLayout(row); layout->setContentsMargins(8, 8, 8, 10); layout->setSpacing(6);
+            auto *name = new QLabel(item->name, row); name->setWordWrap(true); layout->addWidget(name);
+            auto *meter = new AudioLevelMeter(row); meter->setObjectName("audioMeter_"+item->id);
+            meter->setAccessibleName(item->name+" audio level (dBFS)"); layout->addWidget(meter);
+            meters.emplace_back(item, meter);
             auto *controls = new QHBoxLayout;
             auto *gain = new QSlider(Qt::Horizontal, row); gain->setRange(0, 200); gain->setValue(qRound(item->gain*100));
             gain->setAccessibleName(item->name+" volume"); controls->addWidget(gain);
             auto *mute = new QCheckBox("Mute", row); mute->setChecked(item->muted); controls->addWidget(mute);
             auto *follow = new QCheckBox("Scene", row); follow->setChecked(item->followsScene); controls->addWidget(follow);
             auto *listen = new QCheckBox("Listen", row); listen->setChecked(item->monitored); controls->addWidget(listen);
-            auto *meter = new QProgressBar(row); meter->setRange(0, 100); meter->setTextVisible(false); meter->setMaximumWidth(65); controls->addWidget(meter);
-            meters.emplace_back(item, meter);
             layout->addLayout(controls); audioRows->addWidget(row);
             QObject::connect(gain, &QSlider::valueChanged, q, [this, item](int value) { item->gain = value/100.0f; changed(); });
             QObject::connect(mute, &QCheckBox::toggled, q, [this, item](bool value) { item->muted = value; changed(); });
@@ -625,7 +631,8 @@ struct MixerWidget::Impl {
             "Exposure can affect frame rate in low light.\n\n"
             "Changes are saved with this source and reapplied on reconnect. Other apps may share these camera settings.", &dialog);
         help->setWordWrap(true); help->setMaximumWidth(400); left->addWidget(help); left->addStretch(); body->addLayout(left);
-        auto *scroll = new QScrollArea(&dialog); scroll->setWidgetResizable(true); body->addWidget(scroll, 1); root->addLayout(body, 1);
+        auto *scroll = new QScrollArea(&dialog); scroll->setObjectName("cameraControlsScroll"); scroll->setWidgetResizable(true); body->addWidget(scroll, 1); root->addLayout(body, 1);
+        scroll->setStyleSheet("QScrollArea { border:1px solid #50667b; background:#101b27; }");
         auto *feedback = new QLabel("Adjust a setting to see the result in the live preview.", &dialog);
         feedback->setObjectName("cameraSettingsStatus"); feedback->setWordWrap(true); root->addWidget(feedback);
         QDialogButtonBox buttons(QDialogButtonBox::Close); root->addWidget(&buttons);
@@ -1080,8 +1087,8 @@ struct MixerWidget::Impl {
             captured.width = Width; captured.height = Height; captured.stride = frame.bytesPerLine(); captured.timestamp = now100ns();
             captured.data.assign(frame.constBits(), frame.constBits()+frame.sizeInBytes()); core->submitMixerVideo(std::move(captured));
         }
-        for (const auto &[weak, meter] : meters) if (auto item = weak.lock()) meter->setValue(qRound(item->peak*100));
-        masterMeter->setValue(qRound(masterPeak*100));
+        for (const auto &[weak, meter] : meters) if (auto item = weak.lock()) meter->setLevel(item->peak);
+        masterMeter->setLevel(masterPeak);
         if (healthClock.elapsed() >= 1000) {
             const auto elapsed = healthClock.restart();
             if (auto item = source(selectedSource)) {
