@@ -97,7 +97,7 @@ if ($packageExit -ne 0) {
 }
 
 $distRoot = Join-Path $repoRoot "native-qt\dist"
-$packagedPublisher = Join-Path $distRoot "video-mixer-$Version-win64/video-mixer.exe"
+$packagedPublisher = Join-Path $distRoot "video-mixer-$Version-win64/desktop-studio.exe"
 $artifactManifestPath = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($packagedPublisher)), 'release-artifact-manifest.json')
 if (-not (Test-Path -LiteralPath $artifactManifestPath -PathType Leaf)) {
     throw "Packaged release artifact manifest is missing: $artifactManifestPath"

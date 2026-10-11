@@ -7,7 +7,7 @@ import numpy as np
 import win32gui, win32process
 
 def restore(hwnd, _):
-    if win32process.GetWindowThreadProcessId(hwnd)[1] == args.pid and win32gui.GetWindowText(hwnd).startswith('Video Mixer - Powered'):
+    if win32process.GetWindowThreadProcessId(hwnd)[1] == args.pid and win32gui.GetWindowText(hwnd).startswith('Desktop Studio - Powered'):
         win32gui.ShowWindow(hwnd, 9)
     return True
 win32gui.EnumWindows(restore,None)

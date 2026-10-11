@@ -15,7 +15,7 @@ function nowStamp() {
 
 function parseArgs(argv) {
   const args = {
-    publisherPath: path.resolve(__dirname, '../build-review2/bin/Release/video-mixer.exe'),
+    publisherPath: path.resolve(__dirname, '../build-review2/bin/Release/desktop-studio.exe'),
     youtubeUrl: 'https://www.youtube.com/watch?v=aqz-KE-bpKQ&autoplay=1&mute=1',
     sampleSeconds: 35,
     startupDelayMs: 9000,

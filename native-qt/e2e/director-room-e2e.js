@@ -538,8 +538,8 @@ function validatePackagedPublisherArtifact(config) {
     throw new Error('Release artifact manifest packagedAtUtc must be an ISO-8601 UTC timestamp');
   }
   if (!manifest.artifact || typeof manifest.artifact !== 'object' ||
-      manifest.artifact.relativePath !== 'video-mixer.exe') {
-    throw new Error('Release artifact manifest must bind artifact.relativePath exactly to video-mixer.exe');
+      manifest.artifact.relativePath !== 'desktop-studio.exe') {
+    throw new Error('Release artifact manifest must bind artifact.relativePath exactly to desktop-studio.exe');
   }
   if (!Number.isSafeInteger(manifest.artifact.size) || manifest.artifact.size < 1) {
     throw new Error('Release artifact manifest artifact.size must be a positive safe integer');
@@ -873,7 +873,7 @@ function detectPublisherBinary(explicitPath) {
     const packaged = fs.readdirSync(distDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && /^video-mixer-\d+\.\d+\.\d+-win64$/i.test(entry.name))
       .map((entry) => {
-        const executable = path.join(distDir, entry.name, 'video-mixer.exe');
+        const executable = path.join(distDir, entry.name, 'desktop-studio.exe');
         return fs.existsSync(executable)
           ? { executable, modified: fs.statSync(executable).mtimeMs }
           : null;
@@ -887,8 +887,8 @@ function detectPublisherBinary(explicitPath) {
   }
 
   const candidates = [
-    path.resolve(__dirname, '../build-review2/bin/Release/video-mixer.exe'),
-    path.resolve(__dirname, '../build/bin/Release/video-mixer.exe')
+    path.resolve(__dirname, '../build-review2/bin/Release/desktop-studio.exe'),
+    path.resolve(__dirname, '../build/bin/Release/desktop-studio.exe')
   ];
   return candidates.find((candidate) => fs.existsSync(candidate)) || '';
 }
@@ -914,7 +914,7 @@ function spawnPublisher(config, exactArtifact = null) {
     command = detectPublisherBinary(config.publisherPath);
   }
   if (!command) {
-    throw new Error('Could not find video-mixer.exe. Build Release first or pass --publisher-path.');
+    throw new Error('Could not find desktop-studio.exe. Build Release first or pass --publisher-path.');
   }
 
   const durationMs = publisherDurationMs(config);

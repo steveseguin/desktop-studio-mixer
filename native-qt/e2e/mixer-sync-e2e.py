@@ -27,7 +27,7 @@ try:
     edit.set_edit_text(str(recording));dialog.child_window(title='Save',control_type='Button').click_input()
     time.sleep(13);assert control('studioStartOutput').window_text()=='STOP RECORDING'
     press('studioStartOutput');time.sleep(4)
-    ffmpeg=Path('dist/video-mixer-portable/ffmpeg/bin/ffmpeg.exe').resolve()
+    ffmpeg=Path('dist/desktop-studio-portable/ffmpeg/bin/ffmpeg.exe').resolve()
     audio=np.frombuffer(subprocess.check_output([str(ffmpeg),'-v','error','-i',str(recording),'-vn','-f','f32le','-ac','1','-ar','48000','pipe:1']),dtype=np.float32)
     video=np.frombuffer(subprocess.check_output([str(ffmpeg),'-v','error','-i',str(recording),'-an','-vf','crop=32:32:640:180,scale=1:1','-pix_fmt','gray','-f','rawvideo','pipe:1']),dtype=np.uint8)
     audio=audio[:len(audio)//480*480].reshape(-1,480)

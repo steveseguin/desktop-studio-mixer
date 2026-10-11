@@ -16,7 +16,7 @@ function nowStamp() {
 
 function parseArgs(argv) {
   const args = {
-    publisherPath: path.resolve(__dirname, '../build-review2/bin/Release/video-mixer.exe'),
+    publisherPath: path.resolve(__dirname, '../build-review2/bin/Release/desktop-studio.exe'),
     mediaPlayerPath: detectMediaPlayerPath(),
     mediaFile: path.resolve(__dirname, 'media50fps.mp4'),
     useDefaultOpen: true,

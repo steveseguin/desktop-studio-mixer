@@ -77,7 +77,7 @@ try:
         window.child_window(title='Studio',control_type='TabItem').click_input(); press('studioStartOutput')
         time.sleep(7); press('studioStartOutput'); time.sleep(4)
         import array,math
-        ffmpeg=Path('dist/video-mixer-portable/ffmpeg/bin/ffmpeg.exe').resolve()
+        ffmpeg=Path('dist/desktop-studio-portable/ffmpeg/bin/ffmpeg.exe').resolve()
         raw=subprocess.check_output([str(ffmpeg),'-v','error','-i',str(recording),'-vn','-f','f32le','-ac','1','pipe:1'])
         pcm=array.array('f'); pcm.frombytes(raw); rms=math.sqrt(sum(x*x for x in pcm)/len(pcm))
         assert rms>.005,('Guest audio missing from program',rms)
@@ -112,7 +112,7 @@ try:
         window.set_focus()
         native=subprocess.Popen([sys.executable,'-B',str(Path(__file__).with_name('mixer-sources-e2e.py')),'--fixture'],creationflags=subprocess.CREATE_NO_WINDOW)
         children.append(native);time.sleep(2)
-        add_source('Game / window','QA game',device='Video Mixer QA Window')
+        add_source('Game / window','QA game',device='Desktop Studio QA Window')
         add_source('Camera / webcam','QA webcam',device='HD Pro Webcam C920')
         add_source('Microphone / audio input','QA microphone',device='HD Pro Webcam C920')
         class Overlay(http.server.BaseHTTPRequestHandler):

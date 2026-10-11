@@ -1,12 +1,14 @@
-# Video Mixer
+# Desktop Studio
 
-A native Windows video mixer based on [Game Capture](https://github.com/steveseguin/game-capture), with a separate executable, settings, installer identity, browser profiles, logs, and update feed.
+A native Windows production studio for scenes, sources, audio mixing and live output. **Desktop Studio** complements Web Studio and Web Mixer. It is based on [Game Capture](https://github.com/steveseguin/game-capture), with its own executable, settings, installer identity, browser profiles, logs, and update feed.
 
-Development version: **0.4.1**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
+Development version: **0.4.2**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
+
+Previously named **Video Mixer**. Setup upgrades the existing installation and replaces its Start menu shortcuts. Existing shows, output profiles, camera settings, browser profiles and the layout preference carry over. The repository/build target, `%LOCALAPPDATA%/VideoMixer` data folder and `VDO.Ninja/Video Mixer` settings identity remain stable for compatibility. Older validation documents use the name of the version they measured.
 
 ## Use the studio
 
-1. Open `video-mixer.exe`. Select a scene and choose **Add source**.
+1. Open `desktop-studio.exe`. Select a scene and choose **Add source**.
 2. Add windows/games, webcams, Spout2 feeds, microphones, desktop audio, images, titles, colors, or browser URLs. Check a source to show it on the canvas. The default **single-canvas** mode sends scene changes and edits straight to output.
 3. Drag sources on the canvas or use X/Y/W/H, opacity, layer order, and the Full, Side by side, and Picture in picture presets.
 4. Enable **Studio mode** when you want separate Preview and Program panels. **Take / Cut** or **Fade** copies the staged layout to Program. Turning Studio mode off takes the selected Preview scene to output and resumes direct editing. The layout preference survives restarts.
@@ -22,7 +24,7 @@ Select a webcam source and choose **Camera settings...** for a live preview, cap
 
 Camera changes apply immediately, including to Program. **Apply capture mode** briefly restarts that source and shows the actual negotiated mode; the compositor remains 1280x720/30. Explicitly changed controls and the requested mode are saved with the source and reapplied on reconnect/show reload. Selecting a different physical camera clears those overrides. Opening the settings panel does not change the device. Exposure and low light can reduce delivered frame rate, and other applications may share the camera's hardware settings.
 
-**Headphone monitor** has its own device and volume controls and starts off each launch. A channel's **Listen** sends it to headphones, including while off air; **Mute** silences both monitoring and Program. Microphones start with Listen off. Desktop audio excludes Video Mixer and its browser processes, preventing its monitor output from feeding back into the mix. Use headphones for guests and microphones.
+**Headphone monitor** has its own device and volume controls and starts off each launch. A channel's **Listen** sends it to headphones, including while off air; **Mute** silences both monitoring and Program. Microphones start with Listen off. Desktop audio excludes Desktop Studio and its browser processes, preventing its monitor output from feeding back into the mix. Use headphones for guests and microphones.
 
 **Program window** provides clean output (F11 for fullscreen). Shows autosave under `%LOCALAPPDATA%/VideoMixer/studio.mixer.json`; Save show as/Open show transfer layouts and source settings. Show files include private source URLs and invitation links.
 
@@ -69,9 +71,9 @@ powershell -ExecutionPolicy Bypass -File native-qt/build-mixer.ps1 -Package
 powershell -ExecutionPolicy Bypass -File native-qt/build-mixer.ps1 -Installer
 ```
 
-Portable executable: `native-qt/dist/video-mixer-portable/video-mixer.exe`.
+Portable executable: `native-qt/dist/desktop-studio-portable/desktop-studio.exe`.
 
-Archives and setup: `native-qt/dist/video-mixer-0.4.1-windows-x64.zip` and `video-mixer-0.4.1-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Video Mixer`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
+Archives and setup: `native-qt/dist/desktop-studio-0.4.2-windows-x64.zip` and `desktop-studio-0.4.2-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
 
 The pinned SDK is fetched from NuGet; other native dependencies use CMake FetchContent. Downloaded dependencies, build outputs, local shows, and QA artifacts are excluded from Git.
 

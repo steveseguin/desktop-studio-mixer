@@ -15,7 +15,7 @@ show=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/studio.mixer.json'
 
 def restore_window():
     def restore(h,_):
-        if win32process.GetWindowThreadProcessId(h)[1]==app.process and win32gui.GetWindowText(h).startswith('Video Mixer - Powered'):
+        if win32process.GetWindowThreadProcessId(h)[1]==app.process and win32gui.GetWindowText(h).startswith('Desktop Studio - Powered'):
             win32gui.ShowWindow(h,win32con.SW_RESTORE)
         return True
     win32gui.EnumWindows(restore,None)
@@ -120,9 +120,9 @@ try:
     # Restart the shipped portable app to verify actual hardware settings are reapplied.
     window.set_focus();window.type_keys('^q');app.wait_for_process_exit(timeout=15)
     startup=subprocess.STARTUPINFO();startup.dwFlags=subprocess.STARTF_USESHOWWINDOW;startup.wShowWindow=win32con.SW_HIDE
-    child=subprocess.Popen([str(Path('dist/video-mixer-portable/video-mixer.exe').resolve())],startupinfo=startup)
+    child=subprocess.Popen([str(Path('dist/desktop-studio-portable/desktop-studio.exe').resolve())],startupinfo=startup)
     (report/'app.pid').write_text(str(child.pid));time.sleep(3)
-    app=Application(backend='uia').connect(process=child.pid);window=app.window(title='Video Mixer - Powered by VDO.Ninja')
+    app=Application(backend='uia').connect(process=child.pid);window=app.window(title='Desktop Studio - Powered by VDO.Ninja')
     # Helpers bind window as a default argument; rebind after restarting.
     control.__defaults__=(window,);press.__defaults__=(window,)
     restore_window();control('mixerSources').wheel_mouse_input(wheel_dist=-3)
@@ -130,7 +130,7 @@ try:
     assert value('brightness')==176 and value('zoom')==150
     assert '640x480 @ 15 fps' in control('cameraActiveMode',dialog).window_text()
     results['restartRestoresControls']='passed'
-    ffmpeg=Path('dist/video-mixer-portable/ffmpeg/bin/ffmpeg.exe').resolve()
+    ffmpeg=Path('dist/desktop-studio-portable/ffmpeg/bin/ffmpeg.exe').resolve()
     metadata=subprocess.run([str(ffmpeg),'-hide_banner','-i',str(recording)],capture_output=True,text=True).stderr
     assert 'Video: h264' in metadata and '1280x720' in metadata and '30 fps' in metadata,metadata
     frames=np.frombuffer(subprocess.check_output([str(ffmpeg),'-v','error','-i',str(recording),'-an','-vf','fps=1,scale=64:36','-pix_fmt','gray','-f','rawvideo','pipe:1']),dtype=np.uint8).reshape(-1,36,64)

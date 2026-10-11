@@ -95,9 +95,9 @@ function detectPublisherBinary(explicitPath) {
   }
 
   const candidates = [
-    path.resolve(__dirname, '../build-review2/bin/Release/video-mixer.exe'),
-    path.resolve(__dirname, '../build-test/bin/Release/video-mixer.exe'),
-    path.resolve(__dirname, '../build/bin/Release/video-mixer.exe')
+    path.resolve(__dirname, '../build-review2/bin/Release/desktop-studio.exe'),
+    path.resolve(__dirname, '../build-test/bin/Release/desktop-studio.exe'),
+    path.resolve(__dirname, '../build/bin/Release/desktop-studio.exe')
   ];
 
   for (const candidate of candidates) {
@@ -126,7 +126,7 @@ function buildViewerUrl(config) {
 function spawnPublisher(config) {
   const command = detectPublisherBinary(config.publisherPath);
   if (!command) {
-    throw new Error('Could not find video-mixer.exe. Build native-qt first or pass --publisher-path.');
+    throw new Error('Could not find desktop-studio.exe. Build native-qt first or pass --publisher-path.');
   }
 
   const args = [

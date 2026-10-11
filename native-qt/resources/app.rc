@@ -1,4 +1,4 @@
-﻿// Windows resource file for Video Mixer application
+﻿// Windows resource file for Desktop Studio application
 // This embeds the application icon into the .exe
 
 IDI_ICON1 ICON "vdoninja.ico"

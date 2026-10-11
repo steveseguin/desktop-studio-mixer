@@ -11,7 +11,7 @@ import re
 import socket
 import sys
 
-ffmpeg = Path('dist/video-mixer-portable/ffmpeg/bin/ffmpeg.exe').resolve()
+ffmpeg = Path('dist/desktop-studio-portable/ffmpeg/bin/ffmpeg.exe').resolve()
 results = {}
 children = []
 window.child_window(title='Studio', control_type='TabItem').click_input()
@@ -154,7 +154,7 @@ try:
 
     fixture=subprocess.Popen([sys.executable,'-B',str(Path(__file__).with_name('mixer-sources-e2e.py')),'--fixture'],creationflags=subprocess.CREATE_NO_WINDOW)
     children.append(fixture); time.sleep(2)
-    add_source('Game / window','QA game',device='Video Mixer QA Window')
+    add_source('Game / window','QA game',device='Desktop Studio QA Window')
     press('takeScene'); near(color('programCanvas'),(196,58,70)); results['native_game_capture']='passed'
     add_source('Camera / webcam','QA webcam',device='HD Pro Webcam C920')
     time.sleep(5); camera=np.asarray(control('previewCanvas').capture_as_image().convert('RGB'))

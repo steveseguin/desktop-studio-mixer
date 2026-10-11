@@ -4698,7 +4698,7 @@ void VersusApp::sendPeerRemoteStats(const std::shared_ptr<PeerSession> &peer) {
 
     nlohmann::json stats;
     stats["label"] = lifecycleState.startOptions.label.empty()
-        ? "Video Mixer"
+        ? "Desktop Studio"
         : lifecycleState.startOptions.label;
     stats["video_bitrate_kbps"] = aggregateVideoKbps;
     stats["audio_bitrate_kbps"] = aggregateAudioKbps;
@@ -4782,7 +4782,7 @@ void VersusApp::sendPeerAudioOptions(const std::shared_ptr<PeerSession> &peer) {
         }
 
         nlohmann::json track;
-        track["trackLabel"] = label.empty() ? "Video Mixer audio" : label;
+        track["trackLabel"] = label.empty() ? "Desktop Studio audio" : label;
         track["deviceId"] = microphoneDeviceId.empty() ? "video-mixer-audio" : microphoneDeviceId;
         track["audioConstraints"] = nlohmann::json::object();
         track["currentAudioConstraints"] = {
@@ -4816,7 +4816,7 @@ void VersusApp::sendPeerVideoOptions(const std::shared_ptr<PeerSession> &peer) {
     const int fps = std::max(1, videoState.config.frameRate);
 
     nlohmann::json options;
-    options["trackLabel"] = "Video Mixer window";
+    options["trackLabel"] = "Desktop Studio window";
     options["currentCameraConstraints"] = {
         {"width", width},
         {"height", height},
@@ -4845,7 +4845,7 @@ void VersusApp::sendPeerMediaDevices(const std::shared_ptr<PeerSession> &peer) {
     devices.push_back({
         {"deviceId", selectedWindowId.empty() ? "video-mixer-window" : selectedWindowId},
         {"kind", "videoinput"},
-        {"label", "Video Mixer window"},
+        {"label", "Desktop Studio window"},
         {"groupId", "video-mixer"}
     });
 
@@ -4895,9 +4895,9 @@ void VersusApp::sendPeerConnectionMap(
     connectionMap["uuid"] = sourceStreamId;
     connectionMap["streamID"] = sourceStreamId;
     connectionMap["label"] = sourceLabel;
-    connectionMap["browser"] = std::string("Video Mixer ") + APP_VERSION;
+    connectionMap["browser"] = std::string("Desktop Studio ") + APP_VERSION;
     connectionMap["runtime"] = {
-        {"name", "Video Mixer Native Qt"},
+        {"name", "Desktop Studio Native Qt"},
         {"version", APP_VERSION},
 #if defined(_WIN32)
         {"platform", "Windows"}
@@ -4914,7 +4914,7 @@ void VersusApp::sendPeerConnectionMap(
     };
     // The UUID carried in the request identifies the requested guest from the
     // director's side. The peer UUID here is the director identity as observed
-    // by Video Mixer, which is what VDO.Ninja uses to join this edge back to
+    // by Desktop Studio, which is what VDO.Ninja uses to join this edge back to
     // the director node.
     connectionMap["requesterUUID"] = requestingPeer->uuid;
     if (request.contains("meshRequestId")) {
@@ -5070,7 +5070,7 @@ void VersusApp::sendPeerMediaDeviceChange(const std::shared_ptr<PeerSession> &pe
             msg["rejected"] = "changeSpeaker";
         }
         msg["reason"] = "unsupported";
-        msg["message"] = error.empty() ? "Device change is not supported by Video Mixer." : error;
+        msg["message"] = error.empty() ? "Device change is not supported by Desktop Studio." : error;
     }
     peer->client->sendDataMessage(msg.dump());
 }
@@ -5466,7 +5466,7 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
                     ? ""
                     : (microphoneAvailable
                            ? "Changing microphone devices live from VDO.Ninja Control Center is not supported."
-                           : "Video Mixer is not publishing a microphone track."));
+                           : "Desktop Studio is not publishing a microphone track."));
             if (sameDevice) {
                 sendPeerAudioOptions(peer);
                 sendPeerMediaDevices(peer);
@@ -5485,7 +5485,7 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
                 "speaker",
                 false,
                 deviceId,
-                "Changing speaker/output devices from Video Mixer is not applicable.");
+                "Changing speaker/output devices from Desktop Studio is not applicable.");
         }
     }
     const std::array<const char *, 39> unsupportedVdoControlKeys = {
@@ -5534,7 +5534,7 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
             sendRejectedControl(
                 unsupportedKey,
                 "unsupported",
-                "This VDO.Ninja Control Center command is not supported by Video Mixer.");
+                "This VDO.Ninja Control Center command is not supported by Desktop Studio.");
         }
     }
     if (msg.contains("group")) {
@@ -5542,21 +5542,21 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
         sendRejectedControl(
             "group",
             "unsupported",
-            "This VDO.Ninja Control Center command is not supported by Video Mixer.");
+            "This VDO.Ninja Control Center command is not supported by Desktop Studio.");
     }
     if (msg.contains("rotate")) {
         spdlog::warn("[App] Rejected unsupported VDO control rotate from {}", peer->uuid);
         sendRejectedControl(
             "rotate",
             "unsupported",
-            "This VDO.Ninja Control Center command is not supported by Video Mixer.");
+            "This VDO.Ninja Control Center command is not supported by Desktop Studio.");
     }
     if (msg.contains("mirrorGuestState") && msg.contains("mirrorGuestTarget")) {
         spdlog::warn("[App] Rejected unsupported VDO control mirrorGuestState from {}", peer->uuid);
         sendRejectedControl(
             "mirrorGuestState",
             "unsupported",
-            "This VDO.Ninja Control Center command is not supported by Video Mixer.");
+            "This VDO.Ninja Control Center command is not supported by Desktop Studio.");
     }
     if (msg.contains("getConnectionMap") && jsonBoolLike(msg["getConnectionMap"], true)) {
         if (!directorAuthorized) {
@@ -5570,7 +5570,7 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
         sendRejectedControl(
             "reconnectPeer",
             "unsupported",
-            "This VDO.Ninja Control Center command is not supported by Video Mixer.");
+            "This VDO.Ninja Control Center command is not supported by Desktop Studio.");
     }
 
     const bool hasInlineInitFields =
@@ -6041,7 +6041,7 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
                 nlohmann::json rejected;
                 rejected["rejected"] = "requestVideoHack";
                 rejected["reason"] = "unsupported";
-                rejected["message"] = "This Video Mixer setting cannot be changed from VDO.Ninja Control Center.";
+                rejected["message"] = "This Desktop Studio setting cannot be changed from VDO.Ninja Control Center.";
                 if (!keyName.empty()) {
                     rejected["keyname"] = keyName;
                 }

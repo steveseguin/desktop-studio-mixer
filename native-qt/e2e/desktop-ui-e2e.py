@@ -105,7 +105,7 @@ def application_window(pid, timeout=20):
                 if (win32gui.IsWindowVisible(hwnd) and
                         win32process.GetWindowThreadProcessId(hwnd)[1] == pid and
                         win32gui.GetWindow(hwnd, win32con.GW_OWNER) == 0 and
-                        win32gui.GetWindowText(hwnd) == "Video Mixer - Powered by VDO.Ninja"):
+                        win32gui.GetWindowText(hwnd) == "Desktop Studio - Powered by VDO.Ninja"):
                     handles.append(hwnd)
             except pywintypes.error:
                 pass  # Another window can disappear during enumeration.
@@ -186,7 +186,7 @@ def main():
     run_dir = Path(args.report_dir).resolve() / str(uuid.uuid4())
     run_dir.mkdir(parents=True)
     device = frida.get_local_device()
-    if any(p.name.lower() == "video-mixer.exe" for p in device.enumerate_processes()):
+    if any(p.name.lower() == "desktop-studio.exe" for p in device.enumerate_processes()):
         raise RuntimeError("Close existing Video Mixer sessions before the desktop workflow")
     saved = snapshot(SETTINGS_KEY)
     events, checks = [], []

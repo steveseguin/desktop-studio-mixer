@@ -206,7 +206,7 @@ try {
         $PublisherPath = Get-ChildItem -LiteralPath (Join-Path $nativeQtRoot "dist") -Directory -ErrorAction Stop |
             Where-Object { $_.Name -match '^video-mixer-\d+\.\d+\.\d+-win64$' } |
             Sort-Object LastWriteTimeUtc -Descending |
-            ForEach-Object { Join-Path $_.FullName "video-mixer.exe" } |
+            ForEach-Object { Join-Path $_.FullName "desktop-studio.exe" } |
             Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
             Select-Object -First 1
     }

@@ -92,7 +92,7 @@ try {
             if ($owner -eq $process.Id) {
                 $title = [Text.StringBuilder]::new(256)
                 [void][UrlImportWindows]::GetWindowText($handle, $title, 256)
-                if ($title.ToString() -eq 'Video Mixer - Powered by VDO.Ninja') { $script:mainHandle = $handle }
+                if ($title.ToString() -eq 'Desktop Studio - Powered by VDO.Ninja') { $script:mainHandle = $handle }
             }
             return $true
         }, [IntPtr]::Zero)

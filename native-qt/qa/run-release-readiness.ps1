@@ -1303,11 +1303,11 @@ if ($makensis) {
         }
         $installerPublisher = (Resolve-Path -LiteralPath $installerPublisher).Path
         $installerBinDir = Split-Path -Parent $installerPublisher
-        $stagedPublisher = Join-Path $installerBinDir "video-mixer.exe"
+        $stagedPublisher = Join-Path $installerBinDir "desktop-studio.exe"
         if ((Resolve-Path -LiteralPath $stagedPublisher).Path -cne $installerPublisher) {
             throw "Installer smoke is not bound to the selected publisher identity: $installerPublisher"
         }
-        foreach ($requiredRelPath in @("video-mixer.exe", "platforms\qwindows.dll")) {
+        foreach ($requiredRelPath in @("desktop-studio.exe", "platforms\qwindows.dll")) {
             $requiredPath = Join-Path $installerBinDir $requiredRelPath
             if (-not (Test-Path $requiredPath)) {
                 throw "Installer smoke missing required staged artifact: $requiredPath"

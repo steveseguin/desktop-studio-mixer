@@ -9,11 +9,24 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const server = new McpServer({ name: 'video-mixer', version: '0.1.0' });
+const server = new McpServer({ name: 'desktop-studio', version: '0.1.0' });
 const defaultDiscovery = process.env.GAME_CAPTURE_MCP_DISCOVERY ||
   path.join(process.env.LOCALAPPDATA || process.cwd(), 'VideoMixer', 'control.json');
-const executable = process.env.GAME_CAPTURE_MCP_EXECUTABLE ||
-  path.join(process.env.ProgramW6432 || 'C:\\Program Files', 'Video Mixer', 'video-mixer.exe');
+async function configuredExecutable() {
+  if (process.env.GAME_CAPTURE_MCP_EXECUTABLE) return process.env.GAME_CAPTURE_MCP_EXECUTABLE;
+  // The stable installer key also covers renamed upgrades in an older folder
+  // and user-selected installation directories.
+  if (process.platform === 'win32') {
+    try {
+      const { stdout } = await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); [Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\\Software\\VideoMixer', 'InstallDir', '')"],
+        { windowsHide: true, timeout: 10000, maxBuffer: 16384 });
+      const root = stdout.replace(/^\uFEFF/, '').trim();
+      if (root) return path.join(root, 'desktop-studio.exe');
+    } catch { /* Fall back to the default per-user installation. */ }
+  }
+  return path.join(process.env.LOCALAPPDATA || process.cwd(), 'Programs', 'Desktop Studio', 'desktop-studio.exe');
+}
 let target;
 let owned;
 let closing = false;
@@ -71,7 +84,7 @@ async function request(c, route, body) {
     body: body ? JSON.stringify(body) : undefined
   });
   const result = await response.json();
-  if (!response.ok) throw new Error(`Video Mixer HTTP ${response.status}: ${result.error || JSON.stringify(result)}`);
+  if (!response.ok) throw new Error(`Desktop Studio HTTP ${response.status}: ${result.error || JSON.stringify(result)}`);
   return result;
 }
 async function health(c) {
@@ -137,6 +150,7 @@ register('logs', 'Read recent application log lines for the selected instance.',
   lines: z.number().int().min(1).max(2000).default(100)
 }, true, async ({ lines }) => request(await current(), `/logs/recent?lines=${lines}`));
 register('firewall', 'Read Windows Firewall installer-rule status for GAME_CAPTURE_MCP_EXECUTABLE. Does not modify rules or require an attached app.', {}, true, async () => {
+  const executable = await configuredExecutable();
   const script = fileURLToPath(new URL('../check-firewall.ps1', import.meta.url));
   const { stdout } = await promisify(execFile)('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass',
     '-File', script, '-ExecutablePath', executable], { windowsHide: true, timeout: 20000, maxBuffer: 1024 * 1024 });
@@ -191,6 +205,7 @@ register('launch', 'Launch the configured packaged executable. Inspect mode open
     throw new Error('Stream mode requires source, sourceName, and streamId; automatic capture of an arbitrary window is not allowed.');
   }
   if (opts.alpha && opts.codec !== 'vp9') throw new Error('Use VP9 for the supported native OBS alpha workflow.');
+  const executable = await configuredExecutable();
   await access(executable);
   await access(path.join(path.dirname(executable), 'platforms', 'qwindows.dll'));
   const dir = path.join(process.env.LOCALAPPDATA || process.cwd(), 'VideoMixer', 'mcp');

@@ -18,7 +18,7 @@ if (-not (Test-Path -LiteralPath $contractsPath -PathType Leaf)) {
 $sha = "a" * 64
 $otherSha = "b" * 64
 $binding = [pscustomobject]@{ path = "C:\fixture\obs-vdoninja.dll"; sha256 = $sha }
-$publisher = [pscustomobject]@{ path = "C:\fixture\video-mixer.exe"; sha256 = $sha }
+$publisher = [pscustomobject]@{ path = "C:\fixture\desktop-studio.exe"; sha256 = $sha }
 $spout = [pscustomobject]@{ path = "C:\fixture\spout_test_sender.exe"; sha256 = $sha }
 $positive = Test-AlphaLoadedPluginEvidence `
     -LoadedModules @($binding) -LoadedPlugin $binding -StagedPlugin $binding -ExpectedSha256 $sha

@@ -310,7 +310,7 @@ void TestMainWindow::cleanup() {
 
 void TestMainWindow::testInitialState() {
     QVERIFY(window_ != nullptr);
-    QCOMPARE(window_->windowTitle(), QString("Video Mixer - Powered by VDO.Ninja"));
+    QCOMPARE(window_->windowTitle(), QString("Desktop Studio - Powered by VDO.Ninja"));
     QVERIFY(window_->width() >= 900);
     QVERIFY(window_->height() <= 760);
 }
@@ -481,7 +481,7 @@ void TestMainWindow::testSystemTrayExists() {
     auto *trayIcon = window_->findChild<QSystemTrayIcon*>();
     QVERIFY(trayIcon != nullptr);
     QVERIFY(trayIcon->isVisible());
-    QCOMPARE(trayIcon->toolTip(), QString("Video Mixer - Idle"));
+    QCOMPARE(trayIcon->toolTip(), QString("Desktop Studio - Idle"));
 }
 
 void TestMainWindow::testStatsPanelHiddenInitially() {

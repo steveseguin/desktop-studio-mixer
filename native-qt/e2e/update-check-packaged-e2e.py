@@ -186,7 +186,7 @@ def main():
     if not (exe.parent / 'tls/qschannelbackend.dll').is_file():
         raise RuntimeError('Packaged Schannel backend is required')
     device = frida.get_local_device()
-    if any(p.name.lower() == 'video-mixer.exe' for p in device.enumerate_processes()):
+    if any(p.name.lower() == 'desktop-studio.exe' for p in device.enumerate_processes()):
         raise RuntimeError('Close existing Video Mixer instances')
     cache = Path(os.environ['LOCALAPPDATA']) / 'VideoMixer/update-check.ini'
     saved_cache = cache.read_bytes() if cache.exists() else None

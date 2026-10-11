@@ -81,12 +81,13 @@ static const QString COLOR_TEXT = "#eaf4ff";
 static const QString COLOR_TEXT_DIM = "#89a2ba";
 static const QString COLOR_RED = "#ff4d5a";
 static const QString COLOR_YELLOW = "#f0b84d";
-static const QString APP_WINDOW_TITLE = "Video Mixer - Powered by VDO.Ninja";
-static const QString APP_BRAND = "Video Mixer";
-static const QString APP_TRAY_IDLE = "Video Mixer - Idle";
-static const QString APP_TRAY_LIVE = "Video Mixer - LIVE";
+static const QString APP_WINDOW_TITLE = "Desktop Studio - Powered by VDO.Ninja";
+static const QString APP_BRAND = "Desktop Studio";
+static const QString APP_TRAY_IDLE = "Desktop Studio - Idle";
+static const QString APP_TRAY_LIVE = "Desktop Studio - LIVE";
 static const QString APP_VERSION_TEXT = QStringLiteral(APP_VERSION);
 static const QString APP_SETTINGS_ORG = "VDO.Ninja";
+// Stable across the Desktop Studio rename, including encrypted output profiles.
 static const QString APP_SETTINGS_NAME = "Video Mixer";
 
 // Output URLs can contain credentials too. Protect the whole profile with the
@@ -98,7 +99,7 @@ static QByteArray protectOutputProfiles(const QByteArray &input, bool decrypt) {
     DATA_BLOB result{};
     const BOOL ok = decrypt
         ? CryptUnprotectData(&source, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &result)
-        : CryptProtectData(&source, L"Video Mixer outputs", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &result);
+        : CryptProtectData(&source, L"Desktop Studio outputs", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &result);
     if (!ok) return {};
     QByteArray bytes(reinterpret_cast<const char *>(result.pbData), result.cbData);
     LocalFree(result.pbData);
@@ -167,21 +168,21 @@ bool codecSupportsAlphaWorkflow(versus::video::VideoCodec codec) {
 
 QString codecTooltipFor(versus::video::VideoCodec codec) {
     if (codec == versus::video::VideoCodec::H265) {
-        return "H.265 is experimental and may not decode in Chromium-based viewers. Video Mixer will fall back to "
+        return "H.265 is experimental and may not decode in Chromium-based viewers. Desktop Studio will fall back to "
                "H.264 if startup or encode stability fails.";
     }
     if (codec == versus::video::VideoCodec::AV1) {
-        return "AV1 publish is experimental. Video Mixer will try the selected encoder preference and fall back to "
+        return "AV1 publish is experimental. Desktop Studio will try the selected encoder preference and fall back to "
                "H.264 if startup or encode stability fails. Alpha-preserving AV1 paths vary by viewer; the current "
                "OBS VDO.Ninja transparency workflow uses VP9 instead.";
     }
     if (codec == versus::video::VideoCodec::VP9) {
-        return "VP9 publish is experimental and software-heavy. Video Mixer will fall back to H.264 if startup or "
+        return "VP9 publish is experimental and software-heavy. Desktop Studio will fall back to H.264 if startup or "
                "encode stability fails. Transparency in OBS requires the VDO.Ninja OBS plugin native receiver; "
                "browser viewers stay standard color video.";
     }
     if (codec == versus::video::VideoCodec::H264) {
-        return "H.264 supports hardware encoding. With alpha workflow enabled, Video Mixer sends H.264 color plus a "
+        return "H.264 supports hardware encoding. With alpha workflow enabled, Desktop Studio sends H.264 color plus a "
                "separate CPU-encoded VP9 alpha mask for the OBS native receiver.";
     }
     return QString();
@@ -544,7 +545,7 @@ bool currentExecutableLooksInstalled(const QString &exePath) {
         if (root.isEmpty()) {
             continue;
         }
-        const QString installedRoot = normalizedAbsolutePath(QDir(root).filePath("Video Mixer"));
+        const QString installedRoot = normalizedAbsolutePath(QDir(root).filePath("Desktop Studio"));
         if (!installedRoot.isEmpty() && normalizedExe.startsWith(installedRoot + "\\")) {
             return true;
         }
@@ -576,7 +577,7 @@ FirewallRuleState queryFirewallRuleForCurrentExe() {
             "firewall",
             "show",
             "rule",
-            "name=Video Mixer WebRTC UDP",
+            "name=Desktop Studio WebRTC UDP",
             "verbose"
         });
     if (!netsh.waitForFinished(2500)) {
@@ -717,7 +718,7 @@ MainWindow::MainWindow(
         });
         connect(studio, &versus::mixer::MixerWidget::recordRequested, this, [this]() {
             if (isLive_ || startInProgress_ || stopInProgress_) return;
-            const auto path = QFileDialog::getSaveFileName(this, "Record Program", QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)+"/Video Mixer recording.mkv", "Matroska video (*.mkv)");
+            const auto path = QFileDialog::getSaveFileName(this, "Record Program", QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)+"/Desktop Studio recording.mkv", "Matroska video (*.mkv)");
             if (path.isEmpty()) return;
             sourceModeSelect_->setCurrentIndex(sourceModeSelect_->findData("mixer"));
             outputSelect_->setCurrentIndex(outputSelect_->findData("file"));
@@ -854,8 +855,8 @@ void MainWindow::showFirewallWarningIfNeeded() {
 
     const QString issue = firewall.present
         ? QString("The existing Windows Firewall rule points to:\n%1").arg(firewall.programPath)
-        : QString("Windows Firewall does not have the Video Mixer WebRTC UDP rule.");
-    const QString guidance = "Allow Video Mixer when Windows asks, or add an inbound UDP allow rule for this executable if direct connections fail. The per-user installer does not change firewall rules.";
+        : QString("Windows Firewall does not have the Desktop Studio WebRTC UDP rule.");
+    const QString guidance = "Allow Desktop Studio when Windows asks, or add an inbound UDP allow rule for this executable if direct connections fail. The per-user installer does not change firewall rules.";
 
     spdlog::warn("[UI] Windows Firewall rule is missing or does not match current executable: exe='{}' rulePresent={} ruleProgram='{}'",
                  currentExe.toStdString(),
@@ -1200,10 +1201,10 @@ void MainWindow::onResetToDefaults() {
 
     const auto answer = QMessageBox::question(
         this,
-        "Reset Video Mixer to Defaults?",
+        "Reset Desktop Studio to Defaults?",
         "This clears saved stream details, room and password values, video, audio, remote-control settings, "
         "and the saved window layout.\n\n"
-        "It does not uninstall Video Mixer, change Windows Firewall rules, or delete logs.",
+        "It does not uninstall Desktop Studio, change Windows Firewall rules, or delete logs.",
         QMessageBox::Reset | QMessageBox::Cancel,
         QMessageBox::Cancel);
     if (answer != QMessageBox::Reset) {
@@ -1214,7 +1215,7 @@ void MainWindow::onResetToDefaults() {
         QMessageBox::warning(
             this,
             "Reset Failed",
-            "Video Mixer could not reset its saved settings. Stop streaming and try again.");
+            "Desktop Studio could not reset its saved settings. Stop streaming and try again.");
     }
 }
 
@@ -1406,11 +1407,11 @@ void MainWindow::setupMenuBar() {
     });
 
     auto *helpMenu = menuBar()->addMenu("&Help");
-    auto *aboutAction = helpMenu->addAction("About Video Mixer");
+    auto *aboutAction = helpMenu->addAction("About Desktop Studio");
     connect(aboutAction, &QAction::triggered, this, [this]() {
         QMessageBox::about(
             this,
-            "About Video Mixer",
+            "About Desktop Studio",
             QString("%1\nVersion %2\nPowered by VDO.Ninja")
                 .arg(APP_BRAND, APP_VERSION_TEXT));
     });
@@ -1523,7 +1524,7 @@ void MainWindow::setupUI() {
     cameraResolutionSelect_->addItem("960x540", QVariant("960x540"));
     cameraResolutionSelect_->addItem("640x480", QVariant("640x480"));
     cameraResolutionSelect_->setToolTip(
-        "Requested camera capture resolution. If the camera does not offer this exact mode, Video Mixer uses the closest supported mode.");
+        "Requested camera capture resolution. If the camera does not offer this exact mode, Desktop Studio uses the closest supported mode.");
     installComboWheelGuard(cameraResolutionSelect_);
     cameraResolutionLabel->setBuddy(cameraResolutionSelect_);
 
@@ -1538,7 +1539,7 @@ void MainWindow::setupUI() {
     cameraFpsSelect_->addItem("24 fps", QVariant(24));
     cameraFpsSelect_->setCurrentIndex(1);
     cameraFpsSelect_->setToolTip(
-        "Requested camera frame rate. If the camera does not offer this exact rate, Video Mixer uses the closest supported rate.");
+        "Requested camera frame rate. If the camera does not offer this exact rate, Desktop Studio uses the closest supported rate.");
     installComboWheelGuard(cameraFpsSelect_);
     cameraFpsLabel->setBuddy(cameraFpsSelect_);
 
@@ -1608,7 +1609,7 @@ void MainWindow::setupUI() {
     sep1->setStyleSheet("background-color: #333;");
     layout->addWidget(sep1);
 
-    auto *heroTitle = new QLabel("Video Mixer Live", this);
+    auto *heroTitle = new QLabel("Desktop Studio Live", this);
     heroTitle->setStyleSheet(QString("color: %1; font-size: 18px; font-weight: 700;").arg(COLOR_TEXT));
     layout->addWidget(heroTitle);
 
@@ -1644,7 +1645,7 @@ void MainWindow::setupUI() {
     }
     vdoTargetLayout->addLayout(basicForm);
 
-    auto *urlHint = new QLabel("Tip: paste a full VDO URL and Video Mixer auto-uses stream/room/password.", this);
+    auto *urlHint = new QLabel("Tip: paste a full VDO URL and Desktop Studio auto-uses stream/room/password.", this);
     urlHint->setStyleSheet(QString("color: %1; font-size: 11px;").arg(COLOR_TEXT_DIM));
     urlHint->setWordWrap(true);
     vdoTargetLayout->addWidget(urlHint);
@@ -2019,7 +2020,7 @@ void MainWindow::setupUI() {
     ffmpegOptionsInput_->setObjectName("ffmpegOptionsInput");
     ffmpegOptionsInput_->setPlaceholderText("Optional FFmpeg options (for example: -threads 6 or -preset p4)");
     ffmpegOptionsInput_->setToolTip(
-        "Advanced FFmpeg output options are preserved where safe. During dual-track transparency, Video Mixer "
+        "Advanced FFmpeg output options are preserved where safe. During dual-track transparency, Desktop Studio "
         "enforces the VP9 codec, zero encoder lag, and an all-keyframe GOP; conflicting options are ignored and logged.");
     ffmpegOptionsInput_->setEnabled(false);
     advancedForm->addRow("FFmpeg Options", ffmpegOptionsInput_);
@@ -2738,7 +2739,7 @@ void MainWindow::refreshMicrophoneDevices(const QString &preferredDeviceId) {
                     device.channels != 2 ||
                     device.bitsPerSample != 32 ||
                     !device.floatingPoint) {
-                    tooltip += "\nVideo Mixer will convert this input to 48 kHz for mixing and Opus encoding.";
+                    tooltip += "\nDesktop Studio will convert this input to 48 kHz for mixing and Opus encoding.";
                 }
             }
             microphoneDeviceSelect_->setItemData(index, tooltip, Qt::ToolTipRole);
@@ -3313,7 +3314,7 @@ void MainWindow::updateGoLiveButton() {
     if (startInProgress_) {
         goLiveButton_->setText("STARTING...");
         goLiveButton_->setAccessibleName("Starting stream");
-        goLiveButton_->setAccessibleDescription("Video Mixer is starting the stream.");
+        goLiveButton_->setAccessibleDescription("Desktop Studio is starting the stream.");
         goLiveButton_->setToolTip("Starting the stream...");
         goLiveButton_->setEnabled(false);
         goLiveButton_->setStyleSheet(QString(
@@ -3334,7 +3335,7 @@ void MainWindow::updateGoLiveButton() {
     if (stopInProgress_) {
         goLiveButton_->setText("STOPPING...");
         goLiveButton_->setAccessibleName("Stopping stream");
-        goLiveButton_->setAccessibleDescription("Video Mixer is stopping the stream.");
+        goLiveButton_->setAccessibleDescription("Desktop Studio is stopping the stream.");
         goLiveButton_->setToolTip("Stopping the stream...");
         goLiveButton_->setEnabled(false);
         goLiveButton_->setStyleSheet(QString(
@@ -3707,7 +3708,7 @@ void MainWindow::syncCodecUiState() {
         alphaBackgroundModeSelect_->setEnabled(
             configControlsEnabled_ && !alphaWorkflowEnabled);
         alphaBackgroundModeSelect_->setToolTip(alphaWorkflowEnabled
-            ? "Alpha-preserving encode is enabled, so Video Mixer keeps the source alpha instead of compositing a background."
+            ? "Alpha-preserving encode is enabled, so Desktop Studio keeps the source alpha instead of compositing a background."
             : "Composites transparent BGRA/Spout2 pixels over a solid color before encoding. Use chroma background with H.264/NVENC when true VP9 alpha is too CPU-heavy.");
     }
     if (alphaBackgroundColorButton_) {

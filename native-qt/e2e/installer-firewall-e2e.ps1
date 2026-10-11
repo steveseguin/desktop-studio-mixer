@@ -33,7 +33,7 @@ if (-not $installDir.StartsWith($reportRoot.TrimEnd('\') + '\', [StringCompariso
     throw 'Installer target must remain within the report directory.'
 }
 New-Item -ItemType Directory -Path $runDir -Force | Out-Null
-$exe = Join-Path $installDir 'video-mixer.exe'
+$exe = Join-Path $installDir 'desktop-studio.exe'
 $discovery = Join-Path $runDir 'control.json'
 $publisher = $null
 $results = [ordered]@{ installer = $installer; installerSha256 = (Get-FileHash $installer -Algorithm SHA256).Hash; installDir = $installDir }

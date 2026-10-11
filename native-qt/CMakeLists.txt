@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(video-mixer-native-qt VERSION 0.4.1 LANGUAGES CXX)
+project(video-mixer-native-qt VERSION 0.4.2 LANGUAGES CXX)
 
 # CMake 4 removed compatibility modes older than 3.5. Opus 1.4 still
 # declares a 3.1 minimum, so give bundled dependencies the modern floor
@@ -218,7 +218,7 @@ endif()
 
 add_executable(video-mixer WIN32 ${VERSUS_SOURCES} ${VERSUS_HEADERS} ${VERSUS_RESOURCES} ${APP_ICON_RC})
 
-set_target_properties(video-mixer PROPERTIES AUTOMOC ON)
+set_target_properties(video-mixer PROPERTIES AUTOMOC ON OUTPUT_NAME "desktop-studio")
 
 if(WIN32)
     set(WEBVIEW2_SDK "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2" CACHE PATH "WebView2 SDK (not the runtime)")

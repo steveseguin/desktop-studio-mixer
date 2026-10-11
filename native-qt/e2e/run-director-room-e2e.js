@@ -78,7 +78,7 @@ function resolveCurrentPackage() {
     throw new Error('Could not resolve the package version from CMakeLists.txt');
   }
   const packageDir = path.join(nativeRoot, 'dist', `video-mixer-${versionMatch[1]}-win64`);
-  const publisherPath = path.join(packageDir, 'video-mixer.exe');
+  const publisherPath = path.join(packageDir, 'desktop-studio.exe');
   const artifactManifestPath = path.join(packageDir, 'release-artifact-manifest.json');
   for (const requiredPath of [publisherPath, artifactManifestPath]) {
     if (!fs.existsSync(requiredPath) || !fs.statSync(requiredPath).isFile()) {

@@ -38,7 +38,7 @@ def main():
     assert not a.baseline or a.mode=='opus','Baseline comparison requires fixed Opus mode'
     assert not a.require_handle_cleanup or a.event_handle_hooks,'Handle cleanup checks require handle observation'
     assert (exe.parent/'platforms/qwindows.dll').is_file(),'Complete package required'
-    assert not any(p.name()=='video-mixer.exe' for p in psutil.process_iter()),'Existing capture session'
+    assert not any(p.name()=='desktop-studio.exe' for p in psutil.process_iter()),'Existing capture session'
     saved=d.snapshot(d.SETTINGS_KEY);children=[];logs=[];events=[];report={'cycles':[],'screenshots':[],
         'baseline':a.baseline,'mode':a.mode,'started':time.time(),'soundHooks':not a.no_sound_hooks,
         'selectedWindowAudio':a.selected_window_audio,'eventHandleHooks':a.event_handle_hooks}
@@ -180,7 +180,7 @@ def main():
                 row['eventHandles']=handle_script.exports_sync.snapshot()
                 owned=row['eventHandles']['outstanding']
                 row['retainedAppEvents']=sum(h['api'].startswith('CreateEvent') for h in owned)
-                row['retainedAppMutexes']=sum('Mutex' in h['api'] and h['site'].startswith('video-mixer.exe+') for h in owned)
+                row['retainedAppMutexes']=sum('Mutex' in h['api'] and h['site'].startswith('desktop-studio.exe+') for h in owned)
                 if a.require_handle_cleanup:
                     assert row['eventHandles']['created']>0,'Event observation captured no handles'
                     assert row['retainedAppEvents']==0,'App audio event handle remains after stopping capture'

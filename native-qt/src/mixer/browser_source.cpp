@@ -44,7 +44,7 @@ struct BrowserSource::Impl {
 
 BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFrames, bool transparent, bool allowTalkback)
     : QWidget(nullptr, renderFrames && !transparent ? Qt::Tool | Qt::FramelessWindowHint : Qt::Tool), impl_(std::make_unique<Impl>()) {
-    setWindowTitle("Video Mixer - Browser source");
+    setWindowTitle("Desktop Studio - Browser source");
     setAttribute(Qt::WA_QuitOnClose, false);
     resize(1280, 720);
     auto *escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);

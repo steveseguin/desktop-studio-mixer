@@ -57,7 +57,7 @@ class MatroskaStream {
         QByteArray out = element(0x1a45dfa3, ebml);
         appendBig(out, 0x18538067, 4);
         out += QByteArray::fromHex("01ffffffffffffff"); // Unknown-length Segment.
-        out += element(0x1549a966, integer(0x2ad7b1, 1000000) + element(0x4d80, "Video Mixer") + element(0x5741, "Video Mixer"));
+        out += element(0x1549a966, integer(0x2ad7b1, 1000000) + element(0x4d80, "Desktop Studio") + element(0x5741, "Desktop Studio"));
         QByteArray video = integer(0xd7, 1) + integer(0x73c5, 1) + integer(0x83, 1) + integer(0x9c, 0)
             + element(0x86, "V_MPEG4/ISO/AVC") + element(0x63a2, avcc)
             + integer(0x23e383, 1000000000ULL / std::max(1, fps))

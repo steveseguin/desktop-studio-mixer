@@ -20,7 +20,7 @@ args = parser.parse_args()
 report = Path(args.report).resolve()
 report.mkdir(parents=True, exist_ok=True)
 app = Application(backend='uia').connect(process=args.pid)
-window = app.window(title='Video Mixer - Powered by VDO.Ninja')
+window = app.window(title='Desktop Studio - Powered by VDO.Ninja')
 
 
 def control(name, root=window):

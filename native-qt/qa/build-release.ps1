@@ -22,8 +22,8 @@ $ErrorActionPreference = "Stop"
 
 function Resolve-ExecutablePath([string]$RepoRoot, [string]$BuildDir, [string]$Configuration) {
     $candidates = @(
-        (Join-Path $RepoRoot "$BuildDir/bin/$Configuration/video-mixer.exe"),
-        (Join-Path $RepoRoot "$BuildDir/bin/video-mixer.exe")
+        (Join-Path $RepoRoot "$BuildDir/bin/$Configuration/desktop-studio.exe"),
+        (Join-Path $RepoRoot "$BuildDir/bin/desktop-studio.exe")
     )
     foreach ($candidate in $candidates) {
         if (Test-Path $candidate) {
@@ -309,7 +309,7 @@ if ([string]::IsNullOrWhiteSpace($FfmpegBundleRoot)) {
 
 $exePath = Resolve-ExecutablePath -RepoRoot $repoRoot -BuildDir $BuildDir -Configuration $Configuration
 if (-not $exePath) {
-    throw "Could not locate video-mixer.exe in build output. Build first: $BuildDir"
+    throw "Could not locate desktop-studio.exe in build output. Build first: $BuildDir"
 }
 if (-not (Test-BinaryContainsAsciiString -Path $exePath -Needle $Version)) {
     throw "Selected executable does not contain the requested version string '$Version': $exePath. Rebuild before packaging."
@@ -411,11 +411,11 @@ if (Test-Path -LiteralPath $portableArchive) {
 
 Write-Step "Stage Artifacts"
 New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
-$stagedExecutablePath = Join-Path $stageDir "video-mixer.exe"
+$stagedExecutablePath = Join-Path $stageDir "desktop-studio.exe"
 Copy-Item -Path $exePath -Destination $stagedExecutablePath -Force
 $stagedCopySha256 = (Get-FileHash -LiteralPath $stagedExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($stagedCopySha256 -ne $sourceExecutableSha256) {
-    throw "Staged video-mixer.exe does not match the selected build executable before signing."
+    throw "Staged desktop-studio.exe does not match the selected build executable before signing."
 }
 Copy-Item -Path (Join-Path $repoRoot "resources/vdoninja.ico") -Destination (Join-Path $stageDir "vdoninja.ico") -Force
 
@@ -542,7 +542,7 @@ $notes += "Configuration: $Configuration"
 $notes += "Built: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")"
 $notes += ""
 $notes += "Contents:"
-$notes += "- video-mixer.exe"
+$notes += "- desktop-studio.exe"
 $notes += "- Qt runtime files (if windeployqt is available)"
 $notes += "- vdoninja.ico"
 if ($ffmpegManifest) {
@@ -599,14 +599,14 @@ if (Test-Path $signScript) {
 
 Write-Step "Release Artifact Manifest"
 if (-not (Test-Path -LiteralPath $stagedExecutablePath -PathType Leaf)) {
-    throw "Final staged video-mixer.exe is missing after signing: $stagedExecutablePath"
+    throw "Final staged desktop-studio.exe is missing after signing: $stagedExecutablePath"
 }
 $payloadInventory = Get-ReleasePayloadInventory -StageRoot $stageDir -ExcludedRelativePath `
     'release-artifact-manifest.json'
 $stagedExecutableInfo = Get-Item -LiteralPath $stagedExecutablePath -ErrorAction Stop
 $stagedExecutableSha256 = (Get-FileHash -LiteralPath $stagedExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $payloadExecutableEntries = @($payloadInventory.files | Where-Object {
-    $_.relativePath -ceq 'video-mixer.exe'
+    $_.relativePath -ceq 'desktop-studio.exe'
 })
 if ($payloadExecutableEntries.Count -ne 1 -or
     [int64]$payloadExecutableEntries[0].size -ne [int64]$stagedExecutableInfo.Length -or
@@ -642,7 +642,7 @@ $releaseManifest = [ordered]@{
     version = $Version
     packagedAtUtc = [System.DateTime]::UtcNow.ToString('o', [System.Globalization.CultureInfo]::InvariantCulture)
     artifact = [ordered]@{
-        relativePath = 'video-mixer.exe'
+        relativePath = 'desktop-studio.exe'
         size = [int64]$stagedExecutableInfo.Length
         sha256 = $stagedExecutableSha256
     }
@@ -732,7 +732,7 @@ if (Test-Path -LiteralPath $installerVersionedPath -PathType Leaf) {
 
 if ($RequireReleaseArtifacts) {
     $requiredReleaseArtifacts = @(
-        (Join-Path $stageDir "video-mixer.exe"),
+        (Join-Path $stageDir "desktop-studio.exe"),
         $releaseManifestPath,
         $zipPath,
         $zipStablePath,

@@ -85,7 +85,7 @@ function resolveCurrentPackage() {
     'dist',
     `video-mixer-${versionMatch[1]}-win64`
   );
-  const publisherPath = path.join(packageDir, 'video-mixer.exe');
+  const publisherPath = path.join(packageDir, 'desktop-studio.exe');
   const artifactManifestPath = path.join(packageDir, 'release-artifact-manifest.json');
   for (const requiredPath of [publisherPath, artifactManifestPath]) {
     if (!fs.existsSync(requiredPath) || !fs.statSync(requiredPath).isFile()) {

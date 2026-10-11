@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Local MCP controls for packaged Video Mixer on Windows",
+  "description": "Local MCP controls for packaged Desktop Studio on Windows",
   "engines": { "node": ">=22" },
   "scripts": { "start": "node server.mjs" },
   "dependencies": {

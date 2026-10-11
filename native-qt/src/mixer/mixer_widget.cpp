@@ -304,7 +304,7 @@ struct MixerWidget::Impl {
         audioBox->show();
         programPanel->setVisible(studioMode);
         takeButton->setVisible(studioMode); fadeButton->setVisible(studioMode);
-        brand->setText(QString("<b style='font-size:22px'>Video Mixer</b><br>") +
+        brand->setText(QString("<b style='font-size:22px'>Desktop Studio</b><br>") +
             (studioMode ? "Studio mode: prepare in Preview, then Take to output." : "Single canvas: scene changes and edits go straight to output."));
         sourceBox->setTitle(studioMode ? "Sources - checked items appear in Preview" : "Sources - checked items appear in output");
         previewView->setAccessibleName(studioMode ? "Preview canvas" : "Output canvas - edits go live");
@@ -373,7 +373,7 @@ struct MixerWidget::Impl {
         QObject::connect(popout, &QPushButton::clicked, q, [this] {
             if (!outputView) {
                 outputView = new Canvas;
-                outputView->setWindowTitle("Video Mixer - Program");
+                outputView->setWindowTitle("Desktop Studio - Program");
                 outputView->setAttribute(Qt::WA_DeleteOnClose);
                 outputView->setAttribute(Qt::WA_QuitOnClose, false);
                 outputView->resize(1280, 720);
@@ -474,7 +474,7 @@ struct MixerWidget::Impl {
                 dock.setQuery(query);
                 delete chatDock.data();
                 chatDock = new BrowserSource("chat-dock", dock, false);
-                chatDock->setWindowTitle("Video Mixer - Social Stream chat dock");
+                chatDock->setWindowTitle("Desktop Studio - Social Stream chat dock");
                 chatDock->interact();
             }
             else if (item->browser) item->browser->interact();
@@ -817,7 +817,7 @@ struct MixerWidget::Impl {
                 value.setVisible(false); help.setText("Microphones stay on across scenes by default. Use Mute or enable Scene in the audio mixer.");
             } else {
                 device.setVisible(false);
-                if (kind == "desktop") { value.setVisible(false); help.setText("Captures other applications, excluding Video Mixer, its browsers and monitoring. Avoid adding the same game's individual audio twice."); }
+                if (kind == "desktop") { value.setVisible(false); help.setText("Captures other applications, excluding Desktop Studio, its browsers and monitoring. Avoid adding the same game's individual audio twice."); }
                 if (transparent.isVisible()) { value.setPlaceholderText("https://..."); help.setText("Smooth browser video uses Windows capture at 30 fps. Enable transparency for overlays. Open / Invite allows interaction; Escape parks the browser."); }
                 if (kind == "image") help.setText("PNG, JPEG and other Qt-supported images. Transparent PNGs remain transparent.");
                 if (kind == "title") { value.setText("Your title"); help.setText("A full-frame title card. Resize and position it on the canvas."); }
@@ -1018,7 +1018,7 @@ struct MixerWidget::Impl {
             query.addQueryItem("vd", "0"); query.addQueryItem("muted", ""); query.addQueryItem("deaf", "");
             query.addQueryItem("label", "Studio talkback"); url.setQuery(query);
             talkback = new BrowserSource("talkback-"+room, url, false, false, true);
-            talkback->setWindowTitle("Video Mixer - Guest talkback (use headphones)");
+            talkback->setWindowTitle("Desktop Studio - Guest talkback (use headphones)");
             QObject::connect(talkback, &BrowserSource::errorOccurred, q, [this](const QString &text) { message(text); });
         }
         talkback->interact();

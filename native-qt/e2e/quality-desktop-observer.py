@@ -35,7 +35,7 @@ def main():
             children.append(self)
             events.append({'kind': 'launch', 'time': time.time(), 'pid': self.pid,
                            'executable': str(args[0]), 'tone': 'audio-test-tone.ps1' in ' '.join(map(str, args))})
-            if Path(str(args[0])).name.lower() == 'video-mixer.exe':
+            if Path(str(args[0])).name.lower() == 'desktop-studio.exe':
                 session = frida.attach(self.pid)
                 script = session.create_script(workflow.desktop.OBSERVER)
                 script.on('message', lambda message, data: events.append(
@@ -47,7 +47,7 @@ def main():
         tracked = {}
         while not finished.wait(.5):
             for child in children[:]:
-                if Path(str(child.args[0])).name.lower() != 'video-mixer.exe' or child.poll() is not None:
+                if Path(str(child.args[0])).name.lower() != 'desktop-studio.exe' or child.poll() is not None:
                     continue
                 try:
                     proc = tracked.setdefault(child.pid, psutil.Process(child.pid))

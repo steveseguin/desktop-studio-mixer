@@ -19,7 +19,7 @@ import win32process
 
 process = psutil.Process(args.pid)
 def restore_window(hwnd, _):
-    if win32process.GetWindowThreadProcessId(hwnd)[1] == args.pid and win32gui.GetWindowText(hwnd) == 'Video Mixer - Powered by VDO.Ninja':
+    if win32process.GetWindowThreadProcessId(hwnd)[1] == args.pid and win32gui.GetWindowText(hwnd) == 'Desktop Studio - Powered by VDO.Ninja':
         win32gui.ShowWindow(hwnd, 9)
     return True
 win32gui.EnumWindows(restore_window, None)
@@ -131,7 +131,7 @@ try:
     assert recording.stat().st_size > 10000
     results['recording'] = str(recording)
     measure('off_air_sources')
-    ffmpeg = Path(__file__).resolve().parents[1] / 'dist/video-mixer-portable/ffmpeg/bin/ffmpeg.exe'
+    ffmpeg = Path(__file__).resolve().parents[1] / 'dist/desktop-studio-portable/ffmpeg/bin/ffmpeg.exe'
     metadata = subprocess.run([str(ffmpeg),'-hide_banner','-i',str(recording)],capture_output=True,text=True).stderr
     assert 'Video: h264' in metadata and '1280x720' in metadata and '30 fps' in metadata, metadata
     assert 'Audio: aac' in metadata and '48000 Hz, stereo' in metadata, metadata

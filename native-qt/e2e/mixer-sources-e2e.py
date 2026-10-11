@@ -9,7 +9,7 @@ import time
 if '--fixture' in sys.argv:
     import tkinter
     root = tkinter.Tk()
-    root.title('Video Mixer QA Window')
+    root.title('Desktop Studio QA Window')
     root.geometry('640x360+1500+100')
     canvas = tkinter.Canvas(root, background='#c43a46', highlightthickness=0)
     canvas.pack(fill='both', expand=True)
@@ -38,7 +38,7 @@ try:
     device.expand()
     time.sleep(.3)
     item = next(c for top in app.windows() for c in top.descendants(control_type='ListItem')
-                if c.window_text() == 'Video Mixer QA Window' and c.is_visible())
+                if c.window_text() == 'Desktop Studio QA Window' and c.is_visible())
     item.click_input()
     control('sourceName', dialog).set_edit_text('QA game feed')
     dialog.child_window(title='OK', control_type='Button').invoke()

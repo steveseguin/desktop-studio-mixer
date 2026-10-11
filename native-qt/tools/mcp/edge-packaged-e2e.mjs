@@ -57,7 +57,7 @@ async function rejected(client, name, args) {
 }
 function alive(pid) { try { process.kill(pid, 0); return true; } catch { return false; } }
 function remainingPublishers() {
-  const script = `@(Get-CimInstance Win32_Process -Filter "Name='video-mixer.exe'" | Where-Object {
+  const script = `@(Get-CimInstance Win32_Process -Filter "Name='desktop-studio.exe'" | Where-Object {
     $_.ExecutablePath -eq $env:GC_EDGE_PUBLISHER -and $_.CommandLine.Contains($env:GC_EDGE_REPORT)
   } | Select-Object -ExpandProperty ProcessId) | ConvertTo-Json -Compress`;
   const text = execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { windowsHide: true, encoding: 'utf8',

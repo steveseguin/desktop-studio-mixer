@@ -17,7 +17,7 @@ from pywinauto import mouse
 results = {'exeSha256':hashlib.sha256(Path(psutil.Process(args.pid).exe()).read_bytes()).hexdigest()}
 overlay_color = '#e02020'
 def restore(hwnd, _):
-    if win32process.GetWindowThreadProcessId(hwnd)[1] == args.pid and win32gui.GetWindowText(hwnd) == 'Video Mixer - Powered by VDO.Ninja':
+    if win32process.GetWindowThreadProcessId(hwnd)[1] == args.pid and win32gui.GetWindowText(hwnd) == 'Desktop Studio - Powered by VDO.Ninja':
         win32gui.ShowWindow(hwnd,9)
     return True
 win32gui.EnumWindows(restore,None)
@@ -89,7 +89,7 @@ try:
     assert 8 < control('layerY').iface_range_value.CurrentValue < 12
     near(pixel(.3,.2),(36,180,106)); near(pixel(.1,.1),(16,23,34))
     press('programWindow')
-    popout=app.window(title='Video Mixer - Program'); popout.wait('visible'); popout.set_focus(); time.sleep(.5)
+    popout=app.window(title='Desktop Studio - Program'); popout.wait('visible'); popout.set_focus(); time.sleep(.5)
     # Sample the actual client area, excluding the native window decoration.
     from PIL import ImageGrab
     client=win32gui.GetClientRect(popout.handle)
@@ -128,7 +128,7 @@ try:
     near(pixel(.7,.7),(16,23,34)); phase('removed_silent')
     results['remove_on_air_source'] = 'passed'
     press('studioStartOutput'); wait_output(False); time.sleep(2)
-    ffmpeg=Path('dist/video-mixer-portable/ffmpeg/bin/ffmpeg.exe').resolve()
+    ffmpeg=Path('dist/desktop-studio-portable/ffmpeg/bin/ffmpeg.exe').resolve()
     raw=subprocess.check_output([str(ffmpeg),'-v','error','-i',str(recording),'-an','-vf','scale=160:90','-pix_fmt','rgb24','-f','rawvideo','pipe:1'])
     frames=np.frombuffer(raw,dtype=np.uint8).reshape(-1,90,160,3)
     raw=subprocess.check_output([str(ffmpeg),'-v','error','-i',str(recording),'-vn','-ac','1','-ar','48000','-f','f32le','pipe:1'])
@@ -155,7 +155,7 @@ try:
         psutil.Process(app.process).wait(15)
         child=subprocess.Popen([exe],creationflags=subprocess.CREATE_NO_WINDOW)
         app=Application(backend='uia').connect(process=child.pid,timeout=20)
-        window=app.window(title='Video Mixer - Powered by VDO.Ninja'); window.wait('visible',timeout=25)
+        window=app.window(title='Desktop Studio - Powered by VDO.Ninja'); window.wait('visible',timeout=25)
         control.__defaults__=(window,); press.__defaults__=(window,)
         window.set_focus(); time.sleep(1)
         assert bool(control('studioMode').get_toggle_state())==mode

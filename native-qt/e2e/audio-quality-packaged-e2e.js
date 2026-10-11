@@ -11,7 +11,7 @@ async function main(){
  const output=path.resolve(opts.output),publisher=path.resolve(opts.publisher);fs.mkdirSync(output,{recursive:true});
  check(fs.existsSync(path.join(path.dirname(publisher),'platforms/qwindows.dll')),'Complete package required');
  const {stdout:active}=await exec('powershell.exe',['-NoProfile','-Command',
-  `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'video-mixer.exe' -or ($_.Name -eq 'node.exe' -and $_.ProcessId -ne ${process.pid} -and $_.CommandLine -match '(media-quality-packaged|audio-quality-packaged-e2e)') } | Select-Object -ExpandProperty ProcessId`],{windowsHide:true});
+  `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'desktop-studio.exe' -or ($_.Name -eq 'node.exe' -and $_.ProcessId -ne ${process.pid} -and $_.CommandLine -match '(media-quality-packaged|audio-quality-packaged-e2e)') } | Select-Object -ExpandProperty ProcessId`],{windowsHide:true});
  check(!active.trim(),'Another publisher/quality workflow is active; run quality measurements sequentially');
  const children=[],browsers=[];let server;
  const launch=(exe,args,name,env={})=>{const log=fs.createWriteStream(path.join(output,name+'.log'));

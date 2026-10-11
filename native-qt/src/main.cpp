@@ -509,7 +509,7 @@ int main(int argc, char *argv[]) {
         spdlog::set_level(spdlog::level::debug);
         spdlog::flush_on(spdlog::level::debug);
         spdlog::info("Logging to {}", logPath);
-        spdlog::info("Video Mixer app starting (headless={})", headless);
+        spdlog::info("Desktop Studio app starting (headless={})", headless);
     } catch (...) {
         // Fall back to default logger
     }

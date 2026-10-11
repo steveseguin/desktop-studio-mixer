@@ -558,8 +558,8 @@ function validatePackagedPublisherArtifact(config) {
     throw new Error('Release artifact manifest packagedAtUtc must be an ISO-8601 UTC timestamp');
   }
   if (!manifest.artifact || typeof manifest.artifact !== 'object' ||
-      manifest.artifact.relativePath !== 'video-mixer.exe') {
-    throw new Error('Release artifact manifest must bind artifact.relativePath exactly to video-mixer.exe');
+      manifest.artifact.relativePath !== 'desktop-studio.exe') {
+    throw new Error('Release artifact manifest must bind artifact.relativePath exactly to desktop-studio.exe');
   }
   if (!Number.isSafeInteger(manifest.artifact.size) || manifest.artifact.size < 1) {
     throw new Error('Release artifact manifest artifact.size must be a positive safe integer');
