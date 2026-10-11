@@ -1,5 +1,6 @@
 #include "versus/mixer/browser_source.h"
 #include "versus/mixer/audio_monitor.h"
+#include "versus/mixer/frame_image.h"
 #include "versus/video/window_capture.h"
 #include <QCloseEvent>
 #include <QApplication>
@@ -180,10 +181,8 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                                     auto *state = self->impl_.get();
                                     state->capture = std::make_unique<video::WindowCapture>();
                                     state->capture->setFrameCallback([state](video::CapturedFrame frame) {
-                                        if (frame.format != video::CapturedFrame::Format::BGRA || frame.width <= 0 || frame.height <= 0 ||
-                                            frame.stride < frame.width*4 || frame.data.size() < static_cast<size_t>(frame.stride)*frame.height) return;
-                                        QImage image(frame.data.data(), frame.width, frame.height, frame.stride, QImage::Format_ARGB32);
-                                        std::lock_guard lock(state->frameMutex); state->latest = image.copy();
+                                        auto image = takeFrameImage(std::move(frame)); if (image.isNull()) return;
+                                        std::lock_guard lock(state->frameMutex); state->latest = std::move(image);
                                     });
                                     if (state->capture->startCapture(std::to_string(self->winId()), 1280, 720, 30)) {
                                         state->captureMode = "Windows capture / 30 fps";

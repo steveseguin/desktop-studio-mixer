@@ -43,6 +43,8 @@
 #include <QUrlQuery>
 #include <QUuid>
 #include <algorithm>
+#include <array>
+#include "versus/mixer/frame_image.h"
 #include <cmath>
 #include <climits>
 #include <deque>
@@ -82,6 +84,7 @@ struct Source {
     std::atomic<float> gain{1}, peak{0};
     std::atomic<bool> muted{false}, followsScene{true}, onProgram{false};
     std::atomic<bool> monitored{true};
+    std::atomic<bool> audioActive{false};
     bool transparent = false;
     int cameraWidth = Width, cameraHeight = Height;
     double cameraFps = 30;
@@ -105,6 +108,7 @@ struct Source {
         return kind == "window" || kind == "microphone" || kind == "desktop" ||
             kind == "browser" || kind == "guest" || kind == "wireless";
     }
+    bool hasVideo() const { return kind != "microphone" && kind != "desktop"; }
 };
 
 class Canvas : public QWidget {
@@ -116,6 +120,10 @@ public:
     explicit Canvas(QWidget *parent = nullptr) : QWidget(parent) {
         setMinimumSize(240, 135);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    }
+    void present(const QImage &frame, const QRectF &selected = {}) {
+        if (image.cacheKey() == frame.cacheKey() && selection == selected) return;
+        image = frame; selection = selected; update();
     }
     QRectF viewport() const {
         QSizeF size(Width, Height); size.scale(this->size(), Qt::KeepAspectRatio);
@@ -169,6 +177,20 @@ struct MixerWidget::Impl {
     QString selectedSource;
     QPointF dragStart;
     QRectF dragRect;
+    bool draggingLayer = false;
+    struct CompositionKey {
+        qint64 frame;
+        QRectF target;
+        double opacity;
+        bool operator==(const CompositionKey &) const = default;
+    };
+    struct CompositionCache {
+        QColor background;
+        std::vector<CompositionKey> layers;
+        QImage image;
+    };
+    // Bounded to Preview, Program and the outgoing transition scene.
+    std::array<CompositionCache, 3> compositions;
     QListWidget *sceneList = nullptr, *sourceList = nullptr;
     Canvas *previewView = nullptr, *programView = nullptr;
     QPointer<Canvas> outputView;
@@ -456,14 +478,18 @@ struct MixerWidget::Impl {
             if (!rebuilding) if (auto *layer = selectedLayer()) { layer->opacity = value/100.0; changed(); }
         });
         previewView->pressed = [this](QPointF point) {
+            draggingLayer = false;
             for (auto it = preview().layers.rbegin(); it != preview().layers.rend(); ++it) {
-                if (it->visible && it->rect.contains(point)) {
+                const auto item = source(it->source);
+                if (it->visible && it->opacity > 0 && item && item->hasVideo() && it->rect.contains(point)) {
                     selectedSource = it->source; dragRect = it->rect; dragStart = point;
+                    draggingLayer = true;
                     rebuildSources(); syncInspector(); break;
                 }
             }
         };
         previewView->dragged = [this](QPointF point) {
+            if (!draggingLayer) return;
             if (auto *layer = selectedLayer()) {
                 const auto delta = point-dragStart;
                 layer->rect.moveTopLeft({std::clamp(dragRect.x()+delta.x(), 0.0, std::max(0.0, 1-dragRect.width())),
@@ -796,13 +822,13 @@ struct MixerWidget::Impl {
 
     void startSource(const std::shared_ptr<Source> &item) {
         item->error.clear(); item->lastFrame = 0; item->frames = 0;
+        item->audioActive = item->hasAudio();
         const std::weak_ptr<Source> weak = item;
         auto frame = [weak](video::CapturedFrame captured) {
             const auto item = weak.lock();
-            if (!item || captured.format != video::CapturedFrame::Format::BGRA || captured.width <= 0 || captured.height <= 0 ||
-                captured.stride < captured.width*4 || captured.data.size() < static_cast<size_t>(captured.stride)*captured.height) return;
-            QImage image(captured.data.data(), captured.width, captured.height, captured.stride, QImage::Format_ARGB32);
-            std::lock_guard lock(item->imageMutex); item->image = image.copy(); item->lastFrame = now100ns(); ++item->frames;
+            if (!item) return;
+            auto image = takeFrameImage(std::move(captured)); if (image.isNull()) return;
+            std::lock_guard lock(item->imageMutex); item->image = std::move(image); item->lastFrame = now100ns(); ++item->frames;
         };
         auto audioChunk = [weak](audio::StreamChunk &&chunk) {
             const auto item = weak.lock(); if (!item) return;
@@ -879,6 +905,7 @@ struct MixerWidget::Impl {
     }
 
     void stopSource(const std::shared_ptr<Source> &item) {
+        item->audioActive = false;
         ++item->cameraGeneration;
         if (item->window) item->window->stopCapture(); item->window.reset();
         if (item->camera) item->camera->stopCapture(); item->camera.reset();
@@ -1001,36 +1028,54 @@ struct MixerWidget::Impl {
         for (auto &item : sources) item->onProgram = std::any_of(program.layers.begin(), program.layers.end(),
             [&](const auto &layer) { return layer.source == item->id && layer.visible; });
     }
-    QImage compose(const Scene &scene) {
-        QImage image(Width, Height, QImage::Format_ARGB32_Premultiplied); image.fill(scene.background);
-        QPainter painter(&image); painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    QImage compose(const Scene &scene, size_t slot) {
+        std::vector<CompositionKey> keys;
+        std::vector<QImage> frames;
+        keys.reserve(scene.layers.size()); frames.reserve(scene.layers.size());
         for (const auto &layer : scene.layers) {
-            if (!layer.visible) continue;
-            auto item = source(layer.source); if (!item || item->kind == "microphone" || item->kind == "desktop") continue;
+            if (!layer.visible || layer.opacity <= 0) continue;
+            auto item = source(layer.source); if (!item || !item->hasVideo()) continue;
             QImage frame; { std::lock_guard lock(item->imageMutex); frame = item->image; }
             if (frame.isNull()) continue;
             const QRectF bounds(layer.rect.x()*Width, layer.rect.y()*Height, layer.rect.width()*Width, layer.rect.height()*Height);
             QSizeF fitted(frame.size()); fitted.scale(bounds.size(), Qt::KeepAspectRatio);
             const QRectF target(bounds.center().x()-fitted.width()/2, bounds.center().y()-fitted.height()/2, fitted.width(), fitted.height());
-            painter.setOpacity(layer.opacity); painter.drawImage(target, frame);
+            keys.push_back({frame.cacheKey(), target, layer.opacity}); frames.push_back(std::move(frame));
         }
-        return image;
+        auto &cached = compositions[slot];
+        for (const auto &candidate : compositions) {
+            if (!candidate.image.isNull() && candidate.background == scene.background && candidate.layers == keys) {
+                if (&cached != &candidate) cached = candidate;
+                return cached.image;
+            }
+        }
+        QImage image(Width, Height, QImage::Format_ARGB32_Premultiplied); image.fill(scene.background);
+        QPainter painter(&image); painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        for (size_t i = 0; i < keys.size(); ++i) {
+            painter.setOpacity(keys[i].opacity); painter.drawImage(keys[i].target, frames[i]);
+        }
+        painter.end();
+        cached = {scene.background, std::move(keys), std::move(image)};
+        return cached.image;
     }
     void render() {
-        previewView->image = compose(preview());
-        previewView->selection = selectedLayer() ? selectedLayer()->rect : QRectF(); previewView->update();
-        QImage frame = compose(program);
+        if (previewView->isVisible()) {
+            const auto item = source(selectedSource);
+            const auto selection = item && item->hasVideo() && selectedLayer() ? selectedLayer()->rect : QRectF();
+            previewView->present(compose(preview(), 0), selection);
+        }
+        QImage frame = compose(program, 1);
         if (fading) {
             const double fraction = std::min(1.0, transition.elapsed()/400.0);
-            QImage old = compose(previous); QPainter painter(&old); painter.setOpacity(fraction); painter.drawImage(0, 0, frame); painter.end(); frame = old;
+            QImage old = compose(previous, 2); QPainter painter(&old); painter.setOpacity(fraction); painter.drawImage(0, 0, frame); painter.end(); frame = old;
             if (fraction >= 1) fading = false;
         }
-        programView->image = frame; programView->update();
-        if (outputView) { outputView->image = frame; outputView->update(); }
+        programView->present(frame);
+        if (outputView) outputView->present(frame);
         previewTitle->setText("PREVIEW  /  " + preview().name);
         const bool publishingProgram = core->isLive() && core->getSourceHealth().mode == app::VideoSourceMode::Mixer;
         programTitle->setText(QString(publishingProgram ? "LIVE OUTPUT  /  " : "PROGRAM  /  ") + program.name);
-        if (core->isLive()) {
+        if (publishingProgram) {
             video::CapturedFrame captured;
             captured.width = Width; captured.height = Height; captured.stride = frame.bytesPerLine(); captured.timestamp = now100ns();
             captured.data.assign(frame.constBits(), frame.constBits()+frame.sizeInBytes()); core->submitMixerVideo(std::move(captured));
@@ -1072,8 +1117,10 @@ struct MixerWidget::Impl {
             {
             std::lock_guard sourcesLock(sourcesMutex);
             for (const auto &item : sources) {
+                if (!item->audioActive) continue;
                 float peak = 0; const float sourceGain = item->muted ? 0 : item->gain.load();
                 const float gain = (!item->followsScene || item->onProgram) ? sourceGain : 0;
+                const bool listen = item->monitored;
                 std::lock_guard lock(item->audioMutex);
                 const int delay = item->audioDelayMs.load();
                 if (item->appliedDelayMs != delay) {
@@ -1084,10 +1131,13 @@ struct MixerWidget::Impl {
                 for (size_t i = 0; i < chunk.samples.size(); ++i) {
                     float sample = 0;
                     if (i < count) { sample = item->samples.front(); item->samples.pop_front(); }
-                    item->delayedSamples.push_back(sample);
-                    const float delayed = item->delayedSamples.front(); item->delayedSamples.pop_front();
+                    float delayed = sample;
+                    if (delay) {
+                        item->delayedSamples.push_back(sample);
+                        delayed = item->delayedSamples.front(); item->delayedSamples.pop_front();
+                    }
                     chunk.samples[i] += delayed*gain; peak = std::max(peak, std::abs(sample*sourceGain));
-                    if (item->monitored) headphones[i] += sample*sourceGain;
+                    if (listen) headphones[i] += sample*sourceGain;
                 }
                 item->peak = std::max(peak, item->peak.load()*0.92f);
             }
