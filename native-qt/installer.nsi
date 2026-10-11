@@ -1,30 +1,30 @@
-﻿; Game Capture Native Qt Installer Script
+﻿; Video Mixer Native Qt Installer Script
 ; NSIS 3.x
 
 !include "MUI2.nsh"
 
 ; General
-Name "Game Capture"
+Name "Video Mixer"
 !ifndef VERSION
-!define VERSION "0.2.59"
+!define VERSION "0.1.0"
 !endif
 !ifndef BUILD_BIN_DIR
 !define BUILD_BIN_DIR "build\bin"
 !endif
 !ifndef OUTFILE
-!define OUTFILE "dist\game-capture-setup.exe"
+!define OUTFILE "dist\video-mixer-setup.exe"
 !endif
-!define FIREWALL_RULE_UDP "Game Capture WebRTC UDP"
+!define FIREWALL_RULE_UDP "Video Mixer WebRTC UDP"
 OutFile "${OUTFILE}"
-InstallDir "$PROGRAMFILES64\Game Capture"
-InstallDirRegKey HKLM "Software\GameCapture" "InstallDir"
+InstallDir "$PROGRAMFILES64\Video Mixer"
+InstallDirRegKey HKLM "Software\VideoMixer" "InstallDir"
 RequestExecutionLevel admin
 
 ; Version Info
 VIProductVersion "${VERSION}.0"
-VIAddVersionKey "ProductName" "Game Capture"
+VIAddVersionKey "ProductName" "Video Mixer"
 VIAddVersionKey "ProductVersion" "${VERSION}"
-VIAddVersionKey "FileDescription" "Game Capture - Windows Game Capture"
+VIAddVersionKey "FileDescription" "Video Mixer - Windows Video Mixer"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "LegalCopyright" "Copyright (c) 2026"
 
@@ -45,15 +45,15 @@ VIAddVersionKey "LegalCopyright" "Copyright (c) 2026"
 ; Languages
 !insertmacro MUI_LANGUAGE "English"
 
-Function EnsureGameCaptureClosed
+Function EnsureVideoMixerClosed
     ; Avoid "Error opening file for writing" when Qt DLLs are still locked.
-    nsExec::ExecToLog 'taskkill /F /T /IM game-capture.exe'
+    nsExec::ExecToLog 'taskkill /F /T /IM video-mixer.exe'
     Pop $0
 FunctionEnd
 
-Function un.EnsureGameCaptureClosed
+Function un.EnsureVideoMixerClosed
     ; Uninstaller needs its own function namespace in NSIS.
-    nsExec::ExecToLog 'taskkill /F /T /IM game-capture.exe'
+    nsExec::ExecToLog 'taskkill /F /T /IM video-mixer.exe'
     Pop $0
 FunctionEnd
 
@@ -65,24 +65,24 @@ done:
 FunctionEnd
 
 Function AddFirewallRules
-    DetailPrint "Adding Windows Firewall rule for Game Capture WebRTC..."
+    DetailPrint "Adding Windows Firewall rule for Video Mixer WebRTC..."
     ; Replace stale rules so upgrades keep the installed executable path current.
     nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${FIREWALL_RULE_UDP}"'
     Pop $0
-    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="${FIREWALL_RULE_UDP}" dir=in action=allow program="$INSTDIR\game-capture.exe" protocol=UDP enable=yes profile=any'
+    nsExec::ExecToLog 'netsh advfirewall firewall add rule name="${FIREWALL_RULE_UDP}" dir=in action=allow program="$INSTDIR\video-mixer.exe" protocol=UDP enable=yes profile=any'
     Pop $0
     StrCmp $0 "0" firewall_added
     DetailPrint "WARNING: Windows Firewall rule could not be added (netsh result: $0)."
-    MessageBox MB_ICONEXCLAMATION|MB_OK "Game Capture was copied, but Windows Firewall could not be configured (result: $0). Direct viewer connections may be blocked. Allow inbound UDP for $INSTDIR\game-capture.exe in Windows Firewall, or ask your administrator if policy manages these rules." /SD IDOK
+    MessageBox MB_ICONEXCLAMATION|MB_OK "Video Mixer was copied, but Windows Firewall could not be configured (result: $0). Direct viewer connections may be blocked. Allow inbound UDP for $INSTDIR\video-mixer.exe in Windows Firewall, or ask your administrator if policy manages these rules." /SD IDOK
     Goto firewall_done
 firewall_added:
-    DetailPrint "Windows Firewall rule added for $INSTDIR\game-capture.exe."
+    DetailPrint "Windows Firewall rule added for $INSTDIR\video-mixer.exe."
 firewall_done:
 FunctionEnd
 
 Function un.RemoveFirewallRules
-    DetailPrint "Removing Windows Firewall rule for Game Capture WebRTC..."
-    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${FIREWALL_RULE_UDP}" program="$INSTDIR\game-capture.exe"'
+    DetailPrint "Removing Windows Firewall rule for Video Mixer WebRTC..."
+    nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="${FIREWALL_RULE_UDP}" program="$INSTDIR\video-mixer.exe"'
     Pop $0
     StrCmp $0 "0" firewall_removed
     DetailPrint "Windows Firewall rule was absent or could not be removed (netsh result: $0)."
@@ -91,23 +91,23 @@ FunctionEnd
 
 ; Installer Section
 Section "Install"
-    Call EnsureGameCaptureClosed
+    Call EnsureVideoMixerClosed
     Call RemoveExistingInstall
-    Call EnsureGameCaptureClosed
+    Call EnsureVideoMixerClosed
     Sleep 600
 
     SetOutPath "$INSTDIR"
 
     ; Best effort cleanup of stale/legacy file names before copy.
-    Delete /REBOOTOK "$INSTDIR\game-capture.exe"
+    Delete /REBOOTOK "$INSTDIR\video-mixer.exe"
     Delete /REBOOTOK "$INSTDIR\game-catpure.exe"
     Delete /REBOOTOK "$INSTDIR\game-catpure.ede"
 
     ; Main executable
     ClearErrors
-    File "${BUILD_BIN_DIR}\game-capture.exe"
+    File "${BUILD_BIN_DIR}\video-mixer.exe"
     IfErrors 0 +3
-    MessageBox MB_ICONSTOP|MB_OK "Game Capture is still running or files are locked. Close the app and retry setup."
+    MessageBox MB_ICONSTOP|MB_OK "Video Mixer is still running or files are locked. Close the app and retry setup."
     Abort
     File /nonfatal "${BUILD_BIN_DIR}\*.dll"
     File /nonfatal "${BUILD_BIN_DIR}\vdoninja.ico"
@@ -146,20 +146,20 @@ Section "Install"
 
     ; Create shortcuts
     SetOutPath "$INSTDIR"
-    CreateDirectory "$SMPROGRAMS\Game Capture"
-    CreateShortcut "$SMPROGRAMS\Game Capture\Game Capture.lnk" "$INSTDIR\game-capture.exe" "" "$INSTDIR\game-capture.exe"
-    CreateShortcut "$SMPROGRAMS\Game Capture\Uninstall.lnk" "$INSTDIR\uninstall.exe"
-    CreateShortcut "$DESKTOP\Game Capture.lnk" "$INSTDIR\game-capture.exe" "" "$INSTDIR\game-capture.exe"
+    CreateDirectory "$SMPROGRAMS\Video Mixer"
+    CreateShortcut "$SMPROGRAMS\Video Mixer\Video Mixer.lnk" "$INSTDIR\video-mixer.exe" "" "$INSTDIR\video-mixer.exe"
+    CreateShortcut "$SMPROGRAMS\Video Mixer\Uninstall.lnk" "$INSTDIR\uninstall.exe"
+    CreateShortcut "$DESKTOP\Video Mixer.lnk" "$INSTDIR\video-mixer.exe" "" "$INSTDIR\video-mixer.exe"
 
     ; Registry
-    WriteRegStr HKLM "Software\GameCapture" "InstallDir" "$INSTDIR"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GameCapture" "DisplayName" "Game Capture"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GameCapture" "UninstallString" "$INSTDIR\uninstall.exe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GameCapture" "DisplayVersion" "${VERSION}"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GameCapture" "DisplayIcon" "$INSTDIR\game-capture.exe"
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GameCapture" "Publisher" "VDO.Ninja"
-    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GameCapture" "NoModify" 1
-    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GameCapture" "NoRepair" 1
+    WriteRegStr HKLM "Software\VideoMixer" "InstallDir" "$INSTDIR"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoMixer" "DisplayName" "Video Mixer"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoMixer" "UninstallString" "$INSTDIR\uninstall.exe"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoMixer" "DisplayVersion" "${VERSION}"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoMixer" "DisplayIcon" "$INSTDIR\video-mixer.exe"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoMixer" "Publisher" "VDO.Ninja"
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoMixer" "NoModify" 1
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoMixer" "NoRepair" 1
 
     ; Create uninstaller
     WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -167,7 +167,7 @@ SectionEnd
 
 ; Uninstaller Section
 Section "Uninstall"
-    Call un.EnsureGameCaptureClosed
+    Call un.EnsureVideoMixerClosed
     Call un.RemoveFirewallRules
 
     ; Remove files
@@ -185,13 +185,13 @@ Section "Uninstall"
     RMDir "$INSTDIR"
 
     ; Remove shortcuts
-    Delete "$SMPROGRAMS\Game Capture\Game Capture.lnk"
-    Delete "$SMPROGRAMS\Game Capture\Uninstall.lnk"
-    Delete "$DESKTOP\Game Capture.lnk"
-    RMDir "$SMPROGRAMS\Game Capture"
+    Delete "$SMPROGRAMS\Video Mixer\Video Mixer.lnk"
+    Delete "$SMPROGRAMS\Video Mixer\Uninstall.lnk"
+    Delete "$DESKTOP\Video Mixer.lnk"
+    RMDir "$SMPROGRAMS\Video Mixer"
 
     ; Remove registry
-    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\GameCapture"
-    DeleteRegKey HKLM "Software\GameCapture"
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoMixer"
+    DeleteRegKey HKLM "Software\VideoMixer"
 SectionEnd
 

@@ -153,7 +153,7 @@ std::string lowerCopy(std::string value) {
 }  // namespace
 
 int main(int argc, char **argv) {
-    std::string name = "Game Capture Spout Alpha Test";
+    std::string name = "Video Mixer Spout Alpha Test";
     int width = kDefaultWidth;
     int height = kDefaultHeight;
     int fps = kDefaultFps;

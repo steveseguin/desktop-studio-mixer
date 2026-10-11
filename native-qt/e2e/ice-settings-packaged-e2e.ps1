@@ -18,7 +18,7 @@ if ([string]::IsNullOrWhiteSpace($ReportDir)) {
 $ReportDir = [System.IO.Path]::GetFullPath($ReportDir)
 New-Item -ItemType Directory -Force -Path $ReportDir | Out-Null
 
-$settingsPath = 'HKCU:\Software\VDO.Ninja\Game Capture\network'
+$settingsPath = 'HKCU:\Software\VDO.Ninja\Video Mixer\network'
 $valueName = 'iceMode'
 $originalKeyExists = Test-Path -LiteralPath $settingsPath
 $originalValueExists = $false
@@ -40,7 +40,7 @@ function Set-IceSetting([AllowNull()][string]$Value, [switch]$Missing) {
         Remove-ItemProperty -LiteralPath $settingsPath -Name $valueName -ErrorAction SilentlyContinue
     } else {
         $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey(
-            'Software\VDO.Ninja\Game Capture\network')
+            'Software\VDO.Ninja\Video Mixer\network')
         try {
             $key.SetValue($valueName, $Value, [Microsoft.Win32.RegistryValueKind]::String)
         } finally {
@@ -62,7 +62,7 @@ function Invoke-Case(
     # Give each actual application launch a fresh, exclusive log directory.
     $caseRoot = Join-Path $ReportDir ($Name + '-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $caseRoot -Force | Out-Null
-    $logPath = Join-Path $caseRoot 'GameCapture\logs\game-capture-debug.log'
+    $logPath = Join-Path $caseRoot 'VideoMixer\logs\video-mixer-debug.log'
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $publisher
     $startInfo.WorkingDirectory = $packageRoot
@@ -126,7 +126,7 @@ try {
     if ($originalValueExists) {
         New-Item -Path $settingsPath -Force | Out-Null
         $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey(
-            'Software\VDO.Ninja\Game Capture\network')
+            'Software\VDO.Ninja\Video Mixer\network')
         try {
             $key.SetValue($valueName, $originalValue, $originalKind)
         } finally {

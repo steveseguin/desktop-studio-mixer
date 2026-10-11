@@ -22,7 +22,7 @@ const sender = spawn(senderPath, [`--name=${source}`, '--pattern=alpha-moving-ed
 let senderError; sender.on('error', e => senderError = e);
 const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(dir, 'server.mjs')],
   env: { ...process.env, GAME_CAPTURE_MCP_EXECUTABLE: path.resolve(publisher) }, stderr: 'pipe' });
-const client = new Client({ name: 'packaged-game-capture-e2e', version: '1.0.0' });
+const client = new Client({ name: 'packaged-video-mixer-e2e', version: '1.0.0' });
 let browser, obs, attachedProcess; const evidence = [];
 async function call(name, args = {}, expectError = false) {
   const result = await client.callTool({ name: `game_capture_${name}`, arguments: args }, undefined, { timeout: 45000 });

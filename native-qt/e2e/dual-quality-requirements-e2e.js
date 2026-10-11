@@ -227,9 +227,9 @@ function detectPublisherBinary(explicitPath) {
   }
 
   const candidates = [
-    path.resolve(__dirname, '../build-review2/bin/Release/game-capture.exe'),
-    path.resolve(__dirname, '../build-test/bin/Release/game-capture.exe'),
-    path.resolve(__dirname, '../build/bin/Release/game-capture.exe')
+    path.resolve(__dirname, '../build-review2/bin/Release/video-mixer.exe'),
+    path.resolve(__dirname, '../build-test/bin/Release/video-mixer.exe'),
+    path.resolve(__dirname, '../build/bin/Release/video-mixer.exe')
   ];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
@@ -257,7 +257,7 @@ function buildViewerUrl(streamId, room, password) {
 function spawnPublisher(config, options) {
   const command = detectPublisherBinary(config.publisherPath);
   if (!command) {
-    throw new Error('Could not find game-capture.exe. Build native-qt first or pass --publisher-path.');
+    throw new Error('Could not find video-mixer.exe. Build native-qt first or pass --publisher-path.');
   }
 
   const durationMs = Math.max(
@@ -455,7 +455,7 @@ async function sendInitMessage(page, room, role, video, audio, label, timeoutMs)
       audio: !!audio,
       label,
       system: {
-        app: 'game-capture-e2e-dual-requirements',
+        app: 'video-mixer-e2e-dual-requirements',
         version: '1',
         platform: 'playwright',
         browser: 'chromium'

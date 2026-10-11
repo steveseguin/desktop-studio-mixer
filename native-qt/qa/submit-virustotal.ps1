@@ -83,11 +83,11 @@ if (-not $curl) {
 }
 
 $allExes = Get-ChildItem -Path $DistDir -File -Filter "*.exe" -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -like "game-capture*.exe" -and $_.Name -notlike "*uninstall*" }
+    Where-Object { $_.Name -like "video-mixer*.exe" -and $_.Name -notlike "*uninstall*" }
 
 if ($Version) {
-    $stableNames = @("game-capture-setup.exe", "game-capture-portable.exe")
-    $versionPrefix = "game-capture-$Version-"
+    $stableNames = @("video-mixer-setup.exe", "video-mixer-portable.exe")
+    $versionPrefix = "video-mixer-$Version-"
     $allExes = $allExes | Where-Object {
         ($stableNames -contains $_.Name) -or $_.Name.StartsWith($versionPrefix, [System.StringComparison]::OrdinalIgnoreCase)
     }
@@ -96,7 +96,7 @@ if ($Version) {
 $allExes = $allExes | Sort-Object Name
 
 if (-not $allExes) {
-    Write-Host "VirusTotal: no game-capture EXEs found in $DistDir; skipping."
+    Write-Host "VirusTotal: no video-mixer EXEs found in $DistDir; skipping."
     exit 0
 }
 

@@ -46,7 +46,8 @@ enum class AudioSourceMode {
 enum class VideoSourceMode {
     Window,
     Spout,
-    Camera
+    Camera,
+    Mixer
 };
 
 struct StreamMetrics {
@@ -173,6 +174,8 @@ class VersusApp {
     bool startCapture(const std::string &windowId);
     bool startCapture(VideoSourceMode mode, const std::string &sourceId);
     void stopCapture();
+    void submitMixerVideo(versus::video::CapturedFrame frame);
+    void submitMixerAudio(versus::audio::StreamChunk chunk);
     void setSelectedWindow(const std::string &windowId);
     void setVideoSourceMode(VideoSourceMode mode);
 
@@ -214,6 +217,8 @@ class VersusApp {
     void onRuntimeEvent(RuntimeEventCallback cb);
 
   private:
+    std::atomic<bool> mixerInputReady_{false};
+    std::mutex mixerInputMutex_;
     friend class VersusAppTestAccess;
     struct PeerSession;
     struct PendingDuplicateOfferRecheck;

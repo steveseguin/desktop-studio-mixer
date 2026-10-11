@@ -266,7 +266,7 @@ std::string consumedTurnConfigFingerprint(
         canonical.push_back(std::move(entry));
     }
     return sha256Hex(
-        "game-capture-consumed-turn-config-v1\n" + canonical.dump());
+        "video-mixer-consumed-turn-config-v1\n" + canonical.dump());
 }
 
 std::optional<ValidatedTurnRegistry> validateTurnRegistry(const json &root) {
@@ -340,7 +340,7 @@ std::optional<ValidatedTurnRegistry> validateTurnRegistry(const json &root) {
     }
 
     const std::string canonicalText =
-        "game-capture-turn-registry-config-v1\n" + canonical.dump();
+        "video-mixer-turn-registry-config-v1\n" + canonical.dump();
     validated.canonicalConfigSha256 = sha256Hex(canonicalText);
     validated.consumedConfigSha256 =
         consumedTurnConfigFingerprint(validated.servers);
@@ -366,7 +366,7 @@ std::wstring widen(const std::string &value) {
 
 TurnRegistryHttpResponse fetchTurnRegistryHttp(const TurnRegistryRequest &request) {
     TurnRegistryHttpResponse response;
-    HINTERNET sessionHandle = WinHttpOpen(L"GameCapture/1.0",
+    HINTERNET sessionHandle = WinHttpOpen(L"VideoMixer/1.0",
                                           WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                           WINHTTP_NO_PROXY_NAME,
                                           WINHTTP_NO_PROXY_BYPASS,

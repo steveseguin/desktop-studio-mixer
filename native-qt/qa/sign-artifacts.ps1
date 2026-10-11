@@ -122,8 +122,8 @@ if ($FilePaths -and @($FilePaths).Count -gt 0) {
     }
     $allExes = @($allExes | Where-Object { $_.Extension -ieq ".exe" })
 } else {
-    $versionedSetupPath = Join-Path $DistDir "game-capture-$Version-setup.exe"
-    $versionedPortablePath = Join-Path $DistDir "game-capture-$Version-portable.exe"
+    $versionedSetupPath = Join-Path $DistDir "video-mixer-$Version-setup.exe"
+    $versionedPortablePath = Join-Path $DistDir "video-mixer-$Version-portable.exe"
     if (-not (Test-Path -LiteralPath $versionedSetupPath -PathType Leaf)) { throw 'Versioned setup EXE is required.' }
     if (-not (Test-Path -LiteralPath $versionedPortablePath -PathType Leaf)) { throw 'Versioned portable EXE is required.' }
     $allExes = @(
@@ -134,7 +134,7 @@ if ($FilePaths -and @($FilePaths).Count -gt 0) {
 
 $allExes = @($allExes | Sort-Object FullName -Unique)
 if (@($allExes).Count -eq 0) {
-    Write-Host "Code signing: no matching game-capture EXEs found; skipping."
+    Write-Host "Code signing: no matching video-mixer EXEs found; skipping."
     exit 0
 }
 
@@ -196,8 +196,8 @@ if ($signingAvailable) {
 }
 
 if ($DistDir) {
-    $stableSetupPath = Join-Path $DistDir 'game-capture-setup.exe'
-    $stablePortablePath = Join-Path $DistDir 'game-capture-portable.exe'
+    $stableSetupPath = Join-Path $DistDir 'video-mixer-setup.exe'
+    $stablePortablePath = Join-Path $DistDir 'video-mixer-portable.exe'
 
     if ((Test-Path -LiteralPath $stableSetupPath) -and -not (Test-Path -LiteralPath $stableSetupPath -PathType Leaf)) {
         throw 'Stable setup destination must be absent or a literal file.'

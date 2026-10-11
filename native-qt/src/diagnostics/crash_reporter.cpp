@@ -113,7 +113,7 @@ void writeTextFile(const std::filesystem::path &path,
         const DWORD processId = GetCurrentProcessId();
         const DWORD threadId = GetCurrentThreadId();
         out << "{\n";
-        out << "  \"schema\": \"game-capture-crash-report-v1\",\n";
+        out << "  \"schema\": \"video-mixer-crash-report-v1\",\n";
         out << "  \"reason\": \"" << jsonEscape(reason ? reason : "unknown") << "\",\n";
         out << "  \"timestamp\": \"" << jsonEscape(timestampForFile()) << "\",\n";
         out << "  \"process_id\": " << processId << ",\n";
@@ -246,7 +246,7 @@ std::string defaultCrashDirectory() {
     std::filesystem::path crashDir = localAppData && *localAppData
         ? std::filesystem::path(localAppData)
         : std::filesystem::current_path();
-    crashDir /= "GameCapture";
+    crashDir /= "VideoMixer";
     crashDir /= "crashes";
     return crashDir.string();
 #else

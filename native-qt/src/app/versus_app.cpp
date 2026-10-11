@@ -682,6 +682,7 @@ const char *audioSourceModeName(AudioSourceMode mode) {
 
 const char *videoSourceModeName(VideoSourceMode mode) {
     switch (mode) {
+        case VideoSourceMode::Mixer: return "mixer";
         case VideoSourceMode::Camera:
             return "camera";
         case VideoSourceMode::Spout:
@@ -704,7 +705,7 @@ nlohmann::json integerRange(int minValue, int maxValue, int step = 0) {
 }
 
 std::string publisherVersionTag() {
-    return std::string("game-capture-native-qt/") + APP_VERSION;
+    return std::string("video-mixer-native-qt/") + APP_VERSION;
 }
 
 webrtc::PeerConfig::VideoCodec toPeerVideoCodec(video::VideoCodec codec) {
@@ -987,10 +988,10 @@ bool VersusApp::startCapture(VideoSourceMode mode, const std::string &sourceId) 
                 false);
             return false;
         }
-    } else {
+    } else if (mode != VideoSourceMode::Mixer) {
         return false;
     }
-    startAudioCapture(selectedWindowProcessId);
+    if (mode != VideoSourceMode::Mixer) startAudioCapture(selectedWindowProcessId);
 
     video::EncoderConfig config;
     {
@@ -1136,11 +1137,25 @@ bool VersusApp::startCapture(VideoSourceMode mode, const std::string &sourceId) 
     }
     startEncodeThread();
     startVideoMaintenanceThread();
+    mixerInputReady_.store(mode == VideoSourceMode::Mixer, std::memory_order_release);
     startupRollback.armed = false;
     return true;
 }
 
+void VersusApp::submitMixerVideo(video::CapturedFrame frame) {
+    std::lock_guard lock(mixerInputMutex_);
+    if (mixerInputReady_.load(std::memory_order_acquire) && live_) handleVideoFrame(std::move(frame));
+}
+
+void VersusApp::submitMixerAudio(audio::StreamChunk chunk) {
+    std::lock_guard lock(mixerInputMutex_);
+    if (mixerInputReady_.load(std::memory_order_acquire) && live_) handlePrimaryAudioChunk(std::move(chunk));
+}
+
 void VersusApp::stopCapture() {
+    mixerInputReady_.store(false, std::memory_order_release);
+    // Drain an in-flight mixer callback before resetting encoders/resampler state.
+    { std::lock_guard lock(mixerInputMutex_); }
     stopVideoMaintenanceThread();
     stopEncodeThread();
     windowCapture_.stopCapture();
@@ -1346,7 +1361,7 @@ bool VersusApp::goLive(const StartOptions &options) {
         output::MediaConfig media;
         media.width = videoState.config.width; media.height = videoState.config.height; media.fps = videoState.config.frameRate;
         media.audioChannels = audioOutputChannels_.load();
-        media.audioEnabled = lifecycle.audioSourceMode != AudioSourceMode::None || lifecycle.includeMicrophone;
+        media.audioEnabled = lifecycle.videoSourceMode == VideoSourceMode::Mixer || lifecycle.audioSourceMode != AudioSourceMode::None || lifecycle.includeMicrophone;
         media.iceMode = options.iceMode;
         media.ffmpegPath = video::VideoEncoder::resolveFfmpegPath(videoState.config.ffmpegPath);
         auto destination = std::make_shared<output::Session>(options.output, media, [this] {
@@ -2011,7 +2026,7 @@ ConnectionHealth VersusApp::getConnectionHealth() const {
 
 std::string VersusApp::buildDiagnosticsJson() const {
     nlohmann::json root;
-    root["schema"] = "game-capture-diagnostics-v1";
+    root["schema"] = "video-mixer-diagnostics-v1";
     root["version"] = publisherVersionTag();
     root["generated_steady_ms"] = steadyNowMs();
 
@@ -2442,7 +2457,7 @@ std::string VersusApp::buildDiagnosticsJson() const {
     if (auto external = externalOutput_.load()) {
         const auto status = external->status();
         const auto config = lifecycleStateSnapshot().startOptions.output;
-        const bool audioEnabled = diagnosticsAudioSourceMode != AudioSourceMode::None || diagnosticsIncludeMicrophone;
+        const bool audioEnabled = lifecycleStateSnapshot().videoSourceMode == VideoSourceMode::Mixer || diagnosticsAudioSourceMode != AudioSourceMode::None || diagnosticsIncludeMicrophone;
         root["audio"]["codec"] = audioEnabled ? (external->usesPcmInput() ? "aac" : "opus") : "none";
         root["output"] = {{"protocol", output::protocolName(config.protocol)},
             {"destination", output::destinationLabel(config)}, {"state", static_cast<int>(status.state)},
@@ -4682,7 +4697,7 @@ void VersusApp::sendPeerRemoteStats(const std::shared_ptr<PeerSession> &peer) {
 
     nlohmann::json stats;
     stats["label"] = lifecycleState.startOptions.label.empty()
-        ? "Game Capture"
+        ? "Video Mixer"
         : lifecycleState.startOptions.label;
     stats["video_bitrate_kbps"] = aggregateVideoKbps;
     stats["audio_bitrate_kbps"] = aggregateAudioKbps;
@@ -4704,7 +4719,7 @@ void VersusApp::sendPeerRemoteStats(const std::shared_ptr<PeerSession> &peer) {
     stats["active_audio"] = counts.activeAudio;
 
     const std::string key = lifecycleState.streamId.empty()
-        ? std::string("game-capture")
+        ? std::string("video-mixer")
         : lifecycleState.streamId;
     nlohmann::json msg;
     msg["remoteStats"][key] = stats;
@@ -4718,7 +4733,7 @@ void VersusApp::sendPeerAudioOptions(const std::shared_ptr<PeerSession> &peer) {
 
     const LifecycleStateSnapshot lifecycleState = lifecycleStateSnapshot();
     nlohmann::json options = nlohmann::json::array();
-    if (lifecycleState.audioSourceMode != AudioSourceMode::None || lifecycleState.includeMicrophone) {
+    if (lifecycleState.videoSourceMode == VideoSourceMode::Mixer || lifecycleState.audioSourceMode != AudioSourceMode::None || lifecycleState.includeMicrophone) {
         std::string microphoneLabel = lifecycleState.activeMicrophoneSourceName;
         std::string microphoneDeviceId = lifecycleState.microphoneDeviceId;
         if (microphoneLabel == "default-microphone" ||
@@ -4766,8 +4781,8 @@ void VersusApp::sendPeerAudioOptions(const std::shared_ptr<PeerSession> &peer) {
         }
 
         nlohmann::json track;
-        track["trackLabel"] = label.empty() ? "Game Capture audio" : label;
-        track["deviceId"] = microphoneDeviceId.empty() ? "game-capture-audio" : microphoneDeviceId;
+        track["trackLabel"] = label.empty() ? "Video Mixer audio" : label;
+        track["deviceId"] = microphoneDeviceId.empty() ? "video-mixer-audio" : microphoneDeviceId;
         track["audioConstraints"] = nlohmann::json::object();
         track["currentAudioConstraints"] = {
             {"sampleRate", 48000},
@@ -4800,7 +4815,7 @@ void VersusApp::sendPeerVideoOptions(const std::shared_ptr<PeerSession> &peer) {
     const int fps = std::max(1, videoState.config.frameRate);
 
     nlohmann::json options;
-    options["trackLabel"] = "Game Capture window";
+    options["trackLabel"] = "Video Mixer window";
     options["currentCameraConstraints"] = {
         {"width", width},
         {"height", height},
@@ -4827,10 +4842,10 @@ void VersusApp::sendPeerMediaDevices(const std::shared_ptr<PeerSession> &peer) {
     const std::string selectedWindowId = lifecycleState.selectedWindowId;
     nlohmann::json devices = nlohmann::json::array();
     devices.push_back({
-        {"deviceId", selectedWindowId.empty() ? "game-capture-window" : selectedWindowId},
+        {"deviceId", selectedWindowId.empty() ? "video-mixer-window" : selectedWindowId},
         {"kind", "videoinput"},
-        {"label", "Game Capture window"},
-        {"groupId", "game-capture"}
+        {"label", "Video Mixer window"},
+        {"groupId", "video-mixer"}
     });
 
     const bool microphoneAvailable =
@@ -4865,7 +4880,7 @@ void VersusApp::sendPeerConnectionMap(
 
     const LifecycleStateSnapshot lifecycleState = lifecycleStateSnapshot();
     const std::string sourceStreamId = lifecycleState.streamId.empty()
-        ? std::string("game-capture")
+        ? std::string("video-mixer")
         : lifecycleState.streamId;
     const std::string sourceLabel = lifecycleState.startOptions.label.empty()
         ? sourceStreamId
@@ -4879,9 +4894,9 @@ void VersusApp::sendPeerConnectionMap(
     connectionMap["uuid"] = sourceStreamId;
     connectionMap["streamID"] = sourceStreamId;
     connectionMap["label"] = sourceLabel;
-    connectionMap["browser"] = std::string("Game Capture ") + APP_VERSION;
+    connectionMap["browser"] = std::string("Video Mixer ") + APP_VERSION;
     connectionMap["runtime"] = {
-        {"name", "Game Capture Native Qt"},
+        {"name", "Video Mixer Native Qt"},
         {"version", APP_VERSION},
 #if defined(_WIN32)
         {"platform", "Windows"}
@@ -4898,7 +4913,7 @@ void VersusApp::sendPeerConnectionMap(
     };
     // The UUID carried in the request identifies the requested guest from the
     // director's side. The peer UUID here is the director identity as observed
-    // by Game Capture, which is what VDO.Ninja uses to join this edge back to
+    // by Video Mixer, which is what VDO.Ninja uses to join this edge back to
     // the director node.
     connectionMap["requesterUUID"] = requestingPeer->uuid;
     if (request.contains("meshRequestId")) {
@@ -4907,7 +4922,7 @@ void VersusApp::sendPeerConnectionMap(
 
     connectionMap["capabilities"] = {
         {"videoTrack", true},
-        {"audioTrack", lifecycleState.audioSourceMode != AudioSourceMode::None ||
+        {"audioTrack", lifecycleState.videoSourceMode == VideoSourceMode::Mixer || lifecycleState.audioSourceMode != AudioSourceMode::None ||
                            lifecycleState.includeMicrophone},
         {"microphone", microphoneAvailable},
         {"whip", false},
@@ -5054,7 +5069,7 @@ void VersusApp::sendPeerMediaDeviceChange(const std::shared_ptr<PeerSession> &pe
             msg["rejected"] = "changeSpeaker";
         }
         msg["reason"] = "unsupported";
-        msg["message"] = error.empty() ? "Device change is not supported by Game Capture." : error;
+        msg["message"] = error.empty() ? "Device change is not supported by Video Mixer." : error;
     }
     peer->client->sendDataMessage(msg.dump());
 }
@@ -5292,7 +5307,7 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
         const std::string requesterUuid = msg.contains("UUID") ? parseStringValue(msg["UUID"]) : "";
         const std::string requestAsTarget = parseStringValue(msg["requestAs"]);
         const std::string streamId = lifecycleStateSnapshot().streamId;
-        const std::string nativeStatsKey = streamId.empty() ? std::string("game-capture") : streamId;
+        const std::string nativeStatsKey = streamId.empty() ? std::string("video-mixer") : streamId;
         const bool targetMatchesNative =
             !requestAsTarget.empty() &&
             (requestAsTarget == nativeStatsKey || requestAsTarget == peer->streamId);
@@ -5406,9 +5421,9 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
             const std::string deviceId = msg["changeCamera"].is_string() ? msg["changeCamera"].get<std::string>() : "";
             const std::string selectedWindowId = lifecycleStateSnapshot().selectedWindowId;
             const std::string currentWindowDeviceId = selectedWindowId.empty()
-                ? "game-capture-window"
+                ? "video-mixer-window"
                 : selectedWindowId;
-            const bool sameDevice = deviceId.empty() || deviceId == "game-capture-window" || deviceId == currentWindowDeviceId;
+            const bool sameDevice = deviceId.empty() || deviceId == "video-mixer-window" || deviceId == currentWindowDeviceId;
             sendPeerMediaDeviceChange(
                 peer,
                 "camera",
@@ -5450,7 +5465,7 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
                     ? ""
                     : (microphoneAvailable
                            ? "Changing microphone devices live from VDO.Ninja Control Center is not supported."
-                           : "Game Capture is not publishing a microphone track."));
+                           : "Video Mixer is not publishing a microphone track."));
             if (sameDevice) {
                 sendPeerAudioOptions(peer);
                 sendPeerMediaDevices(peer);
@@ -5469,7 +5484,7 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
                 "speaker",
                 false,
                 deviceId,
-                "Changing speaker/output devices from Game Capture is not applicable.");
+                "Changing speaker/output devices from Video Mixer is not applicable.");
         }
     }
     const std::array<const char *, 39> unsupportedVdoControlKeys = {
@@ -5518,7 +5533,7 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
             sendRejectedControl(
                 unsupportedKey,
                 "unsupported",
-                "This VDO.Ninja Control Center command is not supported by Game Capture.");
+                "This VDO.Ninja Control Center command is not supported by Video Mixer.");
         }
     }
     if (msg.contains("group")) {
@@ -5526,21 +5541,21 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
         sendRejectedControl(
             "group",
             "unsupported",
-            "This VDO.Ninja Control Center command is not supported by Game Capture.");
+            "This VDO.Ninja Control Center command is not supported by Video Mixer.");
     }
     if (msg.contains("rotate")) {
         spdlog::warn("[App] Rejected unsupported VDO control rotate from {}", peer->uuid);
         sendRejectedControl(
             "rotate",
             "unsupported",
-            "This VDO.Ninja Control Center command is not supported by Game Capture.");
+            "This VDO.Ninja Control Center command is not supported by Video Mixer.");
     }
     if (msg.contains("mirrorGuestState") && msg.contains("mirrorGuestTarget")) {
         spdlog::warn("[App] Rejected unsupported VDO control mirrorGuestState from {}", peer->uuid);
         sendRejectedControl(
             "mirrorGuestState",
             "unsupported",
-            "This VDO.Ninja Control Center command is not supported by Game Capture.");
+            "This VDO.Ninja Control Center command is not supported by Video Mixer.");
     }
     if (msg.contains("getConnectionMap") && jsonBoolLike(msg["getConnectionMap"], true)) {
         if (!directorAuthorized) {
@@ -5554,7 +5569,7 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
         sendRejectedControl(
             "reconnectPeer",
             "unsupported",
-            "This VDO.Ninja Control Center command is not supported by Game Capture.");
+            "This VDO.Ninja Control Center command is not supported by Video Mixer.");
     }
 
     const bool hasInlineInitFields =
@@ -6025,7 +6040,7 @@ void VersusApp::handlePeerDataMessage(const std::shared_ptr<PeerSession> &peer, 
                 nlohmann::json rejected;
                 rejected["rejected"] = "requestVideoHack";
                 rejected["reason"] = "unsupported";
-                rejected["message"] = "This Game Capture setting cannot be changed from VDO.Ninja Control Center.";
+                rejected["message"] = "This Video Mixer setting cannot be changed from VDO.Ninja Control Center.";
                 if (!keyName.empty()) {
                     rejected["keyname"] = keyName;
                 }
@@ -7313,6 +7328,9 @@ void VersusApp::startVideoMaintenanceThread() {
         while (videoMaintenanceRunning_.load()) {
             bool sourceCapturing = false;
             switch (sourceMode) {
+                case VideoSourceMode::Mixer:
+                    sourceCapturing = mixerInputReady_.load(std::memory_order_acquire);
+                    break;
                 case VideoSourceMode::Camera:
                     sourceCapturing = cameraCapture_.isCapturing();
                     break;

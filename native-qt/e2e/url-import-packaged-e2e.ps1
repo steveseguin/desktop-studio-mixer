@@ -56,7 +56,7 @@ $senderName = 'UrlImport' + [guid]::NewGuid().ToString('N')
 $expectedPassword = 'a&b+c%20 d'
 $target = 'https://vdo.ninja/?push=' + $streamId + '&password=a%26b%2Bc%2520+d'
 function Set-ReviewSetting([string]$Group, [string]$Name, $Value) {
-    $keyPath = 'Software\VDO.Ninja\Game Capture\' + $Group
+    $keyPath = 'Software\VDO.Ninja\Video Mixer\' + $Group
     $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($keyPath)
     try {
         $exists = $key.GetValueNames() -contains $Name
@@ -92,7 +92,7 @@ try {
             if ($owner -eq $process.Id) {
                 $title = [Text.StringBuilder]::new(256)
                 [void][UrlImportWindows]::GetWindowText($handle, $title, 256)
-                if ($title.ToString() -eq 'Game Capture - Powered by VDO.Ninja') { $script:mainHandle = $handle }
+                if ($title.ToString() -eq 'Video Mixer - Powered by VDO.Ninja') { $script:mainHandle = $handle }
             }
             return $true
         }, [IntPtr]::Zero)
@@ -133,7 +133,7 @@ try {
         $diagnostics = Invoke-RestMethod ($control.base_url + '/diagnostics') -Headers $headers -TimeoutSec 5
         if ($diagnostics.app.live -and $diagnostics.source.has_frame) { break }
     }
-    $streamSettings = Get-ItemProperty 'HKCU:\Software\VDO.Ninja\Game Capture\stream'
+    $streamSettings = Get-ItemProperty 'HKCU:\Software\VDO.Ninja\Video Mixer\stream'
     Record 'url-import-resolves-stream-id' ($streamSettings.target -ceq $streamId)
     Record 'url-import-decodes-password-once' ($streamSettings.password -ceq $expectedPassword)
     Record 'synthetic-source-goes-live' ($diagnostics.app.live -and $diagnostics.source.has_frame -and $diagnostics.source.source_id -eq $sources[$sourceIndex].id)

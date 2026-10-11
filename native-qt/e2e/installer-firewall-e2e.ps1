@@ -9,19 +9,19 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 # The installer uses shared registry/shortcut names and closes all publishers.
 # Refuse to disturb an existing installation, firewall rule, shortcut, or app.
-foreach ($key in @('HKLM:\Software\GameCapture', 'HKLM:\Software\WOW6432Node\GameCapture',
-                   'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\GameCapture',
-                   'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\GameCapture')) {
-    if (Test-Path $key) { throw 'An existing Game Capture install must be tested on a separate host.' }
+foreach ($key in @('HKLM:\Software\VideoMixer', 'HKLM:\Software\WOW6432Node\VideoMixer',
+                   'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoMixer',
+                   'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\VideoMixer')) {
+    if (Test-Path $key) { throw 'An existing Video Mixer install must be tested on a separate host.' }
 }
-if (Get-Process game-capture -ErrorAction SilentlyContinue) { throw 'Close existing publishers or use a separate host.' }
-if (@(Get-NetFirewallRule -ErrorAction Stop | Where-Object DisplayName -eq 'Game Capture WebRTC UDP').Count) {
+if (Get-Process video-mixer -ErrorAction SilentlyContinue) { throw 'Close existing publishers or use a separate host.' }
+if (@(Get-NetFirewallRule -ErrorAction Stop | Where-Object DisplayName -eq 'Video Mixer WebRTC UDP').Count) {
     throw 'An existing firewall rule must be preserved; use a separate host.'
 }
-foreach ($shortcut in @((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Game Capture.lnk'),
-                        (Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Game Capture.lnk'),
-                        (Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Game Capture'),
-                        (Join-Path ([Environment]::GetFolderPath('Programs')) 'Game Capture'))) {
+foreach ($shortcut in @((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Video Mixer.lnk'),
+                        (Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Video Mixer.lnk'),
+                        (Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Video Mixer'),
+                        (Join-Path ([Environment]::GetFolderPath('Programs')) 'Video Mixer'))) {
     if (Test-Path -LiteralPath $shortcut) { throw "Existing shortcut must be preserved: $shortcut" }
 }
 $installer = (Resolve-Path -LiteralPath $InstallerPath).Path
@@ -33,7 +33,7 @@ if (-not $installDir.StartsWith($reportRoot.TrimEnd('\') + '\', [StringCompariso
     throw 'Installer target must remain within the report directory.'
 }
 New-Item -ItemType Directory -Path $runDir -Force | Out-Null
-$exe = Join-Path $installDir 'game-capture.exe'
+$exe = Join-Path $installDir 'video-mixer.exe'
 $discovery = Join-Path $runDir 'control.json'
 $publisher = $null
 $results = [ordered]@{ installer = $installer; installerSha256 = (Get-FileHash $installer -Algorithm SHA256).Hash; installDir = $installDir }

@@ -1,7 +1,7 @@
 'use strict';
 // Observe only event handles created directly by the packaged executable.
 // Retained handles are reported by call site; no system call behavior is changed.
-const app=Process.getModuleByName('game-capture.exe');
+const app=Process.getModuleByName('video-mixer.exe');
 const kernel=Process.getModuleByName('kernelbase.dll');
 const handles=new Map();let created=0,closed=0;
 for(const name of ['CreateEventW','CreateEventExW','CreateMutexW','CreateMutexExW','OpenMutexW']) {

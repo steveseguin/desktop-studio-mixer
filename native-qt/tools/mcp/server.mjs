@@ -9,11 +9,11 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const server = new McpServer({ name: 'game-capture', version: '0.1.0' });
+const server = new McpServer({ name: 'video-mixer', version: '0.1.0' });
 const defaultDiscovery = process.env.GAME_CAPTURE_MCP_DISCOVERY ||
-  path.join(process.env.LOCALAPPDATA || process.cwd(), 'GameCapture', 'control.json');
+  path.join(process.env.LOCALAPPDATA || process.cwd(), 'VideoMixer', 'control.json');
 const executable = process.env.GAME_CAPTURE_MCP_EXECUTABLE ||
-  path.join(process.env.ProgramW6432 || 'C:\\Program Files', 'Game Capture', 'game-capture.exe');
+  path.join(process.env.ProgramW6432 || 'C:\\Program Files', 'Video Mixer', 'video-mixer.exe');
 let target;
 let owned;
 let closing = false;
@@ -71,13 +71,13 @@ async function request(c, route, body) {
     body: body ? JSON.stringify(body) : undefined
   });
   const result = await response.json();
-  if (!response.ok) throw new Error(`Game Capture HTTP ${response.status}: ${result.error || JSON.stringify(result)}`);
+  if (!response.ok) throw new Error(`Video Mixer HTTP ${response.status}: ${result.error || JSON.stringify(result)}`);
   return result;
 }
 async function health(c) {
   const response = await fetch(c.base_url + '/health', { redirect: 'error', signal: AbortSignal.timeout(3000) });
   const h = await response.json();
-  if (!response.ok || h.pid !== c.pid || h.schema !== 'game-capture-local-control-v1') {
+  if (!response.ok || h.pid !== c.pid || h.schema !== 'video-mixer-local-control-v1') {
     throw new Error('Discovery is stale or belongs to a different application instance. Attach again.');
   }
   return h;
@@ -193,7 +193,7 @@ register('launch', 'Launch the configured packaged executable. Inspect mode open
   if (opts.alpha && opts.codec !== 'vp9') throw new Error('Use VP9 for the supported native OBS alpha workflow.');
   await access(executable);
   await access(path.join(path.dirname(executable), 'platforms', 'qwindows.dll'));
-  const dir = path.join(process.env.LOCALAPPDATA || process.cwd(), 'GameCapture', 'mcp');
+  const dir = path.join(process.env.LOCALAPPDATA || process.cwd(), 'VideoMixer', 'mcp');
   await mkdir(dir, { recursive: true });
   const runDir = await mkdtemp(path.join(dir, 'session-'));
   const discovery = path.join(runDir, 'control.json');

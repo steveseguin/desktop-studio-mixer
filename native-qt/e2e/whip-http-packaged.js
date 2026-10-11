@@ -74,7 +74,7 @@ async function main(){
       const endpoint=mode.startsWith('https-')?'https://qa.localhost.direct:'+trustedTls.address().port+'/'+mode+'/whip':
         (secure?(rtmps?'rtmps':'https'):'http')+'://127.0.0.1:'+(secure?tls:proxy1).address().port+'/'+mode+'/whip';
       const publisher=launch(exe,['--headless','--output='+(rtmps?'rtmp':'whip'),'--output-url='+endpoint,...(rtmps?[]:['--output-token='+token]),...(mode==='relay-no-turn'?['--ice-mode=relay']:[]),
-        '--window=Game Capture Quality Source','--resolution=960x540','--fps=30','--audio-source=selected-window','--local-control','--local-control-discovery='+discovery],mode+'-publisher',{LOCALAPPDATA:dir,GAME_CAPTURE_SUPPRESS_FIREWALL_WARNING:'1'});
+        '--window=Video Mixer Quality Source','--resolution=960x540','--fps=30','--audio-source=selected-window','--local-control','--local-control-discovery='+discovery],mode+'-publisher',{LOCALAPPDATA:dir,GAME_CAPTURE_SUPPRESS_FIREWALL_WARNING:'1'});
       let receiver;
       try{
         if(['unauthorized','malformed','oversized','invalid-tls','https-insecure-location','https-downgrade-redirect','relay-no-turn'].includes(mode)){
@@ -99,7 +99,7 @@ async function main(){
           if(mode!=='cancel'&&!rtmps)assert(trace.some(t=>t.mode===mode&&t.method==='DELETE'),'Session was not deleted on stop');
         }
         assert(!fs.readFileSync(path.join(out,mode+'-publisher.log'),'utf8').includes(token),'Token leaked into console log');
-        const log=path.join(dir,'GameCapture/logs/game-capture-debug.log');if(fs.existsSync(log))assert(!fs.readFileSync(log,'utf8').includes(token),'Token leaked into application log');
+        const log=path.join(dir,'VideoMixer/logs/video-mixer-debug.log');if(fs.existsSync(log))assert(!fs.readFileSync(log,'utf8').includes(token),'Token leaked into application log');
         result.passed=true;
       }catch(e){result.error=String(e);console.error(mode,e);}
       finally{if(receiver)await receiver.close();if(publisher.exitCode===null){publisher.kill();await publisher.closed;}fs.writeFileSync(path.join(out,'results.json'),JSON.stringify({...report,trace},null,2));}

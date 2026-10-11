@@ -10,7 +10,7 @@ d=importlib.util.module_from_spec(spec);spec.loader.exec_module(d)
 def main():
     p=argparse.ArgumentParser();p.add_argument('--publisher',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--cycles',type=int,default=1);a=p.parse_args()
     exe=a.publisher.resolve();out=a.output.resolve();out.mkdir(parents=True,exist_ok=True);native=Path(__file__).resolve().parent.parent
-    assert not any(p.name()=='game-capture.exe' for p in psutil.process_iter()),'Serialize capture runs'
+    assert not any(p.name()=='video-mixer.exe' for p in psutil.process_iter()),'Serialize capture runs'
     saved=d.snapshot(d.SETTINGS_KEY);children=[];logs=[];report={'publisher':str(exe),'sha256':hashlib.sha256(exe.read_bytes()).hexdigest(),'cycles':[]};window=None
     def launch(args,name):
         log=(out/(name+'.log')).open('w',encoding='utf-8');logs.append(log)

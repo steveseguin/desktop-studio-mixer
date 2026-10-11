@@ -282,8 +282,8 @@ void TestWindowListWidget::testSpoutModeShowsSenderDetails() {
 
     std::vector<versus::video::WindowInfo> senders;
     versus::video::WindowInfo sender;
-    sender.id = "spout:Game Capture Spout Alpha Test";
-    sender.name = "Game Capture Spout Alpha Test";
+    sender.id = "spout:Video Mixer Spout Alpha Test";
+    sender.name = "Video Mixer Spout Alpha Test";
     sender.executableName = "Spout2 sender";
     sender.width = 640;
     sender.height = 360;
@@ -305,7 +305,7 @@ void TestWindowListWidget::testSpoutModeShowsSenderDetails() {
     QVERIFY(details != nullptr);
     QVERIFY(thumbnail != nullptr);
 
-    QCOMPARE(title->text(), QString("Game Capture Spout Alpha Test"));
+    QCOMPARE(title->text(), QString("Video Mixer Spout Alpha Test"));
     QCOMPARE(details->text(), QString("Spout2 sender - 640x360"));
     QVERIFY(!thumbnail->pixmap().isNull());
     QCOMPARE(thumbnail->property("hasThumbnail").toBool(), true);

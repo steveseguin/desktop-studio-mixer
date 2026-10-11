@@ -6,7 +6,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateNotNullOrEmpty()]
     [string]$FirefoxPath,
-    [string]$Repo = "steveseguin/game-capture",
+    [string]$Repo = "steveseguin/video-mixer",
     [string]$FfmpegBundleRoot = "",
     [switch]$SkipVirusTotal = $false,
     [Parameter(Mandatory = $true)]
@@ -97,7 +97,7 @@ if ($packageExit -ne 0) {
 }
 
 $distRoot = Join-Path $repoRoot "native-qt\dist"
-$packagedPublisher = Join-Path $distRoot "game-capture-$Version-win64/game-capture.exe"
+$packagedPublisher = Join-Path $distRoot "video-mixer-$Version-win64/video-mixer.exe"
 $artifactManifestPath = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($packagedPublisher)), 'release-artifact-manifest.json')
 if (-not (Test-Path -LiteralPath $artifactManifestPath -PathType Leaf)) {
     throw "Packaged release artifact manifest is missing: $artifactManifestPath"
@@ -106,14 +106,14 @@ $artifactManifestSha256 = (Microsoft.PowerShell.Utility\Get-FileHash -LiteralPat
 if ($artifactManifestSha256 -notmatch '^[0-9a-f]{64}$') {
     throw "Packaged release artifact manifest SHA-256 is invalid."
 }
-$versionedSetup = Join-Path $distRoot "game-capture-$Version-setup.exe"
-$versionedPortable = Join-Path $distRoot "game-capture-$Version-portable.exe"
-$versionedZip = Join-Path $distRoot "game-capture-$Version-win64.zip"
-$versionedFfmpegSourceInfo = Join-Path $distRoot "game-capture-$Version-ffmpeg-source-info.zip"
-$stableSetup = Join-Path $distRoot "game-capture-setup.exe"
-$stablePortable = Join-Path $distRoot "game-capture-portable.exe"
-$stableZip = Join-Path $distRoot "game-capture-win64.zip"
-$stableFfmpegSourceInfo = Join-Path $distRoot "game-capture-ffmpeg-source-info.zip"
+$versionedSetup = Join-Path $distRoot "video-mixer-$Version-setup.exe"
+$versionedPortable = Join-Path $distRoot "video-mixer-$Version-portable.exe"
+$versionedZip = Join-Path $distRoot "video-mixer-$Version-win64.zip"
+$versionedFfmpegSourceInfo = Join-Path $distRoot "video-mixer-$Version-ffmpeg-source-info.zip"
+$stableSetup = Join-Path $distRoot "video-mixer-setup.exe"
+$stablePortable = Join-Path $distRoot "video-mixer-portable.exe"
+$stableZip = Join-Path $distRoot "video-mixer-win64.zip"
+$stableFfmpegSourceInfo = Join-Path $distRoot "video-mixer-ffmpeg-source-info.zip"
 
 $required = @(
     $versionedSetup,
@@ -188,10 +188,10 @@ if (-not $SkipVirusTotal) {
 }
 
 $tag = "v$Version"
-$title = "Game Capture v$Version"
+$title = "Video Mixer v$Version"
 $notesPath = Join-Path $repoRoot ("release-notes-{0}.md" -f $tag)
 $notes = @"
-## Game Capture $Version
+## Video Mixer $Version
 
 Automated release from native QA flow:
 - Fresh failure-blocking release build

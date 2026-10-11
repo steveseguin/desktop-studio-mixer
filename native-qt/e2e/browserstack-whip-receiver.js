@@ -25,7 +25,7 @@ async function receive(url, output, credentialFile) {
     try {
       const version = require('playwright/package.json').version;
       const caps = {...target, browser:'chrome', browser_version:'latest', resolution:'1920x1080',
-        project:'Game Capture', build:'WHIP release qualification', 'browserstack.video':'true',
+        project:'Video Mixer', build:'WHIP release qualification', 'browserstack.video':'true',
         'browserstack.username':username, 'browserstack.accessKey':key,
         'browserstack.playwrightVersion':version, 'client.playwrightVersion':version};
       browser = await chromium.connect('wss://cdp.browserstack.com/playwright?caps='+encodeURIComponent(JSON.stringify(caps)), {timeout:90000});

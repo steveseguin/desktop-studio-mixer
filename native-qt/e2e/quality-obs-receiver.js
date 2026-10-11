@@ -91,7 +91,7 @@ async function receive(obs,c,dir,url,seconds,source){
     }
     if(c.direct){
       const items=await client.request('GetInputPropertiesListPropertyItems',{inputName:input,propertyName:'window'});
-      const item=items.propertyItems.find(i=>i.itemName.includes('Game Capture Quality Source'));if(!item)throw Error('OBS cannot find calibration fixture');
+      const item=items.propertyItems.find(i=>i.itemName.includes('Video Mixer Quality Source'));if(!item)throw Error('OBS cannot find calibration fixture');
       await client.request('SetInputSettings',{inputName:input,inputSettings:{window:item.itemValue,method:2,capture_cursor:false},overlay:true});
       await client.request('CreateInput',{sceneName:scene,inputName:input+'-audio',inputKind:'wasapi_output_capture',inputSettings:{device_id:'default'},sceneItemEnabled:true});
       await client.request('SetInputAudioMonitorType',{inputName:input+'-audio',monitorType:'OBS_MONITORING_TYPE_NONE'});
@@ -102,7 +102,7 @@ async function receive(obs,c,dir,url,seconds,source){
       await client.request('SetInputAudioTracks',{inputName:input,inputAudioTracks:{'1':false,'2':true,'3':false,'4':false,'5':false,'6':false}});
       const ref=await client.request('CreateInput',{sceneName:scene,inputName:reference,inputKind:'window_capture',inputSettings:{method:2,capture_cursor:false,capture_audio:!!c.processAudio},sceneItemEnabled:true});
       const items=await client.request('GetInputPropertiesListPropertyItems',{inputName:reference,propertyName:'window'});
-      const item=items.propertyItems.find(i=>i.itemName.includes('Game Capture Quality Source'));if(!item)throw Error('Missing simultaneous source reference');
+      const item=items.propertyItems.find(i=>i.itemName.includes('Video Mixer Quality Source'));if(!item)throw Error('Missing simultaneous source reference');
       await client.request('SetInputSettings',{inputName:reference,inputSettings:{window:item.itemValue,method:2,capture_cursor:false},overlay:true});
       await client.request('SetSceneItemTransform',{sceneName:scene,sceneItemId:ref.sceneItemId,sceneItemTransform:{positionX:0,positionY:0,boundsType:'OBS_BOUNDS_SCALE_INNER',boundsWidth:640,boundsHeight:720}});
       const referenceAudio=c.processAudio?reference:reference+'-audio';

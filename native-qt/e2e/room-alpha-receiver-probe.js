@@ -122,7 +122,7 @@ async function sendAlphaViewerRequest(page, uuid, roomMode) {
       audio: false,
       label: 'room-alpha-playwright-receiver',
       system: {
-        app: 'game-capture-room-alpha-e2e',
+        app: 'video-mixer-room-alpha-e2e',
         version: '1',
         platform: 'playwright',
         browser: 'chromium',

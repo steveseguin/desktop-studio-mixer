@@ -410,7 +410,7 @@ if (-not $captureWindowFilterEffective) {
     $captureWindowFilterEffective = [Environment]::GetEnvironmentVariable("GAME_CAPTURE_WINDOW_FILTER", "Process")
 }
 if (-not $captureWindowFilterEffective -and -not $DisableE2eCaptureSource) {
-    $captureWindowFilterEffective = "Game Capture E2E Source $timestamp"
+    $captureWindowFilterEffective = "Video Mixer E2E Source $timestamp"
     Write-Host "Starting E2E capture source: $captureWindowFilterEffective"
     $captureSourceProcess = Start-E2eCaptureSource -Title $captureWindowFilterEffective
     Register-EngineEvent -SourceIdentifier PowerShell.Exiting -MessageData $captureSourceProcess.Id -Action {
@@ -1303,11 +1303,11 @@ if ($makensis) {
         }
         $installerPublisher = (Resolve-Path -LiteralPath $installerPublisher).Path
         $installerBinDir = Split-Path -Parent $installerPublisher
-        $stagedPublisher = Join-Path $installerBinDir "game-capture.exe"
+        $stagedPublisher = Join-Path $installerBinDir "video-mixer.exe"
         if ((Resolve-Path -LiteralPath $stagedPublisher).Path -cne $installerPublisher) {
             throw "Installer smoke is not bound to the selected publisher identity: $installerPublisher"
         }
-        foreach ($requiredRelPath in @("game-capture.exe", "platforms\qwindows.dll")) {
+        foreach ($requiredRelPath in @("video-mixer.exe", "platforms\qwindows.dll")) {
             $requiredPath = Join-Path $installerBinDir $requiredRelPath
             if (-not (Test-Path $requiredPath)) {
                 throw "Installer smoke missing required staged artifact: $requiredPath"

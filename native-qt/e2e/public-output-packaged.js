@@ -25,7 +25,7 @@ async function main(){
  try{
   sourceBrowser=await chromium.launch({channel:'chrome',headless:false,args:['--autoplay-policy=no-user-gesture-required','--disable-backgrounding-occluded-windows','--disable-renderer-backgrounding']});
   const source=await sourceBrowser.newPage({viewport:null});await source.goto('http://127.0.0.1:'+server.address().port);await source.getByRole('button').click();await source.waitForFunction(()=>quality.ready);
-  app=launch(exe,['--headless','--output=whip','--output-url='+base+'/whip/'+id,'--window=Game Capture Quality Source','--resolution=1280x720','--fps=60','--audio-source=selected-window','--audio-channels=stereo','--audio-bitrate-kbps=192','--duration-ms=600000','--local-control','--local-control-discovery='+discovery], 'publisher',{LOCALAPPDATA:out,GAME_CAPTURE_SUPPRESS_FIREWALL_WARNING:'1'});
+  app=launch(exe,['--headless','--output=whip','--output-url='+base+'/whip/'+id,'--window=Video Mixer Quality Source','--resolution=1280x720','--fps=60','--audio-source=selected-window','--audio-channels=stereo','--audio-bitrate-kbps=192','--duration-ms=600000','--local-control','--local-control-discovery='+discovery], 'publisher',{LOCALAPPDATA:out,GAME_CAPTURE_SUPPRESS_FIREWALL_WARNING:'1'});
   await until(async()=>{assert(app.exitCode===null,'Publisher exited '+app.exitCode);return fs.existsSync(discovery)&&(await api(discovery,'/diagnostics')).output?.state===2;},'public WHIP publishing',60000);
   report.initialDiagnostics=await api(discovery,'/diagnostics');save();
   receiverBrowser=await chromium.launch({channel:'chrome',headless:true,args:['--autoplay-policy=no-user-gesture-required']});page=await receiverBrowser.newPage({viewport:{width:1280,height:720}});

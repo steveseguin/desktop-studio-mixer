@@ -5,9 +5,9 @@
 
 namespace versus::ui {
 
-inline constexpr const char *ReleasesUrl = "https://github.com/steveseguin/game-capture/releases";
+inline constexpr const char *ReleasesUrl = "https://github.com/steveseguin/video-mixer/releases";
 inline constexpr const char *LatestReleaseApi =
-    "https://api.github.com/repos/steveseguin/game-capture/releases/latest";
+    "https://api.github.com/repos/steveseguin/video-mixer/releases/latest";
 
 enum class UpdateStatus { Checking, UpToDate, Available, Unavailable };
 struct UpdateResult {

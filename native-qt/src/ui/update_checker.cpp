@@ -57,7 +57,7 @@ class QtReleaseRequest final : public ReleaseRequest {
         QNetworkRequest request{QUrl(QString::fromLatin1(LatestReleaseApi))};
         request.setRawHeader("Accept", "application/vnd.github+json");
         request.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
-        request.setRawHeader("User-Agent", "game-capture/" + installedVersion.toUtf8());
+        request.setRawHeader("User-Agent", "video-mixer/" + installedVersion.toUtf8());
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
         request.setAttribute(QNetworkRequest::CookieLoadControlAttribute, QNetworkRequest::Manual);
         request.setAttribute(QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::Manual);

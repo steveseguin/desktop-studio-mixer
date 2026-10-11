@@ -796,7 +796,7 @@ async function launchInstalledFirefox(options = {}) {
       `observed ${executableSha256BeforeLaunch}`
     );
   }
-  const profilePath = fs.mkdtempSync(path.join(os.tmpdir(), 'game-capture-firefox-bidi-'));
+  const profilePath = fs.mkdtempSync(path.join(os.tmpdir(), 'video-mixer-firefox-bidi-'));
   writeIsolatedFirefoxProfile(profilePath);
   const firefoxArgs = [
     '-no-remote',

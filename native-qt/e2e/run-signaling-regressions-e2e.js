@@ -83,9 +83,9 @@ function resolveCurrentPackage() {
   const packageDir = path.join(
     nativeRoot,
     'dist',
-    `game-capture-${versionMatch[1]}-win64`
+    `video-mixer-${versionMatch[1]}-win64`
   );
-  const publisherPath = path.join(packageDir, 'game-capture.exe');
+  const publisherPath = path.join(packageDir, 'video-mixer.exe');
   const artifactManifestPath = path.join(packageDir, 'release-artifact-manifest.json');
   for (const requiredPath of [publisherPath, artifactManifestPath]) {
     if (!fs.existsSync(requiredPath) || !fs.statSync(requiredPath).isFile()) {

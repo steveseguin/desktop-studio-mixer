@@ -111,6 +111,7 @@ class MainWindow : public QMainWindow {
     void updateAudioMeter(QProgressBar *meter, QLabel *label, float rms, float peak);
     void updateTrayLiveIndicator(bool live);
     void setConfigControlsEnabled(bool enabled);
+    void syncMixerCaptureControls();
     void closeEvent(QCloseEvent *event) override;
 
     versus::app::VersusApp *core_ = nullptr;

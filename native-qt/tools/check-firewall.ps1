@@ -4,7 +4,7 @@ param(
 $ErrorActionPreference = 'Stop'
 try {
     $exe = [IO.Path]::GetFullPath($ExecutablePath)
-    $named = @(Get-NetFirewallRule -PolicyStore ActiveStore -ErrorAction Stop | Where-Object DisplayName -eq 'Game Capture WebRTC UDP')
+    $named = @(Get-NetFirewallRule -PolicyStore ActiveStore -ErrorAction Stop | Where-Object DisplayName -eq 'Video Mixer WebRTC UDP')
     $rules = @($named | ForEach-Object {
         $rule = $_
         $application = $rule | Get-NetFirewallApplicationFilter

@@ -8,7 +8,7 @@ param(
     [string]$ExpectedPluginSha256 = "",
     [string]$ExpectedSpoutSenderSha256 = "",
     [string]$ReportDir = "",
-    [int]$GameCaptureWarmupSeconds = 14,
+    [int]$VideoMixerWarmupSeconds = 14,
     [int]$CheckTimeoutSeconds = 170,
     [string[]]$Patterns = @("alpha-opaque", "alpha-half")
 )
@@ -204,9 +204,9 @@ try {
 
     if ([string]::IsNullOrWhiteSpace($PublisherPath)) {
         $PublisherPath = Get-ChildItem -LiteralPath (Join-Path $nativeQtRoot "dist") -Directory -ErrorAction Stop |
-            Where-Object { $_.Name -match '^game-capture-\d+\.\d+\.\d+-win64$' } |
+            Where-Object { $_.Name -match '^video-mixer-\d+\.\d+\.\d+-win64$' } |
             Sort-Object LastWriteTimeUtc -Descending |
-            ForEach-Object { Join-Path $_.FullName "game-capture.exe" } |
+            ForEach-Object { Join-Path $_.FullName "video-mixer.exe" } |
             Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
             Select-Object -First 1
     }
@@ -315,18 +315,18 @@ try {
                 Write-Host "[PLUGIN-ALPHA-E2E] Running workflow: $($workflowCase.name)"
                 $driverArgs = @(
                     "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $driver,
-                    "-GameCaptureExe", $PublisherPath,
+                    "-VideoMixerExe", $PublisherPath,
                     "-UseTestSpoutSender",
                     "-TestSpoutSenderExe", $SpoutSenderPath,
                     "-TestSpoutPattern", $pattern,
                     "-VideoCodec", $videoCodec,
-                    "-GameCaptureWarmupSeconds", [string]$GameCaptureWarmupSeconds,
+                    "-VideoMixerWarmupSeconds", [string]$VideoMixerWarmupSeconds,
                     "-CheckTimeoutSeconds", [string]$CheckTimeoutSeconds,
                     "-AlphaSampleIntervalMs", "80",
                     "-AlphaTransitionMode", $transitionMode,
                     "-AlphaTransitionLabel", "obs-$transitionMode",
                     "-AlphaTransitionHoldMs", "350",
-                    "-ExpectedGameCaptureSha256", $ExpectedPublisherSha256,
+                    "-ExpectedVideoMixerSha256", $ExpectedPublisherSha256,
                     "-ExpectedPluginSha256", $ExpectedPluginSha256,
                     "-ExpectedSpoutSenderSha256", $ExpectedSpoutSenderSha256
                 )
@@ -367,25 +367,25 @@ try {
                 $case.screenshots = @($summary.artifactBinding.screenshots)
                 $case.evidence = @($summary.artifactBinding.evidence)
 
-                $requiredGameCaptureArgs = @(
+                $requiredVideoMixerArgs = @(
                     "--video-codec=$videoCodec",
                     "--alpha-workflow"
                 )
-                if ($outputWidth -gt 0) { $requiredGameCaptureArgs += "--width=$outputWidth" }
-                if ($outputHeight -gt 0) { $requiredGameCaptureArgs += "--height=$outputHeight" }
-                if ($outputFps -gt 0) { $requiredGameCaptureArgs += "--fps=$outputFps" }
-                $missingGameCaptureArgs = @($requiredGameCaptureArgs | Where-Object {
+                if ($outputWidth -gt 0) { $requiredVideoMixerArgs += "--width=$outputWidth" }
+                if ($outputHeight -gt 0) { $requiredVideoMixerArgs += "--height=$outputHeight" }
+                if ($outputFps -gt 0) { $requiredVideoMixerArgs += "--fps=$outputFps" }
+                $missingVideoMixerArgs = @($requiredVideoMixerArgs | Where-Object {
                     @($summary.gameCaptureArgs) -notcontains $_
                 })
-                if ($missingGameCaptureArgs.Count -gt 0) {
-                    throw "Driver did not execute the required packaged arguments: $($missingGameCaptureArgs -join ', ')"
+                if ($missingVideoMixerArgs.Count -gt 0) {
+                    throw "Driver did not execute the required packaged arguments: $($missingVideoMixerArgs -join ', ')"
                 }
 
                 if ($expectedAlphaWidth -gt 0 -or $expectedAlphaHeight -gt 0) {
                     $diagnosticsPath = [string]$summary.gameCaptureDiagnostics
                     if (-not $diagnosticsPath -or
                         -not (Test-Path -LiteralPath $diagnosticsPath -PathType Leaf)) {
-                        throw "H.264 mismatched-alpha workflow did not produce Game Capture diagnostics"
+                        throw "H.264 mismatched-alpha workflow did not produce Video Mixer diagnostics"
                     }
                     $diagnostics = Get-Content -LiteralPath $diagnosticsPath -Raw | ConvertFrom-Json
                     $case.gameCaptureDiagnostics = Get-FileBinding $diagnosticsPath

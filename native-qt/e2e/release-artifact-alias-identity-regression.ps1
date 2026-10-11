@@ -20,26 +20,26 @@ if (-not (Test-Path -LiteralPath $resolvedDistDir -PathType Container)) {
 $pairs = @(
     [pscustomobject]@{
         name = 'setup'
-        versioned = "game-capture-$Version-setup.exe"
-        stable = 'game-capture-setup.exe'
+        versioned = "video-mixer-$Version-setup.exe"
+        stable = 'video-mixer-setup.exe'
         required = $true
     },
     [pscustomobject]@{
         name = 'portable'
-        versioned = "game-capture-$Version-portable.exe"
-        stable = 'game-capture-portable.exe'
+        versioned = "video-mixer-$Version-portable.exe"
+        stable = 'video-mixer-portable.exe'
         required = $true
     },
     [pscustomobject]@{
         name = 'win64-zip'
-        versioned = "game-capture-$Version-win64.zip"
-        stable = 'game-capture-win64.zip'
+        versioned = "video-mixer-$Version-win64.zip"
+        stable = 'video-mixer-win64.zip'
         required = $true
     },
     [pscustomobject]@{
         name = 'ffmpeg-source-info'
-        versioned = "game-capture-$Version-ffmpeg-source-info.zip"
-        stable = 'game-capture-ffmpeg-source-info.zip'
+        versioned = "video-mixer-$Version-ffmpeg-source-info.zip"
+        stable = 'video-mixer-ffmpeg-source-info.zip'
         required = -not $AllowMissingFfmpeg
     }
 )

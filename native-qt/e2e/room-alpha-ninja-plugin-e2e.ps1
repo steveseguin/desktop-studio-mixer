@@ -8,9 +8,9 @@ param(
     [string]$ExpectedPluginSha256 = "",
     [string]$ExpectedSpoutSenderSha256 = "",
     [string]$ReportDir = "",
-    [int]$GameCaptureWarmupSeconds = 14,
+    [int]$VideoMixerWarmupSeconds = 14,
     [int]$CheckTimeoutSeconds = 170,
-    [int]$GameCaptureDurationMs = 240000,
+    [int]$VideoMixerDurationMs = 240000,
     [int]$AlphaReceiverProbeTimeoutSeconds = 90
 )
 
@@ -184,9 +184,9 @@ try {
     . $harnessContracts
     if ([string]::IsNullOrWhiteSpace($PublisherPath)) {
         $PublisherPath = Get-ChildItem -LiteralPath (Join-Path $nativeQtRoot "dist") -Directory -ErrorAction Stop |
-            Where-Object { $_.Name -match '^game-capture-\d+\.\d+\.\d+-win64$' } |
+            Where-Object { $_.Name -match '^video-mixer-\d+\.\d+\.\d+-win64$' } |
             Sort-Object LastWriteTimeUtc -Descending |
-            ForEach-Object { Join-Path $_.FullName "game-capture.exe" } |
+            ForEach-Object { Join-Path $_.FullName "video-mixer.exe" } |
             Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
             Select-Object -First 1
     }
@@ -260,7 +260,7 @@ try {
         $caseArgs = @(
             "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $driver,
             "-StreamId", $StreamId,
-            "-GameCaptureExe", $PublisherPath,
+            "-VideoMixerExe", $PublisherPath,
             "-UseTestSpoutSender",
             "-TestSpoutSenderExe", $SpoutSenderPath,
             "-TestSpoutSenderName", "RoomAlphaE2E-$($Case.name)-$idSuffix",
@@ -268,8 +268,8 @@ try {
             "-VideoCodec", "vp9",
             "-OutputWidth", [string]$portableObsCanvas.width,
             "-OutputHeight", [string]$portableObsCanvas.height,
-            "-GameCaptureDurationMs", [string]$GameCaptureDurationMs,
-            "-GameCaptureWarmupSeconds", [string]$GameCaptureWarmupSeconds,
+            "-VideoMixerDurationMs", [string]$VideoMixerDurationMs,
+            "-VideoMixerWarmupSeconds", [string]$VideoMixerWarmupSeconds,
             "-CheckTimeoutSeconds", [string]$CheckTimeoutSeconds,
             "-AlphaBackgroundColor", "4278190335",
             "-AlphaReceiverProbePath", $receiverProbe,
@@ -278,7 +278,7 @@ try {
             "-AlphaTransitionMode", "none",
             "-AlphaTransitionLabel", "steady-alpha-output",
             "-AlphaTransitionHoldMs", "350",
-            "-ExpectedGameCaptureSha256", $ExpectedPublisherSha256,
+            "-ExpectedVideoMixerSha256", $ExpectedPublisherSha256,
             "-ExpectedPluginSha256", $ExpectedPluginSha256,
             "-ExpectedSpoutSenderSha256", $ExpectedSpoutSenderSha256
         )

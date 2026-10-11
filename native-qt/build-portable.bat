@@ -5,14 +5,14 @@ set BASE_DIR=%~dp0
 if "%BASE_DIR:~-1%"=="\" set BASE_DIR=%BASE_DIR:~0,-1%
 set SRC=%BASE_DIR%\build\bin
 set DIST=%BASE_DIR%\dist
-set ARCHIVE_NAME=game-capture-portable
+set ARCHIVE_NAME=video-mixer-portable
 set SFX_MODULE=C:\Program Files\7-Zip\7z.sfx
 set SEVENZIP=C:\Program Files\7-Zip\7z.exe
 
 if not exist "%DIST%" mkdir "%DIST%"
 
-if not exist "%SRC%\game-capture.exe" (
-  echo Missing source executable: %SRC%\game-capture.exe
+if not exist "%SRC%\video-mixer.exe" (
+  echo Missing source executable: %SRC%\video-mixer.exe
   echo Build the app first so portable packaging has staged binaries.
   exit /b 1
 )

@@ -375,7 +375,8 @@ struct Session::Impl {
             else args << "-an";
             args << "-max_interleave_delta" << "100000" << "-flush_packets" << "1" << "-stats_period" << "0.5"
                  << "-progress" << "pipe:1" << "-rw_timeout" << "5000000";
-            if (config.protocol == Protocol::Srt) args << "-f" << "mpegts" << "-mpegts_flags" << "+resend_headers" << "-muxdelay" << "0" << "-muxpreload" << "0";
+            if (config.protocol == Protocol::Recording) args << "-n" << "-f" << "matroska";
+            else if (config.protocol == Protocol::Srt) args << "-f" << "mpegts" << "-mpegts_flags" << "+resend_headers" << "-muxdelay" << "0" << "-muxpreload" << "0";
             else {
                 args << "-f" << "flv" << "-flvflags" << "no_duration_filesize";
                 if (QUrl(QString::fromStdString(config.url)).scheme() == "rtmps") args << "-tls_verify" << "1";
@@ -452,10 +453,11 @@ struct Session::Impl {
                 if (config.protocol == Protocol::Whip) runWhip(); else runMux();
             } catch (const OutputError &error) {
                 if (stopping.load()) break;
-                if (error.permanent) { setState(State::Error, error.what()); clearQueue(); return; }
+                if (error.permanent || config.protocol == Protocol::Recording) { setState(State::Error, error.what()); clearQueue(); return; }
                 setState(State::Reconnecting, error.what());
             } catch (...) {
                 if (stopping.load()) break;
+                if (config.protocol == Protocol::Recording) { setState(State::Error, "Recording failed. Check the destination and available disk space."); clearQueue(); return; }
                 // Library exception messages may contain a destination URL.
                 setState(State::Reconnecting, "Output failed; reconnecting with fresh media.");
             }
@@ -492,7 +494,7 @@ bool Session::wantsVideo() const {
     return !impl_->stopping.load() && impl_->current.state != State::Error;
 }
 bool Session::wantsAudio() const { return impl_->media.audioEnabled && wantsVideo(); }
-bool Session::usesPcmInput() const { return impl_->config.protocol == Protocol::Rtmp || impl_->config.protocol == Protocol::Srt; }
+bool Session::usesPcmInput() const { return impl_->config.protocol == Protocol::Recording || impl_->config.protocol == Protocol::Rtmp || impl_->config.protocol == Protocol::Srt; }
 bool Session::sendVideo(const webrtc::EncodedVideoPacket &packet, int width, int height) {
     return impl_->push({Packet::Kind::Video, QByteArray(reinterpret_cast<const char *>(packet.data.data()), packet.data.size()),
                         packet.pts, width, height, packet.isKeyframe});

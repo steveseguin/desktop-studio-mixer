@@ -20,7 +20,7 @@ function launch(program,args,name,env={}){
 async function until(fn,label,ms=45000){const end=Date.now()+ms;while(Date.now()<end){if(await fn())return;await sleep(200);}throw Error('Timed out: '+label);}
 async function api(discovery,route,body){const d=JSON.parse(fs.readFileSync(discovery));const r=await fetch(d.base_url+route,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+d.token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(5000)});assert(r.ok);return r.json();}
 async function main(){
-  const running=execFileSync('powershell.exe',['-NoProfile','-Command',"Get-Process -Name game-capture -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id\nexit 0"],{encoding:'utf8',windowsHide:true});
+  const running=execFileSync('powershell.exe',['-NoProfile','-Command',"Get-Process -Name video-mixer -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id\nexit 0"],{encoding:'utf8',windowsHide:true});
   assert(!running.trim(),'Serialize capture quality runs');
   const config=path.join(out,'mediamtx.yml');
   const tls=opts['tls-dir']?path.resolve(opts['tls-dir']):null;
@@ -87,7 +87,7 @@ paths:
         'srt://127.0.0.1:'+(impairment?'18891':'18890')+(id==='srt-encrypted-url'?'?passphrase='+encodeURIComponent('qa:+%2B?&= pass2026'):''):
         id.startsWith('rtmps-')?'rtmps://qa.localhost.direct:19351/live':'rtmp://127.0.0.1:19350/live';
       const stream=protocol==='rtmp'?'live/'+id:id;
-      const args=['--headless','--output='+protocol,'--output-url='+url,'--source=window','--window=Game Capture Quality Source',
+      const args=['--headless','--output='+protocol,'--output-url='+url,'--source=window','--window=Video Mixer Quality Source',
         '--resolution=1280x720','--fps=60','--audio-source='+(silent?'none':'selected-window'),'--audio-channels='+(mono?1:2),
         '--duration-ms='+Math.max(1800000,(Number(opts.seconds||75)+300)*1000),'--local-control','--local-control-discovery='+discovery];
       if(relayHost&&protocol==='whip')args.push('--ice-mode=relay');

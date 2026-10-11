@@ -1,6 +1,6 @@
 ﻿;!@Install@!UTF-8!
-Title="Game Capture"
-BeginPrompt="Extract and run Game Capture?"
-RunProgram="game-capture.exe"
+Title="Video Mixer"
+BeginPrompt="Extract and run Video Mixer?"
+RunProgram="video-mixer.exe"
 ;!@InstallEnd@!
 

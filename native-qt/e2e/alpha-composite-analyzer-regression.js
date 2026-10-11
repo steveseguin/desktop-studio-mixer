@@ -152,7 +152,7 @@ function main() {
     const peer = options.peer === undefined ? diagnosticsPeer(options) : options.peer;
     const peers = options.peers || (peer ? [peer] : []);
     return {
-      source: 'game-capture-diagnostics',
+      source: 'video-mixer-diagnostics',
       observedAtMs: options.observedAtMs || 1000,
       publisherPid: options.publisherPid || 101,
       control: {

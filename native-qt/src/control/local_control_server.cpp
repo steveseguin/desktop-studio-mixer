@@ -68,10 +68,10 @@ QString appDataPath(const QString &leaf) {
 #else
     QDir dir(QDir::homePath());
 #endif
-    if (!dir.exists("GameCapture")) {
-        dir.mkpath("GameCapture");
+    if (!dir.exists("VideoMixer")) {
+        dir.mkpath("VideoMixer");
     }
-    dir.cd("GameCapture");
+    dir.cd("VideoMixer");
     return dir.filePath(leaf);
 }
 
@@ -384,7 +384,7 @@ bool LocalControlServer::tryParseRequest(QTcpSocket *socket, HttpRequest &reques
             return false;
         }
         const QByteArray name = line.left(colon).toLower();
-        if ((name == "content-length" || name == "authorization" || name == "x-game-capture-token" || name == "host") &&
+        if ((name == "content-length" || name == "authorization" || name == "x-video-mixer-token" || name == "host") &&
             request.headers.contains(name)) {
             sendError(socket, 400, "Duplicate HTTP framing or authentication header");
             return false;
@@ -562,7 +562,7 @@ bool LocalControlServer::isAuthorized(const HttpRequest &request) const {
     if (QString::fromUtf8(authToken) == config_.token) {
         return true;
     }
-    return QString::fromUtf8(request.headers.value("x-game-capture-token")) == config_.token;
+    return QString::fromUtf8(request.headers.value("x-video-mixer-token")) == config_.token;
 }
 
 void LocalControlServer::sendJson(QTcpSocket *socket, int status, const QByteArray &body) {
@@ -588,7 +588,7 @@ void LocalControlServer::sendError(QTcpSocket *socket, int status, const QString
 QByteArray LocalControlServer::healthJson() const {
     QJsonObject health{
         {"ok", true},
-        {"schema", "game-capture-local-control-v1"},
+        {"schema", "video-mixer-local-control-v1"},
         {"pid", QCoreApplication::applicationPid()},
         {"version", QString(APP_VERSION)},
         {"port", static_cast<int>(port())},
@@ -600,7 +600,7 @@ QByteArray LocalControlServer::healthJson() const {
 QByteArray LocalControlServer::schemaJson() const {
     QJsonObject root;
     root["ok"] = true;
-    root["schema"] = "game-capture-local-control-v1";
+    root["schema"] = "video-mixer-local-control-v1";
     root["transport"] = "http-json-loopback";
     root["auth"] = "Authorization: Bearer <token>";
     root["notes"] = "Local control is opt-in, bound to 127.0.0.1, and intended for same-user automation.";
@@ -669,7 +669,7 @@ QByteArray LocalControlServer::issueReportJson(const QByteArray &requestBody) {
     const QString reportPath = QDir(config_.reportDir).filePath(QString("issue-report-%1.json").arg(uniqueReportFileSuffix()));
 
     QJsonObject report;
-    report["schema"] = "game-capture-issue-report-v1";
+    report["schema"] = "video-mixer-issue-report-v1";
     report["generated_utc"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
     report["notes"] = command.value("notes").toString();
     report["log_path"] = config_.logPath;
@@ -709,7 +709,7 @@ bool LocalControlServer::writeDiscoveryFile() {
         return false;
     }
     QJsonObject root{
-        {"schema", "game-capture-local-control-v1"},
+        {"schema", "video-mixer-local-control-v1"},
         {"pid", QCoreApplication::applicationPid()},
         {"version", QString(APP_VERSION)},
         {"host", "127.0.0.1"},

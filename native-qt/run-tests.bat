@@ -2,7 +2,7 @@
 call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 set PATH=%PATH%;C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin
 set PATH=%PATH%;C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja
-cd /d C:\Users\Steve\code\game-capture\native-qt
+cd /d C:\Users\Steve\code\video-mixer\native-qt
 
 if not exist build-test mkdir build-test
 cd build-test

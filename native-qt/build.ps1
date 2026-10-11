@@ -5,7 +5,7 @@ $vsDevCmd = "$vsPath\Common7\Tools\VsDevCmd.bat"
 # Import MSVC environment
 $pinfo = New-Object System.Diagnostics.ProcessStartInfo
 $pinfo.FileName = "cmd.exe"
-$pinfo.Arguments = "/c `"$vsDevCmd`" -arch=amd64 && cd /d C:\Users\Steve\code\game-capture\native-qt\build && ninja 2>&1"
+$pinfo.Arguments = "/c `"$vsDevCmd`" -arch=amd64 && cd /d C:\Users\Steve\code\video-mixer\native-qt\build && ninja 2>&1"
 $pinfo.RedirectStandardOutput = $true
 $pinfo.RedirectStandardError = $true
 $pinfo.UseShellExecute = $false

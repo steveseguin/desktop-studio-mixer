@@ -12,7 +12,7 @@ function nowStamp() {
 
 function parseArgs(argv) {
   const args = {
-    publisher: 'game-capture',
+    publisher: 'video-mixer',
     streamId: `game_capture_e2e_${Date.now()}`,
     room: '',
     password: '',
@@ -182,9 +182,9 @@ function detectPublisherBinary(explicitPath) {
   }
 
   const candidates = [
-    path.resolve(__dirname, '../build-review2/bin/Release/game-capture.exe'),
-    path.resolve(__dirname, '../build-test/bin/Release/game-capture.exe'),
-    path.resolve(__dirname, '../build/bin/Release/game-capture.exe')
+    path.resolve(__dirname, '../build-review2/bin/Release/video-mixer.exe'),
+    path.resolve(__dirname, '../build-test/bin/Release/video-mixer.exe'),
+    path.resolve(__dirname, '../build/bin/Release/video-mixer.exe')
   ];
 
   for (const candidate of candidates) {
@@ -241,7 +241,7 @@ function spawnPublisher(config) {
   } else {
     command = detectPublisherBinary(config.publisherPath);
     if (!command) {
-      throw new Error('Could not find game-capture.exe. Build native-qt first or pass --publisher-path.');
+      throw new Error('Could not find video-mixer.exe. Build native-qt first or pass --publisher-path.');
     }
     args = [
       '--headless',
@@ -460,7 +460,7 @@ async function sendViewerInitIfConfigured(page, initOptions, timeoutMs) {
       audio: !!initOptions.audio,
       label: initOptions.label || '',
       system: {
-        app: 'game-capture-e2e',
+        app: 'video-mixer-e2e',
         version: '1',
         platform: 'playwright',
         browser: 'chromium'

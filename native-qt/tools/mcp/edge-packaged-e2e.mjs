@@ -57,7 +57,7 @@ async function rejected(client, name, args) {
 }
 function alive(pid) { try { process.kill(pid, 0); return true; } catch { return false; } }
 function remainingPublishers() {
-  const script = `@(Get-CimInstance Win32_Process -Filter "Name='game-capture.exe'" | Where-Object {
+  const script = `@(Get-CimInstance Win32_Process -Filter "Name='video-mixer.exe'" | Where-Object {
     $_.ExecutablePath -eq $env:GC_EDGE_PUBLISHER -and $_.CommandLine.Contains($env:GC_EDGE_REPORT)
   } | Select-Object -ExpandProperty ProcessId) | ConvertTo-Json -Compress`;
   const text = execFileSync('powershell.exe', ['-NoProfile', '-Command', script], { windowsHide: true, encoding: 'utf8',
@@ -184,7 +184,7 @@ try {
   check('owned-app-exits-on-disconnect', !alive(live.pid));
 
   const startupClient = await connect('disconnect-during-startup');
-  const sessionDir = path.join(report, 'GameCapture/mcp');
+  const sessionDir = path.join(report, 'VideoMixer/mcp');
   const previous = new Set(await readdir(sessionDir));
   const pending = call(startupClient, 'launch', { mode: 'stream', source: 'spout', sourceName: 'MCP_edge_missing_sender',
     streamId: 'mcp_cancel_' + Date.now(), durationSeconds: 10 }).catch(() => null);

@@ -9,7 +9,7 @@
 
 namespace versus::output {
 
-enum class Protocol { VdoNinja, Whip, Srt, Rtmp };
+enum class Protocol { VdoNinja, Whip, Srt, Rtmp, Recording };
 const char *protocolName(Protocol protocol);
 Protocol parseProtocol(const std::string &name);
 

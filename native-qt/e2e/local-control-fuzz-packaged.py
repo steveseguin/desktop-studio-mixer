@@ -125,7 +125,7 @@ def main():
         body = json.dumps({'command': 'issue_report', 'notes': 'Unicode: café / 日本語 / 🎮'}, ensure_ascii=False).encode()
         payload = b'POST /commands HTTP/1.1\r\n' + auth + b'cOnTeNt-LeNgTh: ' + str(len(body)).encode() + b'\r\n\r\n' + body
         check('fragmented-unicode-report', raw(payload, chunks=True) == 201)
-        reports = list((run / 'GameCapture/reports').glob('*.json'))
+        reports = list((run / 'VideoMixer/reports').glob('*.json'))
         check('unicode-report-output', any(json.loads(p.read_text(encoding='utf-8')).get('notes') == 'Unicode: café / 日本語 / 🎮' for p in reports))
 
         invalid_json = [b'', b'null', b'[]', b'"quit"', b'{', b'{"command":null}', b'{"command":123}',
@@ -208,7 +208,7 @@ def main():
             results = list(pool.map(burst, range(128)))
         check('concurrent-malformed-and-valid-requests', all(results), sum(results))
         check('health-after-fuzz', api('/health')['pid'] == process.pid)
-        check('schema-after-fuzz', api('/schema')['schema'] == 'game-capture-local-control-v1')
+        check('schema-after-fuzz', api('/schema')['schema'] == 'video-mixer-local-control-v1')
         api('/commands', {'command': 'quit'})
         check('clean-quit-after-fuzz', process.wait(timeout=8) == 0)
         check('discovery-removed', not discovery.exists())

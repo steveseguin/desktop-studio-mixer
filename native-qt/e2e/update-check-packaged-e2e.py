@@ -30,8 +30,8 @@ spec.loader.exec_module(desktop)
 snapshot, restore, setting = desktop.snapshot, desktop.restore, desktop.setting
 SETTINGS_KEY, OBSERVER, wait_for = desktop.SETTINGS_KEY, desktop.OBSERVER, desktop.wait_for
 
-API = 'https://api.github.com/repos/steveseguin/game-capture/releases/latest'
-RELEASES = 'https://github.com/steveseguin/game-capture/releases'
+API = 'https://api.github.com/repos/steveseguin/video-mixer/releases/latest'
+RELEASES = 'https://github.com/steveseguin/video-mixer/releases'
 UP_TO_DATE = 'You\u2019re up to date'
 UNAVAILABLE = 'Update check unavailable'
 
@@ -69,7 +69,7 @@ Interceptor.attach(get, {onEnter(args) {
 Interceptor.attach(net.enumerateExports().find(e => e.name.startsWith('?errorOccurred@QNetworkReply')).address,
     {onEnter(args) { send({kind:'network_error', code:args[1].toInt32()}); }});
 Process.attachModuleObserver({onAdded(m) {
-    if (/game-capture|qt6network|qschannelbackend|qopensslbackend/i.test(m.name)) send({kind:'module', path:m.path});
+    if (/video-mixer|qt6network|qschannelbackend|qopensslbackend/i.test(m.name)) send({kind:'module', path:m.path});
     if (m.name.toLowerCase() === 'shell32.dll') {
         Interceptor.attach(m.getExportByName('ShellExecuteW'), {onEnter(args) {
             if (!args[2].isNull()) send({kind:'browser_open', url:args[2].readUtf16String()});
@@ -147,7 +147,7 @@ class Fixture:
         scheme = 'https' if mode in ('refused', 'stall-connect', 'broken-tls', 'untrusted-tls') else 'http'
         self.url = f'{scheme}://127.0.0.1:{self.server.server_port}/release'
         if mode == 'dns-failure':
-            self.url = 'https://game-capture-update-check.invalid/release'
+            self.url = 'https://video-mixer-update-check.invalid/release'
         if mode == 'untrusted-tls':
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.load_cert_chain(cert, key)
@@ -186,9 +186,9 @@ def main():
     if not (exe.parent / 'tls/qschannelbackend.dll').is_file():
         raise RuntimeError('Packaged Schannel backend is required')
     device = frida.get_local_device()
-    if any(p.name.lower() == 'game-capture.exe' for p in device.enumerate_processes()):
-        raise RuntimeError('Close existing Game Capture instances')
-    cache = Path(os.environ['LOCALAPPDATA']) / 'GameCapture/update-check.ini'
+    if any(p.name.lower() == 'video-mixer.exe' for p in device.enumerate_processes()):
+        raise RuntimeError('Close existing Video Mixer instances')
+    cache = Path(os.environ['LOCALAPPDATA']) / 'VideoMixer/update-check.ini'
     saved_cache = cache.read_bytes() if cache.exists() else None
     saved_settings = snapshot(SETTINGS_KEY)
     results, events, samples = [], [], []
@@ -282,9 +282,9 @@ def main():
                     visible_link[0].click_input()
                     wait_for(lambda: any(e.get('kind') == 'browser_open' and e.get('url') == RELEASES for e in current_events),
                              'default browser launch', 10)
-                    wait_for(lambda: bool(Desktop(backend='uia').windows(title_re='.*Releases.*game-capture.*Microsoft.*Edge.*')),
+                    wait_for(lambda: bool(Desktop(backend='uia').windows(title_re='.*Releases.*video-mixer.*Microsoft.*Edge.*')),
                              'releases browser window', 25)
-                    windows = Desktop(backend='uia').windows(title_re='.*Releases.*game-capture.*Microsoft.*Edge.*')
+                    windows = Desktop(backend='uia').windows(title_re='.*Releases.*video-mixer.*Microsoft.*Edge.*')
                     chosen = next((w for w in windows if w.handle == user32.GetForegroundWindow()), windows[0])
                     browser = Desktop(backend='uia').window(handle=chosen.handle)
                     address_field = next(e for e in browser.descendants(control_type='Edit')
@@ -340,7 +340,7 @@ def main():
                 if 'headers' in request:
                     headers = {k.lower(): v for k, v in request['headers'].items()}
                     check(name + ': public metadata request only', 'authorization' not in headers and
-                          'cookie' not in headers and headers.get('user-agent') == 'game-capture/' + args.expected_version)
+                          'cookie' not in headers and headers.get('user-agent') == 'video-mixer/' + args.expected_version)
             if fixture.mode == 'redirect':
                 check(name + ': redirect not followed', len(fixture.requests) == 1)
             if name in ('connection-timeout', 'total-timeout', 'slow-trickle-timeout'):

@@ -474,7 +474,7 @@ void TestSpoutCapture::testSlowSenderDoesNotProduceFalseFreshFrames() {
 
 void TestSpoutCapture::testReceivesBgraAlphaFrames() {
     const std::string senderName =
-        "GameCaptureSpoutGate-" +
+        "VideoMixerSpoutGate-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     SenderProcess sender(senderName);
     if (!sender.start()) {
@@ -528,7 +528,7 @@ void TestSpoutCapture::testReceivesBgraAlphaFrames() {
 
 void TestSpoutCapture::testMovingAlphaGeometryPreserved() {
     const std::string senderName =
-        "GameCaptureSpoutGeometryGate-" +
+        "VideoMixerSpoutGeometryGate-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     SenderProcess sender(senderName, {
         "--width=640",
@@ -593,7 +593,7 @@ void TestSpoutCapture::testMovingAlphaGeometryPreserved() {
 
 void TestSpoutCapture::testContinuesAfterSenderResize() {
     const std::string senderName =
-        "GameCaptureSpoutResizeGate-" +
+        "VideoMixerSpoutResizeGate-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     SenderProcess sender(senderName, {
         QString("--resize-after-ms=%1").arg(1500),
@@ -647,7 +647,7 @@ void TestSpoutCapture::testContinuesAfterSenderResize() {
 
 void TestSpoutCapture::testContinuesAfterSenderRestartWithSameName() {
     const std::string senderName =
-        "GameCaptureSpoutRestartGate-" +
+        "VideoMixerSpoutRestartGate-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     SenderProcess firstSender(senderName);
     if (!firstSender.start()) {

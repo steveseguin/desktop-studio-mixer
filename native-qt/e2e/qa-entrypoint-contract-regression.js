@@ -38,7 +38,7 @@ check(
   fastGateBlock.includes('-FirefoxPath') &&
     readinessParameters.every((parameter) => readinessBlock.includes(parameter)) &&
     !!versionMatch &&
-    readinessBlock.includes(`game-capture-${versionMatch[1]}-win64`),
+    readinessBlock.includes(`video-mixer-${versionMatch[1]}-win64`),
   'README gate commands must include every mandatory parameter and the current package version'
 );
 

@@ -76,3 +76,7 @@ native-qt/e2e/__pycache__/
 
 # Local helper tooling
 /.tools/
+
+# Mixer SDK and local show data
+native-qt/third_party/webview2/
+*.mixer.json

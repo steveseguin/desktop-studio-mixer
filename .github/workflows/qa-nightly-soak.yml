@@ -50,6 +50,10 @@ jobs:
         working-directory: native-qt
         run: npx playwright install msedge firefox
 
+      - name: Restore WebView2 SDK
+        shell: powershell
+        run: ./native-qt/tools/restore-webview2.ps1
+
       - name: Configure CMake (Release)
         shell: pwsh
         run: >

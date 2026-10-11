@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(game-capture-native-qt VERSION 0.2.62 LANGUAGES CXX)
+project(video-mixer-native-qt VERSION 0.1.0 LANGUAGES CXX)
 
 # CMake 4 removed compatibility modes older than 3.5. Opus 1.4 still
 # declares a 3.1 minimum, so give bundled dependencies the modern floor
@@ -153,6 +153,8 @@ endif()
 
 set(VERSUS_SOURCES
     src/main.cpp
+    src/mixer/mixer_widget.cpp
+    src/mixer/browser_source.cpp
     src/app/alpha_frame_pairer.cpp
     src/app/peer_operation_executor.cpp
     src/app/versus_app.cpp
@@ -178,6 +180,8 @@ set(VERSUS_SOURCES
 )
 
 set(VERSUS_HEADERS
+    include/versus/mixer/mixer_widget.h
+    include/versus/mixer/browser_source.h
     include/versus/app/alpha_frame_pairer.h
     include/versus/app/peer_operation_executor.h
     include/versus/app/keyframe_request_policy.h
@@ -211,19 +215,28 @@ if(WIN32)
     set(APP_ICON_RC ${CMAKE_CURRENT_SOURCE_DIR}/resources/app.rc)
 endif()
 
-add_executable(game-capture WIN32 ${VERSUS_SOURCES} ${VERSUS_HEADERS} ${VERSUS_RESOURCES} ${APP_ICON_RC})
+add_executable(video-mixer WIN32 ${VERSUS_SOURCES} ${VERSUS_HEADERS} ${VERSUS_RESOURCES} ${APP_ICON_RC})
 
-set_target_properties(game-capture PROPERTIES AUTOMOC ON)
+set_target_properties(video-mixer PROPERTIES AUTOMOC ON)
 
-target_compile_definitions(game-capture PRIVATE
+if(WIN32)
+    set(WEBVIEW2_SDK "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2" CACHE PATH "WebView2 SDK (not the runtime)")
+    if(NOT EXISTS "${WEBVIEW2_SDK}/build/native/include/WebView2.h")
+        message(FATAL_ERROR "Run tools/restore-webview2.ps1 to install the WebView2 SDK")
+    endif()
+    target_include_directories(video-mixer PRIVATE "${WEBVIEW2_SDK}/build/native/include")
+    target_link_libraries(video-mixer PRIVATE "${WEBVIEW2_SDK}/build/native/x64/WebView2LoaderStatic.lib" version)
+endif()
+
+target_compile_definitions(video-mixer PRIVATE
     APP_VERSION="${PROJECT_VERSION}"
 )
 
-target_include_directories(game-capture PRIVATE
+target_include_directories(video-mixer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(game-capture PRIVATE
+target_link_libraries(video-mixer PRIVATE
     Threads::Threads
     Qt6::Widgets
     Qt6::Network
@@ -236,19 +249,19 @@ target_link_libraries(game-capture PRIVATE
     opus
 )
 
-target_include_directories(game-capture PRIVATE
+target_include_directories(video-mixer PRIVATE
     ${opus_SOURCE_DIR}/include
     ${libdatachannel_SOURCE_DIR}/deps/json/include
 )
 
 if(WIN32 AND VERSUS_USE_SPOUT AND TARGET SpoutLibrary_static)
-    target_link_libraries(game-capture PRIVATE SpoutLibrary_static)
-    target_include_directories(game-capture PRIVATE ${spout2_SOURCE_DIR}/SPOUTSDK/SpoutLibrary)
-    target_compile_definitions(game-capture PRIVATE VERSUS_USE_SPOUT)
+    target_link_libraries(video-mixer PRIVATE SpoutLibrary_static)
+    target_include_directories(video-mixer PRIVATE ${spout2_SOURCE_DIR}/SPOUTSDK/SpoutLibrary)
+    target_compile_definitions(video-mixer PRIVATE VERSUS_USE_SPOUT)
 endif()
 
 if(WIN32)
-    target_link_libraries(game-capture PRIVATE
+    target_link_libraries(video-mixer PRIVATE
         ole32
         crypt32
         oleaut32
@@ -273,29 +286,29 @@ if(WIN32)
     set(VERSUS_BUNDLE_FFMPEG "" CACHE FILEPATH "Legacy optional ffmpeg.exe override copied to ffmpeg/bin/ffmpeg.exe")
     if(EXISTS "${VERSUS_FFMPEG_ROOT}/bin/ffmpeg.exe")
         message(STATUS "Staging FFmpeg bundle from ${VERSUS_FFMPEG_ROOT}")
-        add_custom_command(TARGET game-capture POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:game-capture>/ffmpeg"
+        add_custom_command(TARGET video-mixer POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:video-mixer>/ffmpeg"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${VERSUS_FFMPEG_ROOT}"
-                "$<TARGET_FILE_DIR:game-capture>/ffmpeg")
+                "$<TARGET_FILE_DIR:video-mixer>/ffmpeg")
     elseif(VERSUS_BUNDLE_FFMPEG AND EXISTS "${VERSUS_BUNDLE_FFMPEG}")
         message(STATUS "Staging legacy ffmpeg.exe from ${VERSUS_BUNDLE_FFMPEG}")
-        add_custom_command(TARGET game-capture POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:game-capture>/ffmpeg/bin"
+        add_custom_command(TARGET video-mixer POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:video-mixer>/ffmpeg/bin"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${VERSUS_BUNDLE_FFMPEG}"
-                "$<TARGET_FILE_DIR:game-capture>/ffmpeg/bin/ffmpeg.exe")
+                "$<TARGET_FILE_DIR:video-mixer>/ffmpeg/bin/ffmpeg.exe")
     else()
         message(STATUS "FFmpeg bundle not staged; release packaging will fail unless native-qt/tools/fetch-ffmpeg-lgpl.ps1 is run or missing FFmpeg is explicitly allowed")
     endif()
 endif()
 
 if(VERSUS_USE_NVENC)
-    target_compile_definitions(game-capture PRIVATE VERSUS_USE_NVENC)
+    target_compile_definitions(video-mixer PRIVATE VERSUS_USE_NVENC)
 endif()
 
 if(VERSUS_USE_GRAPHICS_CAPTURE)
-    target_compile_definitions(game-capture PRIVATE VERSUS_USE_GRAPHICS_CAPTURE)
+    target_compile_definitions(video-mixer PRIVATE VERSUS_USE_GRAPHICS_CAPTURE)
 endif()
 
 # WebSocket test executable
@@ -371,6 +384,8 @@ if(VERSUS_BUILD_TESTS)
 
     # Library target for testable code (without main.cpp)
     set(VERSUS_LIB_SOURCES
+        src/mixer/mixer_widget.cpp
+        src/mixer/browser_source.cpp
         src/app/alpha_frame_pairer.cpp
         src/app/peer_operation_executor.cpp
         src/app/versus_app.cpp
@@ -422,6 +437,8 @@ if(VERSUS_BUILD_TESTS)
         target_compile_definitions(versus-lib PUBLIC VERSUS_USE_SPOUT)
     endif()
     if(WIN32)
+        target_include_directories(versus-lib PRIVATE "${WEBVIEW2_SDK}/build/native/include")
+        target_link_libraries(versus-lib PUBLIC "${WEBVIEW2_SDK}/build/native/x64/WebView2LoaderStatic.lib" version)
         target_link_libraries(versus-lib PUBLIC
             ole32 crypt32 oleaut32 uuid user32 gdi32 shlwapi winmm dwmapi d3d11 dxgi winhttp
             dbghelp runtimeobject mf mfplat mfreadwrite mfuuid

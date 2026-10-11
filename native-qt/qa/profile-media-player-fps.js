@@ -16,7 +16,7 @@ function nowStamp() {
 
 function parseArgs(argv) {
   const args = {
-    publisherPath: path.resolve(__dirname, '../build-review2/bin/Release/game-capture.exe'),
+    publisherPath: path.resolve(__dirname, '../build-review2/bin/Release/video-mixer.exe'),
     mediaPlayerPath: detectMediaPlayerPath(),
     mediaFile: path.resolve(__dirname, 'media50fps.mp4'),
     useDefaultOpen: true,
@@ -144,7 +144,7 @@ async function sendViewerInit(page, timeoutMs) {
       audio: true,
       label: 'media-player-profiler',
       system: {
-        app: 'game-capture-profiler',
+        app: 'video-mixer-profiler',
         version: '1',
         platform: 'playwright',
         browser: 'chromium'

@@ -1,10 +1,10 @@
 @echo off
 setlocal
 
-REM Build and run tests for Game Capture Native Qt
+REM Build and run tests for Video Mixer Native Qt
 REM Run this from a Visual Studio Developer Command Prompt
 
-echo === Game Capture Native Qt Test Build ===
+echo === Video Mixer Native Qt Test Build ===
 
 REM Create test build directory
 if not exist build-test mkdir build-test

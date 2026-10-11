@@ -30,7 +30,7 @@ function(game_capture_patch_relay_policy source_dir)
 
 } juice_config_t;]=] [=[	void *user_ptr;
 
-	// Game Capture: enforce relay policy on candidate pairs, not just signaling.
+	// Video Mixer: enforce relay policy on candidate pairs, not just signaling.
 	int relay_only;
 
 } juice_config_t;]=]

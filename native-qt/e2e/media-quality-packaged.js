@@ -126,8 +126,8 @@ async function receiver(browser,c,dir,url,seconds,source){
   return result;
 }
 async function main(){
-  const existing=execFileSync('powershell.exe',['-NoProfile','-Command',"Get-Process -Name game-capture -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id\nexit 0"],{encoding:'utf8',windowsHide:true});
-  assert(!existing.trim(),'Another Game Capture session is running; serialize quality measurements');
+  const existing=execFileSync('powershell.exe',['-NoProfile','-Command',"Get-Process -Name video-mixer -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id\nexit 0"],{encoding:'utf8',windowsHide:true});
+  assert(!existing.trim(),'Another Video Mixer session is running; serialize quality measurements');
   const server=http.createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(fs.readFileSync(path.join(__dirname,'quality-source.html')));});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const fixtureBrowser=await chromium.launch({channel:'chrome',headless:false,args:['--autoplay-policy=no-user-gesture-required','--disable-backgrounding-occluded-windows','--disable-renderer-backgrounding']});
@@ -144,7 +144,7 @@ async function main(){
       const exe=path.resolve(c.baseline?opts.baseline:opts.publisher),discovery=path.join(dir,'control.json');
       c.publisher=exe;c.sha256=crypto.createHash('sha256').update(fs.readFileSync(exe)).digest('hex');
       const stream='quality'+crypto.randomBytes(8).toString('hex');
-      const args=['--headless','--stream='+stream,'--password=false','--source=window','--window=Game Capture Quality Source',
+      const args=['--headless','--stream='+stream,'--password=false','--source=window','--window=Video Mixer Quality Source',
         '--resolution='+(opts.resolution||'1280x720'),'--fps='+(opts.fps||'30'),'--audio-source=default-output','--duration-ms=1800000','--local-control','--local-control-discovery='+discovery];
       if(opts['video-encoder'])args.push('--video-encoder='+opts['video-encoder']);
       if(opts['video-codec'])args.push('--video-codec='+opts['video-codec']);

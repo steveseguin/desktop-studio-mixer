@@ -56,6 +56,10 @@ jobs:
         shell: powershell
         run: ./native-qt/tools/fetch-ffmpeg-lgpl.ps1
 
+      - name: Restore WebView2 SDK
+        shell: powershell
+        run: ./native-qt/tools/restore-webview2.ps1
+
       - name: Configure CMake (Release)
         shell: pwsh
         run: >
@@ -89,7 +93,7 @@ jobs:
                 -not $env:NINJA_PLUGIN_REPO) {
               throw "Full release validation requires the prepared package, manifest digest, and OBS runtime."
             }
-            $publisher = Join-Path $env:GAME_CAPTURE_RELEASE_PACKAGE "game-capture.exe"
+            $publisher = Join-Path $env:GAME_CAPTURE_RELEASE_PACKAGE "video-mixer.exe"
             $manifest = Join-Path $env:GAME_CAPTURE_RELEASE_PACKAGE "release-artifact-manifest.json"
             $spoutSender = Join-Path $env:GITHUB_WORKSPACE "native-qt/build-ci/bin/spout_test_sender.exe"
             ./native-qt/qa/run-release-readiness.ps1 `

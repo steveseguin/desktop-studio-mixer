@@ -1,5 +1,5 @@
 param(
-    [string]$Title = "Game Capture E2E Source",
+    [string]$Title = "Video Mixer E2E Source",
     [int]$Width = 1280,
     [int]$Height = 720,
     [ValidateRange(16, 60000)]

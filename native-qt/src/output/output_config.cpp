@@ -1,5 +1,7 @@
 #include "versus/output/output_session.h"
 #include <QUrl>
+#include <QFileInfo>
+#include <QDir>
 #include <QUrlQuery>
 #include <algorithm>
 #include <stdexcept>
@@ -7,6 +9,7 @@
 namespace versus::output {
 const char *protocolName(Protocol protocol) {
     switch (protocol) {
+        case Protocol::Recording: return "Recording";
         case Protocol::Whip: return "WHIP";
         case Protocol::Srt: return "SRT";
         case Protocol::Rtmp: return "RTMP";
@@ -14,11 +17,12 @@ const char *protocolName(Protocol protocol) {
     }
 }
 Protocol parseProtocol(const std::string &name) {
+    if (name == "file") return Protocol::Recording;
     if (name == "vdo" || name == "vdoninja") return Protocol::VdoNinja;
     if (name == "whip") return Protocol::Whip;
     if (name == "srt") return Protocol::Srt;
     if (name == "rtmp" || name == "rtmps") return Protocol::Rtmp;
-    throw std::invalid_argument("Output must be vdo, whip, srt or rtmp");
+    throw std::invalid_argument("Output must be vdo, whip, srt, rtmp or file");
 }
 
 std::string validateConfig(const Config &config) {
@@ -26,6 +30,13 @@ std::string validateConfig(const Config &config) {
     for (const auto *value : {&config.url, &config.bearerToken, &config.streamKey, &config.streamId, &config.passphrase}) {
         if (value->size() > 16384 || std::any_of(value->begin(), value->end(), [](unsigned char c) { return c < 32 || c == 127; }))
             return "Output settings contain invalid control characters or are too long.";
+    }
+    if (config.protocol == Protocol::Recording) {
+        const QFileInfo file(QString::fromStdString(config.url));
+        if (!file.isAbsolute() || file.suffix().toLower() != "mkv" || !file.dir().exists())
+            return "Choose an absolute .mkv file path in an existing folder.";
+        if (file.exists()) return "This recording already exists. Choose a new file name.";
+        return {};
     }
     const QUrl url(QString::fromStdString(config.url), QUrl::StrictMode);
     if (!url.isValid() || url.host().isEmpty() || url.hasFragment() || config.url.size() > 16384)
@@ -73,6 +84,7 @@ std::string destinationLabel(const Config &config) {
 }
 
 std::string destinationUrl(const Config &config) {
+    if (config.protocol == Protocol::Recording) return config.url;
     QUrl url(QString::fromStdString(config.url));
     if (config.protocol == Protocol::Rtmp && !config.streamKey.empty()) {
         QString path = url.path();

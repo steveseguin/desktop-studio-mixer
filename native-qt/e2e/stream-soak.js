@@ -35,7 +35,7 @@ function buildRunScopedId(base, maxLen, runIndex, attempt, fallbackPrefix) {
 
 function parseArgs(argv) {
   const args = {
-    publisher: 'game-capture',
+    publisher: 'video-mixer',
     publisherPath: '',
     streamId: `soak_${Date.now()}`,
     room: '',

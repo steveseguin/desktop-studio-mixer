@@ -75,7 +75,7 @@ $buildParams = @{
     RequireReleaseArtifacts = $true
 }
 & $buildScript @buildParams
-$packagedPublisher = Join-Path $repoRoot "dist/game-capture-$Version-win64/game-capture.exe"
+$packagedPublisher = Join-Path $repoRoot "dist/video-mixer-$Version-win64/video-mixer.exe"
 $artifactManifestPath = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($packagedPublisher)), 'release-artifact-manifest.json')
 if (-not (Test-Path -LiteralPath $packagedPublisher -PathType Leaf) -or
     -not (Test-Path -LiteralPath $artifactManifestPath -PathType Leaf)) {
@@ -84,7 +84,7 @@ if (-not (Test-Path -LiteralPath $packagedPublisher -PathType Leaf) -or
 $artifactManifestSha256 = (Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $artifactManifestPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
 
 $previousCaptureWindowFilter = [Environment]::GetEnvironmentVariable("GAME_CAPTURE_WINDOW_FILTER", "Process")
-$captureWindowFilter = "Game Capture Fast Gate Source $(Get-Date -Format "yyyyMMdd-HHmmss")"
+$captureWindowFilter = "Video Mixer Fast Gate Source $(Get-Date -Format "yyyyMMdd-HHmmss")"
 $captureSourceProcess = $null
 
 try {

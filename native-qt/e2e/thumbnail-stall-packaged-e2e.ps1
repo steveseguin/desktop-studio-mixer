@@ -11,7 +11,7 @@ if (-not $ReportDir) { $ReportDir = Join-Path $PSScriptRoot 'reports/thumbnail-s
 $runDir = Join-Path ([IO.Path]::GetFullPath($ReportDir)) ([guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 $discovery = Join-Path $runDir 'control.json'
-$key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\VDO.Ninja\Game Capture\video')
+$key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\VDO.Ninja\Video Mixer\video')
 $hadMode = $key.GetValueNames() -contains 'sourceMode'
 $originalMode = $key.GetValue('sourceMode')
 $originalKind = if ($hadMode) { $key.GetValueKind('sourceMode') } else { 'String' }

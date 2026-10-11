@@ -1,4 +1,6 @@
-﻿#include "versus/ui/main_window.h"
+﻿#include "versus/mixer/mixer_widget.h"
+#include <QTabWidget>
+#include "versus/ui/main_window.h"
 
 #include "versus/ui/update_checker.h"
 
@@ -17,6 +19,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QFontDatabase>
 #include <QFrame>
@@ -78,13 +81,13 @@ static const QString COLOR_TEXT = "#eaf4ff";
 static const QString COLOR_TEXT_DIM = "#89a2ba";
 static const QString COLOR_RED = "#ff4d5a";
 static const QString COLOR_YELLOW = "#f0b84d";
-static const QString APP_WINDOW_TITLE = "Game Capture - Powered by VDO.Ninja";
-static const QString APP_BRAND = "Game Capture";
-static const QString APP_TRAY_IDLE = "Game Capture - Idle";
-static const QString APP_TRAY_LIVE = "Game Capture - LIVE";
+static const QString APP_WINDOW_TITLE = "Video Mixer - Powered by VDO.Ninja";
+static const QString APP_BRAND = "Video Mixer";
+static const QString APP_TRAY_IDLE = "Video Mixer - Idle";
+static const QString APP_TRAY_LIVE = "Video Mixer - LIVE";
 static const QString APP_VERSION_TEXT = QStringLiteral(APP_VERSION);
 static const QString APP_SETTINGS_ORG = "VDO.Ninja";
-static const QString APP_SETTINGS_NAME = "Game Capture";
+static const QString APP_SETTINGS_NAME = "Video Mixer";
 
 // Output URLs can contain credentials too. Protect the whole profile with the
 // current Windows user's key, rather than persisting just the token securely.
@@ -95,7 +98,7 @@ static QByteArray protectOutputProfiles(const QByteArray &input, bool decrypt) {
     DATA_BLOB result{};
     const BOOL ok = decrypt
         ? CryptUnprotectData(&source, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &result)
-        : CryptProtectData(&source, L"Game Capture outputs", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &result);
+        : CryptProtectData(&source, L"Video Mixer outputs", nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &result);
     if (!ok) return {};
     QByteArray bytes(reinterpret_cast<const char *>(result.pbData), result.cbData);
     LocalFree(result.pbData);
@@ -164,21 +167,21 @@ bool codecSupportsAlphaWorkflow(versus::video::VideoCodec codec) {
 
 QString codecTooltipFor(versus::video::VideoCodec codec) {
     if (codec == versus::video::VideoCodec::H265) {
-        return "H.265 is experimental and may not decode in Chromium-based viewers. Game Capture will fall back to "
+        return "H.265 is experimental and may not decode in Chromium-based viewers. Video Mixer will fall back to "
                "H.264 if startup or encode stability fails.";
     }
     if (codec == versus::video::VideoCodec::AV1) {
-        return "AV1 publish is experimental. Game Capture will try the selected encoder preference and fall back to "
+        return "AV1 publish is experimental. Video Mixer will try the selected encoder preference and fall back to "
                "H.264 if startup or encode stability fails. Alpha-preserving AV1 paths vary by viewer; the current "
                "OBS VDO.Ninja transparency workflow uses VP9 instead.";
     }
     if (codec == versus::video::VideoCodec::VP9) {
-        return "VP9 publish is experimental and software-heavy. Game Capture will fall back to H.264 if startup or "
+        return "VP9 publish is experimental and software-heavy. Video Mixer will fall back to H.264 if startup or "
                "encode stability fails. Transparency in OBS requires the VDO.Ninja OBS plugin native receiver; "
                "browser viewers stay standard color video.";
     }
     if (codec == versus::video::VideoCodec::H264) {
-        return "H.264 supports hardware encoding. With alpha workflow enabled, Game Capture sends H.264 color plus a "
+        return "H.264 supports hardware encoding. With alpha workflow enabled, Video Mixer sends H.264 color plus a "
                "separate CPU-encoded VP9 alpha mask for the OBS native receiver.";
     }
     return QString();
@@ -290,6 +293,7 @@ versus::app::AudioSourceMode audioSourceModeFromUiValue(const QString &value) {
 }
 
 versus::app::VideoSourceMode videoSourceModeFromUiValue(const QString &value) {
+    if (value == "mixer") return versus::app::VideoSourceMode::Mixer;
     if (value == "camera") {
         return versus::app::VideoSourceMode::Camera;
     }
@@ -504,7 +508,7 @@ QString defaultLogFolderPath() {
     if (localAppData.isEmpty()) {
         localAppData = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
     } else {
-        localAppData = QDir(localAppData).filePath("GameCapture/logs");
+        localAppData = QDir(localAppData).filePath("VideoMixer/logs");
     }
     if (localAppData.isEmpty()) {
         localAppData = QDir::currentPath();
@@ -540,7 +544,7 @@ bool currentExecutableLooksInstalled(const QString &exePath) {
         if (root.isEmpty()) {
             continue;
         }
-        const QString installedRoot = normalizedAbsolutePath(QDir(root).filePath("Game Capture"));
+        const QString installedRoot = normalizedAbsolutePath(QDir(root).filePath("Video Mixer"));
         if (!installedRoot.isEmpty() && normalizedExe.startsWith(installedRoot + "\\")) {
             return true;
         }
@@ -572,7 +576,7 @@ FirewallRuleState queryFirewallRuleForCurrentExe() {
             "firewall",
             "show",
             "rule",
-            "name=Game Capture WebRTC UDP",
+            "name=Video Mixer WebRTC UDP",
             "verbose"
         });
     if (!netsh.waitForFinished(2500)) {
@@ -691,6 +695,24 @@ MainWindow::MainWindow(
         updateStatus("Stop is taking longer than expected. Choose Quit to force close the app.", "error");
         updateGoLiveButton();
     });
+
+    if (runtimeOptions_.systemIntegrationsEnabled) {
+        auto *tabs = new QTabWidget(this);
+        tabs->setObjectName("workspaceTabs");
+        auto *captureControls = takeCentralWidget();
+        auto *studio = new versus::mixer::MixerWidget(core_, tabs);
+        tabs->addTab(studio, "Studio");
+        tabs->addTab(captureControls, "Capture & output");
+        setCentralWidget(tabs);
+        connect(studio, &versus::mixer::MixerWidget::outputRequested, this, [this, tabs]() {
+            if (!isLive_ && !startInProgress_ && !stopInProgress_)
+                sourceModeSelect_->setCurrentIndex(sourceModeSelect_->findData("mixer"));
+            tabs->setCurrentIndex(1);
+            advancedToggle_->setChecked(true);
+        });
+        sourceModeSelect_->setCurrentIndex(sourceModeSelect_->findData("mixer"));
+        resize(1440, 960);
+    }
 
     // Initial window list
     refreshWindowList();
@@ -812,10 +834,10 @@ void MainWindow::showFirewallWarningIfNeeded() {
     const bool installedPath = currentExecutableLooksInstalled(currentExe);
     const QString issue = firewall.present
         ? QString("The existing Windows Firewall rule points to:\n%1").arg(firewall.programPath)
-        : QString("Windows Firewall does not have the Game Capture WebRTC UDP rule.");
+        : QString("Windows Firewall does not have the Video Mixer WebRTC UDP rule.");
     const QString guidance = installedPath
-        ? "Re-run the Game Capture setup installer or add an inbound UDP allow rule for this executable."
-        : "Portable and ZIP copies cannot add this rule automatically. Use the Game Capture setup installer or add an inbound UDP allow rule for this executable.";
+        ? "Re-run the Video Mixer setup installer or add an inbound UDP allow rule for this executable."
+        : "Portable and ZIP copies cannot add this rule automatically. Use the Video Mixer setup installer or add an inbound UDP allow rule for this executable.";
 
     spdlog::warn("[UI] Windows Firewall rule is missing or does not match current executable: exe='{}' rulePresent={} ruleProgram='{}'",
                  currentExe.toStdString(),
@@ -860,6 +882,7 @@ void MainWindow::maybeQuitAfterPendingOperations() {
 
 void MainWindow::requestQuit() {
     quitRequested_ = true;
+    qApp->setProperty("video_mixer_quitting", true);
     if (hasPendingAsyncOperation()) {
         if (forceQuitEnabled_ || quitAfterPendingOps_) {
             forceQuitRequested_ = true;
@@ -1158,10 +1181,10 @@ void MainWindow::onResetToDefaults() {
 
     const auto answer = QMessageBox::question(
         this,
-        "Reset Game Capture to Defaults?",
+        "Reset Video Mixer to Defaults?",
         "This clears saved stream details, room and password values, video, audio, remote-control settings, "
         "and the saved window layout.\n\n"
-        "It does not uninstall Game Capture, change Windows Firewall rules, or delete logs.",
+        "It does not uninstall Video Mixer, change Windows Firewall rules, or delete logs.",
         QMessageBox::Reset | QMessageBox::Cancel,
         QMessageBox::Cancel);
     if (answer != QMessageBox::Reset) {
@@ -1172,7 +1195,7 @@ void MainWindow::onResetToDefaults() {
         QMessageBox::warning(
             this,
             "Reset Failed",
-            "Game Capture could not reset its saved settings. Stop streaming and try again.");
+            "Video Mixer could not reset its saved settings. Stop streaming and try again.");
     }
 }
 
@@ -1345,6 +1368,7 @@ void MainWindow::setupMenuBar() {
 
     fileMenu->addSeparator();
     auto *quitAction = fileMenu->addAction("Quit");
+    quitAction->setShortcut(QKeySequence("Ctrl+Q"));
     connect(quitAction, &QAction::triggered, this, [this]() {
         requestQuit();
     });
@@ -1363,11 +1387,11 @@ void MainWindow::setupMenuBar() {
     });
 
     auto *helpMenu = menuBar()->addMenu("&Help");
-    auto *aboutAction = helpMenu->addAction("About Game Capture");
+    auto *aboutAction = helpMenu->addAction("About Video Mixer");
     connect(aboutAction, &QAction::triggered, this, [this]() {
         QMessageBox::about(
             this,
-            "About Game Capture",
+            "About Video Mixer",
             QString("%1\nVersion %2\nPowered by VDO.Ninja")
                 .arg(APP_BRAND, APP_VERSION_TEXT));
     });
@@ -1398,6 +1422,7 @@ void MainWindow::setupUI() {
     sourceModeSelect_->addItem("Window", QVariant("window"));
     sourceModeSelect_->addItem("Camera / Webcam", QVariant("camera"));
     sourceModeSelect_->addItem("Spout2 (avatar apps)", QVariant("spout"));
+    sourceModeSelect_->addItem("Mixer program", QVariant("mixer"));
     sourceModeSelect_->setToolTip(
         "Window captures visible app/game windows. Camera / Webcam captures a Windows video input device. "
         "Spout2 is for local avatar/alpha senders such as VTube Studio, Warudo, VSeeFace, and VNyan. "
@@ -1440,6 +1465,7 @@ void MainWindow::setupUI() {
             }
         }
         previousSourceMode_ = sourceMode;
+        syncMixerCaptureControls();
         selectedWindowId_.clear();
         if (windowListWidget_) {
             windowListWidget_->clearSelection();
@@ -1478,7 +1504,7 @@ void MainWindow::setupUI() {
     cameraResolutionSelect_->addItem("960x540", QVariant("960x540"));
     cameraResolutionSelect_->addItem("640x480", QVariant("640x480"));
     cameraResolutionSelect_->setToolTip(
-        "Requested camera capture resolution. If the camera does not offer this exact mode, Game Capture uses the closest supported mode.");
+        "Requested camera capture resolution. If the camera does not offer this exact mode, Video Mixer uses the closest supported mode.");
     installComboWheelGuard(cameraResolutionSelect_);
     cameraResolutionLabel->setBuddy(cameraResolutionSelect_);
 
@@ -1493,7 +1519,7 @@ void MainWindow::setupUI() {
     cameraFpsSelect_->addItem("24 fps", QVariant(24));
     cameraFpsSelect_->setCurrentIndex(1);
     cameraFpsSelect_->setToolTip(
-        "Requested camera frame rate. If the camera does not offer this exact rate, Game Capture uses the closest supported rate.");
+        "Requested camera frame rate. If the camera does not offer this exact rate, Video Mixer uses the closest supported rate.");
     installComboWheelGuard(cameraFpsSelect_);
     cameraFpsLabel->setBuddy(cameraFpsSelect_);
 
@@ -1563,7 +1589,7 @@ void MainWindow::setupUI() {
     sep1->setStyleSheet("background-color: #333;");
     layout->addWidget(sep1);
 
-    auto *heroTitle = new QLabel("Game Capture Live", this);
+    auto *heroTitle = new QLabel("Video Mixer Live", this);
     heroTitle->setStyleSheet(QString("color: %1; font-size: 18px; font-weight: 700;").arg(COLOR_TEXT));
     layout->addWidget(heroTitle);
 
@@ -1599,7 +1625,7 @@ void MainWindow::setupUI() {
     }
     vdoTargetLayout->addLayout(basicForm);
 
-    auto *urlHint = new QLabel("Tip: paste a full VDO URL and Game Capture auto-uses stream/room/password.", this);
+    auto *urlHint = new QLabel("Tip: paste a full VDO URL and Video Mixer auto-uses stream/room/password.", this);
     urlHint->setStyleSheet(QString("color: %1; font-size: 11px;").arg(COLOR_TEXT_DIM));
     urlHint->setWordWrap(true);
     vdoTargetLayout->addWidget(urlHint);
@@ -1642,6 +1668,7 @@ void MainWindow::setupUI() {
     outputSelect_->addItem("WHIP", "whip");
     outputSelect_->addItem("SRT (caller)", "srt");
     outputSelect_->addItem("RTMP / RTMPS", "rtmp");
+    outputSelect_->addItem("Record to file (MKV)", "file");
     installComboWheelGuard(outputSelect_);
     advancedForm->addRow("Output", outputSelect_);
     outputPanel_ = new QWidget(this);
@@ -1651,7 +1678,18 @@ void MainWindow::setupUI() {
     outputUrlInput_ = new QLineEdit(this);
     outputUrlInput_->setObjectName("outputUrlInput");
     outputUrlInput_->setAccessibleName("Output URL");
-    outputForm_->addRow("Server URL", outputUrlInput_);
+    outputForm_->addRow("URL / recording path", outputUrlInput_);
+    auto *recordingBrowse = new QPushButton("Choose recording file...", this);
+    recordingBrowse->setObjectName("recordingBrowse");
+    outputForm_->addRow(recordingBrowse);
+    recordingBrowse->hide();
+    connect(outputSelect_, &QComboBox::currentIndexChanged, recordingBrowse, [this, recordingBrowse] {
+        recordingBrowse->setVisible(outputSelect_->currentData().toString() == "file");
+    });
+    connect(recordingBrowse, &QPushButton::clicked, this, [this] {
+        const auto file = QFileDialog::getSaveFileName(this, "New recording", {}, "Matroska video (*.mkv)");
+        if (!file.isEmpty()) outputUrlInput_->setText(file);
+    });
     outputSecretInput_ = new QLineEdit(this);
     outputSecretInput_->setObjectName("outputSecretInput");
     outputSecretInput_->setAccessibleName("Output credential");
@@ -1962,7 +2000,7 @@ void MainWindow::setupUI() {
     ffmpegOptionsInput_->setObjectName("ffmpegOptionsInput");
     ffmpegOptionsInput_->setPlaceholderText("Optional FFmpeg options (for example: -threads 6 or -preset p4)");
     ffmpegOptionsInput_->setToolTip(
-        "Advanced FFmpeg output options are preserved where safe. During dual-track transparency, Game Capture "
+        "Advanced FFmpeg output options are preserved where safe. During dual-track transparency, Video Mixer "
         "enforces the VP9 codec, zero encoder lag, and an all-keyframe GOP; conflicting options are ignored and logged.");
     ffmpegOptionsInput_->setEnabled(false);
     advancedForm->addRow("FFmpeg Options", ffmpegOptionsInput_);
@@ -2202,7 +2240,7 @@ void MainWindow::setupUI() {
 
     if (runtimeOptions_.systemIntegrationsEnabled) {
         const QString cachePath = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
-                                  + "/GameCapture/update-check.ini";
+                                  + "/VideoMixer/update-check.ini";
         auto *checker = new UpdateChecker(APP_VERSION_TEXT, cachePath, this);
         const auto refreshUpdateStatus = [checker, updateLabel, releasesLink] {
             const auto &result = checker->result();
@@ -2583,6 +2621,13 @@ void MainWindow::onAutoRefreshWindows() {
 void MainWindow::refreshWindowList() {
     if (core_) {
         const QString sourceMode = sourceModeSelect_ ? sourceModeSelect_->currentData().toString() : QString("window");
+        windowListWidget_->setVisible(sourceMode != "mixer");
+        syncMixerCaptureControls();
+        if (sourceMode == "mixer") {
+            selectedWindowId_ = "mixer-program";
+            updateGoLiveButton();
+            return;
+        }
         if (sourceMode == "spout") {
             windowListWidget_->setSpoutModeEnabled(true);
             windowListWidget_->setCameraModeEnabled(false);
@@ -2662,7 +2707,7 @@ void MainWindow::refreshMicrophoneDevices(const QString &preferredDeviceId) {
                     device.channels != 2 ||
                     device.bitsPerSample != 32 ||
                     !device.floatingPoint) {
-                    tooltip += "\nGame Capture will convert this input to 48 kHz for mixing and Opus encoding.";
+                    tooltip += "\nVideo Mixer will convert this input to 48 kHz for mixing and Opus encoding.";
                 }
             }
             microphoneDeviceSelect_->setItemData(index, tooltip, Qt::ToolTipRole);
@@ -2940,7 +2985,7 @@ void MainWindow::onGoLiveClicked() {
         const int audioBitrateKbps = audioBitrateSpin_ ? audioBitrateSpin_->value() : 192;
         const int audioChannels = audioChannelsSelect_ ? audioChannelsSelect_->currentData().toInt() : 2;
         const bool externalOutput = outputSelect_->currentData().toString() != "vdo";
-        const bool muxedOutput = outputSelect_->currentData().toString() == "srt" || outputSelect_->currentData().toString() == "rtmp";
+        const bool muxedOutput = outputSelect_->currentData().toString() == "file" || outputSelect_->currentData().toString() == "srt" || outputSelect_->currentData().toString() == "rtmp";
         const bool pcmAudio = !externalOutput && audioCodecSelect_->currentData().toString() == "pcm";
         const bool audioRed = !externalOutput && audioRedCheck_->isChecked() && !pcmAudio;
         const std::string selectedWindowId = selectedWindowId_.toStdString();
@@ -3053,10 +3098,10 @@ void MainWindow::onGoLiveClicked() {
                     core->setSelectedWindow(selectedWindowId);
                     core->setVideoSourceMode(sourceMode);
                     core->setVideoConfig(config);
-                    core->setAudioSourceMode(audioSourceModeFromUiValue(audioSourceValue));
-                    core->setIncludeMicrophone(includeMicrophone);
+                    core->setAudioSourceMode(sourceMode == versus::app::VideoSourceMode::Mixer ? versus::app::AudioSourceMode::None : audioSourceModeFromUiValue(audioSourceValue));
+                    core->setIncludeMicrophone(sourceMode != versus::app::VideoSourceMode::Mixer && includeMicrophone);
                     core->setMicrophoneDeviceId(microphoneDeviceId.toStdString());
-                    core->setAudioMixConfig(primaryAudioGain, microphoneAudioGain, audioLimiterEnabled);
+                    core->setAudioMixConfig(sourceMode == versus::app::VideoSourceMode::Mixer ? 1.0f : primaryAudioGain, microphoneAudioGain, audioLimiterEnabled);
 
                     if (!core->setAudioEncodingConfig(audioBitrateKbps, audioChannels, pcmAudio, audioRed)) {
                         failureStatus = "Failed to apply audio encoding settings";
@@ -3229,10 +3274,11 @@ void MainWindow::updateGoLiveButton() {
         return;
     }
 
+    const bool recording = outputSelect_ && outputSelect_->currentData().toString() == "file";
     if (startInProgress_) {
         goLiveButton_->setText("STARTING...");
         goLiveButton_->setAccessibleName("Starting stream");
-        goLiveButton_->setAccessibleDescription("Game Capture is starting the stream.");
+        goLiveButton_->setAccessibleDescription("Video Mixer is starting the stream.");
         goLiveButton_->setToolTip("Starting the stream...");
         goLiveButton_->setEnabled(false);
         goLiveButton_->setStyleSheet(QString(
@@ -3253,7 +3299,7 @@ void MainWindow::updateGoLiveButton() {
     if (stopInProgress_) {
         goLiveButton_->setText("STOPPING...");
         goLiveButton_->setAccessibleName("Stopping stream");
-        goLiveButton_->setAccessibleDescription("Game Capture is stopping the stream.");
+        goLiveButton_->setAccessibleDescription("Video Mixer is stopping the stream.");
         goLiveButton_->setToolTip("Stopping the stream...");
         goLiveButton_->setEnabled(false);
         goLiveButton_->setStyleSheet(QString(
@@ -3272,8 +3318,8 @@ void MainWindow::updateGoLiveButton() {
     }
 
     if (isLive_) {
-        goLiveButton_->setText("STOP");
-        goLiveButton_->setAccessibleName("Stop streaming");
+        goLiveButton_->setText(recording ? "STOP RECORDING" : "STOP");
+        goLiveButton_->setAccessibleName(recording ? "Stop recording" : "Stop streaming");
         goLiveButton_->setAccessibleDescription("Stop the active stream.");
         goLiveButton_->setToolTip("Stop streaming");
         goLiveButton_->setEnabled(true);
@@ -3293,8 +3339,8 @@ void MainWindow::updateGoLiveButton() {
         }
     } else {
         const bool sourceSelected = !selectedWindowId_.isEmpty();
-        goLiveButton_->setText(sourceSelected ? "GO LIVE" : "SELECT A SOURCE");
-        goLiveButton_->setAccessibleName(sourceSelected ? "Go live" : "Go live unavailable");
+        goLiveButton_->setText(sourceSelected ? (recording ? "START RECORDING" : "GO LIVE") : "SELECT A SOURCE");
+        goLiveButton_->setAccessibleName(sourceSelected ? (recording ? "Start recording" : "Go live") : "Go live unavailable");
         goLiveButton_->setAccessibleDescription(
             sourceSelected
                 ? QStringLiteral("Start streaming the selected source.")
@@ -3544,14 +3590,20 @@ void MainWindow::updateOutputControls() {
     outputHelp_->setText(whip ? "H.264 video and 48 kHz Opus audio. Enter the complete WHIP publishing endpoint."
         : srt ? "H.264 video and 48 kHz AAC audio. Caller mode connects to a listening receiver. Higher latency allows more time to recover lost packets."
         : "H.264 video and 48 kHz AAC audio. Enter a server URL and stream key, or paste the complete publishing URL. RTMPS encrypts the connection.");
+    if (protocol == "file") {
+        outputUrlInput_->setPlaceholderText("C:/Users/You/Videos/show.mkv");
+        outputHelp_->setText("Records Program video and mixed audio to a new MKV file using H.264 and AAC. Existing files are never overwritten. Stop output to finalize the recording.");
+    }
+    outputSecretInput_->setEnabled(protocol != "file");
     updateAudioEncodingControls();
+    updateGoLiveButton();
     if (!isLive_) resetOperatorHealthUi();
 }
 
 void MainWindow::updateAudioEncodingControls() {
     if (!audioCodecSelect_ || !audioRedCheck_) return;
     const auto protocol = outputSelect_ ? outputSelect_->currentData().toString() : QString("vdo");
-    const bool vdo = protocol == "vdo", aac = protocol == "srt" || protocol == "rtmp";
+    const bool vdo = protocol == "vdo", aac = protocol == "file" || protocol == "srt" || protocol == "rtmp";
     const bool pcm = vdo && audioCodecSelect_->currentData().toString() == "pcm";
     setFormRowVisible(audioEncodingForm_, audioCodecSelect_, vdo);
     setFormRowVisible(audioEncodingForm_, audioRedCheck_, vdo);
@@ -3596,7 +3648,7 @@ void MainWindow::syncCodecUiState() {
     }
 
     const bool externalOutput = outputSelect_ && outputSelect_->currentData().toString() != "vdo";
-    const bool muxedOutput = outputSelect_ && (outputSelect_->currentData().toString() == "srt" || outputSelect_->currentData().toString() == "rtmp");
+    const bool muxedOutput = outputSelect_ && (outputSelect_->currentData().toString() == "file" || outputSelect_->currentData().toString() == "srt" || outputSelect_->currentData().toString() == "rtmp");
     const versus::video::VideoCodec selectedCodec = externalOutput ? versus::video::VideoCodec::H264 : codecFromUiValue(codecSelect_->currentData().toString());
     const bool usesExternalFfmpeg = codecUsesExternalFfmpeg(selectedCodec);
     const QString mode = encoderSelect_->currentData().toString();
@@ -3620,7 +3672,7 @@ void MainWindow::syncCodecUiState() {
         alphaBackgroundModeSelect_->setEnabled(
             configControlsEnabled_ && !alphaWorkflowEnabled);
         alphaBackgroundModeSelect_->setToolTip(alphaWorkflowEnabled
-            ? "Alpha-preserving encode is enabled, so Game Capture keeps the source alpha instead of compositing a background."
+            ? "Alpha-preserving encode is enabled, so Video Mixer keeps the source alpha instead of compositing a background."
             : "Composites transparent BGRA/Spout2 pixels over a solid color before encoding. Use chroma background with H.264/NVENC when true VP9 alpha is too CPU-heavy.");
     }
     if (alphaBackgroundColorButton_) {
@@ -3671,7 +3723,7 @@ void MainWindow::refreshFfmpegStatus() {
         ffmpegProbeTimer_->stop();
     }
     const bool externalOutput = outputSelect_ && outputSelect_->currentData().toString() != "vdo";
-    const bool muxedOutput = outputSelect_ && (outputSelect_->currentData().toString() == "srt" || outputSelect_->currentData().toString() == "rtmp");
+    const bool muxedOutput = outputSelect_ && (outputSelect_->currentData().toString() == "file" || outputSelect_->currentData().toString() == "srt" || outputSelect_->currentData().toString() == "rtmp");
     const bool alphaWorkflowSelected = !externalOutput && alphaWorkflowEffectiveForSelectedCodec();
     const auto selectedCodec = codecSelect_ && !externalOutput
         ? codecFromUiValue(codecSelect_->currentData().toString())
@@ -3792,6 +3844,7 @@ int MainWindow::selectedBitrateKbps() const {
 }
 
 QString MainWindow::audioSourceSummaryText() const {
+    if (sourceModeSelect_ && sourceModeSelect_->currentData().toString() == "mixer") return "Primary: Studio mix";
     if (!audioSourceSelect_) {
         return QStringLiteral("Primary: -");
     }
@@ -3802,6 +3855,7 @@ QString MainWindow::audioSourceSummaryText() const {
 }
 
 QString MainWindow::microphoneSourceSummaryText() const {
+    if (sourceModeSelect_ && sourceModeSelect_->currentData().toString() == "mixer") return "Mic/input: Managed in Studio";
     const QString primarySource = audioSourceSelect_ ? audioSourceSelect_->currentData().toString() : QString();
     if (primarySource == QStringLiteral("default-microphone")) {
         return QStringLiteral("Mic/input: Primary source");
@@ -3951,6 +4005,18 @@ void MainWindow::updateOperatorHealthUi(const versus::app::ConnectionHealth &hea
     }
 }
 
+void MainWindow::syncMixerCaptureControls() {
+    const bool mixer = sourceModeSelect_ && sourceModeSelect_->currentData().toString() == "mixer";
+    for (QWidget *field : std::initializer_list<QWidget*>{audioSourceSelect_, includeMicrophoneCheck_, microphoneDeviceSelect_,
+            primaryAudioGainSpin_, microphoneAudioGainSpin_}) {
+        if (field) {
+            field->setEnabled(configControlsEnabled_ && !mixer);
+            if (mixer) field->setToolTip("Manage mixer sources and audio levels in Studio.");
+        }
+    }
+    if (previewLabel_) previewLabel_->parentWidget()->setVisible(!mixer);
+}
+
 void MainWindow::setConfigControlsEnabled(bool enabled) {
     configControlsEnabled_ = enabled;
     for (QWidget *field : std::initializer_list<QWidget *>{outputSelect_, outputUrlInput_, outputSecretInput_,
@@ -4071,6 +4137,7 @@ void MainWindow::setConfigControlsEnabled(bool enabled) {
         onBitratePresetChanged(bitrateSelect_ ? bitrateSelect_->currentIndex() : 0);
     }
     syncCodecUiState();
+    syncMixerCaptureControls();
 }
 
 void MainWindow::updateTrayLiveIndicator(bool live) {
@@ -4099,6 +4166,11 @@ void MainWindow::refreshSelectedWindowPreview() {
         return;
     }
 
+    if (sourceMode == "mixer") {
+        previewLabel_->setPixmap(QPixmap());
+        previewLabel_->setText("Program output comes from the Studio tab. Manage audio with the Studio faders.");
+        return;
+    }
     if (sourceMode == "camera") {
         previewLabel_->setPixmap(QPixmap());
         QString cameraName = windowListWidget_
@@ -4333,6 +4405,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         }
     }
 
+    qApp->setProperty("video_mixer_quitting", true);
     QMainWindow::closeEvent(event);
 }
 

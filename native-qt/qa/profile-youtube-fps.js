@@ -15,7 +15,7 @@ function nowStamp() {
 
 function parseArgs(argv) {
   const args = {
-    publisherPath: path.resolve(__dirname, '../build-review2/bin/Release/game-capture.exe'),
+    publisherPath: path.resolve(__dirname, '../build-review2/bin/Release/video-mixer.exe'),
     youtubeUrl: 'https://www.youtube.com/watch?v=aqz-KE-bpKQ&autoplay=1&mute=1',
     sampleSeconds: 35,
     startupDelayMs: 9000,
@@ -150,7 +150,7 @@ async function sendViewerInit(page, timeoutMs) {
       audio: true,
       label: 'yt-profile',
       system: {
-        app: 'game-capture-profiler',
+        app: 'video-mixer-profiler',
         version: '1',
         platform: 'playwright',
         browser: 'chromium'

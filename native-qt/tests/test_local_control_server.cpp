@@ -100,7 +100,7 @@ void TestLocalControlServer::testHealthAndDiscovery() {
     const QByteArray response = httpRequest(server.port(), "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
     QCOMPARE(statusCode(response), 200);
     const QJsonObject health = responseObject(response);
-    QCOMPARE(health.value("schema").toString(), QString("game-capture-local-control-v1"));
+    QCOMPARE(health.value("schema").toString(), QString("video-mixer-local-control-v1"));
     QCOMPARE(health.value("port").toInt(), static_cast<int>(server.port()));
 
     QFile discovery(config.discoveryPath);
@@ -161,7 +161,7 @@ void TestLocalControlServer::testRoomQualityDiagnosticsPassThrough() {
 void TestLocalControlServer::testSourcesAndIssueReport() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const QString logPath = dir.filePath("game-capture-debug.log");
+    const QString logPath = dir.filePath("video-mixer-debug.log");
     {
         QFile log(logPath);
         QVERIFY(log.open(QIODevice::WriteOnly | QIODevice::Text));

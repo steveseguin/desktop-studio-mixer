@@ -5,7 +5,7 @@ if (-not (Test-Path -LiteralPath $sourceScript -PathType Leaf)) {
     throw "E2E capture source script not found: $sourceScript"
 }
 
-$title = "Game Capture E2E Lifetime $([guid]::NewGuid().ToString('N'))"
+$title = "Video Mixer E2E Lifetime $([guid]::NewGuid().ToString('N'))"
 $argumentText = "-NoProfile -ExecutionPolicy Bypass -STA -File `"$sourceScript`" -Title `"$title`""
 $process = Start-Process -FilePath "powershell.exe" -ArgumentList $argumentText -PassThru -WindowStyle Normal
 

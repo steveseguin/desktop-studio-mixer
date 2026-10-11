@@ -172,7 +172,7 @@ $manifest = [ordered]@{
     has_libvpx_vp9 = $true
     gpl_enabled = $false
     nonfree_enabled = $false
-    notes = "Bundled for Game Capture VP9 alpha. Game Capture invokes ffmpeg.exe as a child process."
+    notes = "Bundled for Video Mixer VP9 alpha. Video Mixer invokes ffmpeg.exe as a child process."
 }
 $manifestJson = $manifest | ConvertTo-Json -Depth 5
 Set-Content -Path (Join-Path $OutputRoot "bundle-manifest.json") -Value $manifestJson -Encoding UTF8

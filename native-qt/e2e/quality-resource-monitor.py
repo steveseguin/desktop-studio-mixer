@@ -19,7 +19,7 @@ events=[]
 session=frida.attach(a.pid)
 script=session.create_script('''
 Process.attachModuleObserver({onAdded(m){
-  if (/game-capture|Qt6|qschannel|opus|avcodec/i.test(m.name)) send({kind:'module',path:m.path});
+  if (/video-mixer|Qt6|qschannel|opus|avcodec/i.test(m.name)) send({kind:'module',path:m.path});
   for(const n of ['MessageBeep','Beep','PlaySoundW','PlaySoundA']){
     const p=m.findExportByName(n); if(p) Interceptor.attach(p,{onEnter(){send({kind:'sound',api:n});}});
   }

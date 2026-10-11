@@ -49,13 +49,13 @@ std::string resolveLogFilePath() {
     std::filesystem::path logDir = localAppData && *localAppData
         ? std::filesystem::path(localAppData)
         : std::filesystem::current_path();
-    logDir /= "GameCapture";
+    logDir /= "VideoMixer";
     logDir /= "logs";
     std::error_code ec;
     std::filesystem::create_directories(logDir, ec);
-    return (logDir / "game-capture-debug.log").string();
+    return (logDir / "video-mixer-debug.log").string();
 #else
-    return "game-capture-debug.log";
+    return "video-mixer-debug.log";
 #endif
 }
 
@@ -504,12 +504,12 @@ int main(int argc, char *argv[]) {
         if (headless) {
             sinks.push_back(std::make_shared<spdlog::sinks::stdout_sink_mt>());
         }
-        auto logger = std::make_shared<spdlog::logger>("game-capture", sinks.begin(), sinks.end());
+        auto logger = std::make_shared<spdlog::logger>("video-mixer", sinks.begin(), sinks.end());
         spdlog::set_default_logger(logger);
         spdlog::set_level(spdlog::level::debug);
         spdlog::flush_on(spdlog::level::debug);
         spdlog::info("Logging to {}", logPath);
-        spdlog::info("Game Capture app starting (headless={})", headless);
+        spdlog::info("Video Mixer app starting (headless={})", headless);
     } catch (...) {
         // Fall back to default logger
     }

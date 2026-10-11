@@ -17,13 +17,13 @@ const BROWSER_RTC_READINESS_PRE_PROBE_SETTLE_MS = 1000;
 const BROWSER_RTC_READINESS_POLL_INTERVAL_MS = 50;
 const BROWSER_RTC_READINESS_PEER_CLOSE_TIMEOUT_MS = 250;
 const BROWSER_RTC_READINESS_CLEANUP_TIMEOUT_MS = 2000;
-const BROWSER_RTC_READINESS_DOCUMENT_MARKER = 'game-capture-rtc-readiness-v1';
-const BROWSER_RTC_READINESS_DOCUMENT_URL = 'data:text/html,%3Chtml%20data-game-capture-rtc-readiness%3D%22game-capture-rtc-readiness-v1%22%3E%3Ctitle%3Ertc%20readiness%3C%2Ftitle%3E%3C%2Fhtml%3E';
-const TURN_REGISTRY_CONFIG_V1_PREFIX = 'game-capture-turn-registry-config-v1';
-const TURN_CONSUMED_CONFIG_V1_PREFIX = 'game-capture-consumed-turn-config-v1';
-const TURN_ENDPOINT_IDENTITY_V1_PREFIX = 'game-capture-turn-endpoint-identity-v1';
+const BROWSER_RTC_READINESS_DOCUMENT_MARKER = 'video-mixer-rtc-readiness-v1';
+const BROWSER_RTC_READINESS_DOCUMENT_URL = 'data:text/html,%3Chtml%20data-video-mixer-rtc-readiness%3D%22video-mixer-rtc-readiness-v1%22%3E%3Ctitle%3Ertc%20readiness%3C%2Ftitle%3E%3C%2Fhtml%3E';
+const TURN_REGISTRY_CONFIG_V1_PREFIX = 'video-mixer-turn-registry-config-v1';
+const TURN_CONSUMED_CONFIG_V1_PREFIX = 'video-mixer-consumed-turn-config-v1';
+const TURN_ENDPOINT_IDENTITY_V1_PREFIX = 'video-mixer-turn-endpoint-identity-v1';
 const RELEASE_ARTIFACT_MANIFEST_FILENAME = 'release-artifact-manifest.json';
-const RELEASE_ARTIFACT_MANIFEST_SCHEMA = 'game-capture-release-artifact/v1';
+const RELEASE_ARTIFACT_MANIFEST_SCHEMA = 'video-mixer-release-artifact/v1';
 const RELEASE_SOURCE_SNAPSHOT_ALGORITHM =
   'sha256(file-nul-path-nul-size-nul-content-nul)/git-ls-files-cached-others-exclude-standard/ordinal-sort-unique/v2';
 
@@ -558,8 +558,8 @@ function validatePackagedPublisherArtifact(config) {
     throw new Error('Release artifact manifest packagedAtUtc must be an ISO-8601 UTC timestamp');
   }
   if (!manifest.artifact || typeof manifest.artifact !== 'object' ||
-      manifest.artifact.relativePath !== 'game-capture.exe') {
-    throw new Error('Release artifact manifest must bind artifact.relativePath exactly to game-capture.exe');
+      manifest.artifact.relativePath !== 'video-mixer.exe') {
+    throw new Error('Release artifact manifest must bind artifact.relativePath exactly to video-mixer.exe');
   }
   if (!Number.isSafeInteger(manifest.artifact.size) || manifest.artifact.size < 1) {
     throw new Error('Release artifact manifest artifact.size must be a positive safe integer');
@@ -867,7 +867,7 @@ async function ensureBrowserRtcReadiness(browser, report) {
             protocol: location.protocol,
             origin: location.origin,
             marker: document.documentElement.getAttribute(
-              'data-game-capture-rtc-readiness'
+              'data-video-mixer-rtc-readiness'
             ),
             readyState: document.readyState
           };
@@ -913,7 +913,7 @@ async function ensureBrowserRtcReadiness(browser, report) {
           void (async () => {
             try {
               state.createDataChannelCount += 1;
-              pc.createDataChannel('game-capture-rtc-readiness');
+              pc.createDataChannel('video-mixer-rtc-readiness');
               state.createOfferCount += 1;
               const offer = await pc.createOffer();
               state.setLocalDescriptionCount += 1;
@@ -1133,7 +1133,7 @@ async function createBrowserPeerPage(browser) {
   await page.goto('about:blank');
   await page.evaluate(() => {
     window.__gameCapturePeers = new Map();
-    window.__retiredGameCapturePeers = [];
+    window.__retiredVideoMixerPeers = [];
     window.__gameCapturePeerSequence = 0;
 
     window.__waitForIceGathering = (pc, timeoutMs = 8000) => new Promise((resolve) => {
@@ -1178,7 +1178,7 @@ async function createBrowserPeerPage(browser) {
         }, 25);
       });
 
-    window.__bindGameCapturePeer = (name, pc) => {
+    window.__bindVideoMixerPeer = (name, pc) => {
       const peerInstanceId = ++window.__gameCapturePeerSequence;
       const state = {
         pc,
@@ -1249,7 +1249,7 @@ async function createBrowserPeerPage(browser) {
       return state;
     };
 
-    window.__answerGameCaptureOffer = async (
+    window.__answerVideoMixerOffer = async (
       name,
       sdp,
       renegotiate,
@@ -1261,9 +1261,9 @@ async function createBrowserPeerPage(browser) {
         if (state) {
           state.retiredAt = Date.now();
           state.pc.close();
-          window.__retiredGameCapturePeers.push({ name, state });
+          window.__retiredVideoMixerPeers.push({ name, state });
         }
-        state = window.__bindGameCapturePeer(
+        state = window.__bindVideoMixerPeer(
           name,
           new RTCPeerConnection(rtcConfig || { iceServers: [], iceTransportPolicy: 'all' })
         );
@@ -1298,8 +1298,8 @@ async function createBrowserPeerPage(browser) {
       };
     };
 
-    window.__retiredGameCapturePeerState = (name, peerInstanceId) => {
-      const retired = window.__retiredGameCapturePeers.find((entry) =>
+    window.__retiredVideoMixerPeerState = (name, peerInstanceId) => {
+      const retired = window.__retiredVideoMixerPeers.find((entry) =>
         entry.name === name && entry.state.peerInstanceId === peerInstanceId
       );
       if (!retired) {
@@ -1318,7 +1318,7 @@ async function createBrowserPeerPage(browser) {
       };
     };
 
-    window.__setGameCapturePeerConfiguration = (name, rtcConfig) => {
+    window.__setVideoMixerPeerConfiguration = (name, rtcConfig) => {
       const state = window.__gameCapturePeers.get(name);
       if (!state) {
         return { ok: false, error: 'peer-not-found' };
@@ -1357,7 +1357,7 @@ async function createBrowserPeerPage(browser) {
       return { candidates, errors };
     };
 
-    window.__addGameCaptureCandidate = async (name, candidate, messageSession) => {
+    window.__addVideoMixerCandidate = async (name, candidate, messageSession) => {
       const state = window.__gameCapturePeers.get(name);
       if (!state) {
         return { ok: false, error: 'peer-not-found' };
@@ -1380,7 +1380,7 @@ async function createBrowserPeerPage(browser) {
       }
     };
 
-    window.__sendGameCaptureData = (name, payload) => {
+    window.__sendVideoMixerData = (name, payload) => {
       const state = window.__gameCapturePeers.get(name);
       if (!state || !state.dataChannel || state.dataChannel.readyState !== 'open') {
         return false;
@@ -1510,7 +1510,7 @@ async function createBrowserPeerPage(browser) {
       };
     };
 
-    window.__closeGameCapturePeer = (name) => {
+    window.__closeVideoMixerPeer = (name) => {
       const state = window.__gameCapturePeers.get(name);
       if (state) {
         state.pc.close();
@@ -1707,7 +1707,7 @@ function startOutputFixture(command, args, cwd) {
 
 function startSignalingMediaFixture(durationMs, spoutArtifact) {
   const spoutPath = assertSpoutSenderArtifactUnchanged(spoutArtifact);
-  const senderName = `Game Capture Signaling Media ${process.pid} ${Date.now()}`;
+  const senderName = `Video Mixer Signaling Media ${process.pid} ${Date.now()}`;
   const spout = startOutputFixture(spoutPath, [
     `--name=${senderName}`,
     '--width=640',
@@ -1737,7 +1737,7 @@ function startLifecycleMediaFixtures(durationMs, spoutArtifact) {
       missing: [tonePath]
     };
   }
-  const senderName = `Game Capture Signaling Lifecycle ${process.pid} ${Date.now()}`;
+  const senderName = `Video Mixer Signaling Lifecycle ${process.pid} ${Date.now()}`;
   const spout = startOutputFixture(spoutPath, [
     `--name=${senderName}`,
     '--width=640',
@@ -1928,7 +1928,7 @@ async function answerOffer(
 ) {
   return page.evaluate(
     ({ name, sdp, isRenegotiation, peerRtcConfig, wireSession }) =>
-      window.__answerGameCaptureOffer(
+      window.__answerVideoMixerOffer(
         name,
         sdp,
         isRenegotiation,
@@ -1957,7 +1957,7 @@ async function forwardPublisherCandidates(signal, page, uuid, peerName, forwarde
     forwarded.add(index);
     await page.evaluate(
       ({ name, candidate, messageSession }) =>
-        window.__addGameCaptureCandidate(name, candidate, messageSession),
+        window.__addVideoMixerCandidate(name, candidate, messageSession),
       {
         name: peerName,
         candidate: message.candidate,
@@ -2655,7 +2655,7 @@ function exactDuplicateOfferRecheckLines(
 
 async function setPeerRtcConfiguration(page, peerName, rtcConfig) {
   return page.evaluate(
-    ({ name, config }) => window.__setGameCapturePeerConfiguration(name, config),
+    ({ name, config }) => window.__setVideoMixerPeerConfiguration(name, config),
     { name: peerName, config: rtcConfig }
   );
 }
@@ -3287,7 +3287,7 @@ async function enableAlphaAndVerifyMedia({
       : requiredMediaIsNonzero(counters);
   };
   const sent = await page.evaluate(
-    ({ name, payload }) => window.__sendGameCaptureData(name, payload),
+    ({ name, payload }) => window.__sendVideoMixerData(name, payload),
     { name: peerName, payload: alphaCapability }
   );
   if (!sent) {
@@ -3784,7 +3784,7 @@ async function runNegotiationScenario(config, executable, browser, report, media
 
       const localControlDiscovery = await waitForJsonFile(
         localControlDiscoveryPath,
-        (value) => value && value.schema === 'game-capture-local-control-v1' &&
+        (value) => value && value.schema === 'video-mixer-local-control-v1' &&
           typeof value.base_url === 'string' && value.base_url.startsWith('http://127.0.0.1:'),
         5000
       );
@@ -3818,7 +3818,7 @@ async function runNegotiationScenario(config, executable, browser, report, media
       requireHarnessFixture(
         report,
         'packaged-local-control-live-diagnostics-is-ready',
-        !!liveDiagnostics && liveDiagnostics.schema === 'game-capture-diagnostics-v1' &&
+        !!liveDiagnostics && liveDiagnostics.schema === 'video-mixer-diagnostics-v1' &&
           Number(liveDiagnostics.generated_steady_ms || 0) > 0,
         { schema: liveDiagnostics ? liveDiagnostics.schema : '' }
       );
@@ -5051,7 +5051,7 @@ async function runNegotiationScenario(config, executable, browser, report, media
           );
           const retiredBrowserPeerA = await page.evaluate(
             ({ name, peerInstanceId }) =>
-              window.__retiredGameCapturePeerState(name, peerInstanceId),
+              window.__retiredVideoMixerPeerState(name, peerInstanceId),
             { name: stalePeerName, peerInstanceId: validAnswerA.peerInstanceId }
           );
           addCheck(report, 'generation-a-browser-peer-is-closed-before-offer-b-answer',
@@ -5985,7 +5985,7 @@ async function runNegotiationScenario(config, executable, browser, report, media
         }
       };
       const negativeSent = await page.evaluate(
-        ({ name, payload }) => window.__sendGameCaptureData(name, payload),
+        ({ name, payload }) => window.__sendVideoMixerData(name, payload),
         { name: 'alpha-peer', payload: negativePayload }
       );
       requireHarnessFixture(
@@ -6088,7 +6088,7 @@ async function runNegotiationScenario(config, executable, browser, report, media
     const alphaCapabilityAt = Date.now();
     const alphaCapabilitySearchStart = signal.events.length;
     const sent = await page.evaluate(
-      ({ name, payload }) => window.__sendGameCaptureData(name, payload),
+      ({ name, payload }) => window.__sendVideoMixerData(name, payload),
       { name: 'alpha-peer', payload: pluginInfo }
     );
     addCheck(report, 'ninja-plugin-alpha-capability-message-sent', sent, {});
@@ -6479,7 +6479,7 @@ async function runDirectStunScenario(config, executable, browser, report, mediaF
     );
     const retiredFailedBrowserPeer = await page.evaluate(
       ({ name, peerInstanceId }) =>
-        window.__retiredGameCapturePeerState(name, peerInstanceId),
+        window.__retiredVideoMixerPeerState(name, peerInstanceId),
       { name: delayedPeerName, peerInstanceId: browserAnswer.peerInstanceId }
     );
     addCheck(report, 'failed-browser-peer-is-closed-before-delayed-recovery-answer',

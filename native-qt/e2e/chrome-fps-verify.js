@@ -12,7 +12,7 @@ function detectPublisherBinary() {
   if (publisherArgIndex >= 0) {
     const requested = process.argv[publisherArgIndex + 1];
     if (!requested) {
-      throw new Error('--publisher requires a path to game-capture.exe');
+      throw new Error('--publisher requires a path to video-mixer.exe');
     }
     const resolved = path.resolve(requested);
     if (!fs.existsSync(resolved)) {
@@ -22,9 +22,9 @@ function detectPublisherBinary() {
   }
 
   const candidates = [
-    path.resolve(__dirname, '../build-review2/bin/Release/game-capture.exe'),
-    path.resolve(__dirname, '../build-test/bin/Release/game-capture.exe'),
-    path.resolve(__dirname, '../build/bin/Release/game-capture.exe')
+    path.resolve(__dirname, '../build-review2/bin/Release/video-mixer.exe'),
+    path.resolve(__dirname, '../build-test/bin/Release/video-mixer.exe'),
+    path.resolve(__dirname, '../build/bin/Release/video-mixer.exe')
   ];
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
@@ -164,7 +164,7 @@ async function measureVideoFps(page, sampleMs) {
 async function main() {
   const publisherPath = detectPublisherBinary();
   if (!publisherPath) {
-    throw new Error('Could not find game-capture.exe. Build first.');
+    throw new Error('Could not find video-mixer.exe. Build first.');
   }
 
   const id = `${Date.now()}_${Math.floor(Math.random() * 100000)}`;

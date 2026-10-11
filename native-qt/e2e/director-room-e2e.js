@@ -9,7 +9,7 @@ const { chromium, firefox } = require('playwright');
 const { launchInstalledFirefox } = require('./firefox-bidi-adapter');
 
 const RELEASE_ARTIFACT_MANIFEST_FILENAME = 'release-artifact-manifest.json';
-const RELEASE_ARTIFACT_MANIFEST_SCHEMA = 'game-capture-release-artifact/v1';
+const RELEASE_ARTIFACT_MANIFEST_SCHEMA = 'video-mixer-release-artifact/v1';
 const RELEASE_SOURCE_SNAPSHOT_ALGORITHM =
   'sha256(file-nul-path-nul-size-nul-content-nul)/git-ls-files-cached-others-exclude-standard/ordinal-sort-unique/v2';
 
@@ -50,7 +50,7 @@ function parseArgs(argv) {
     salt: 'vdo.ninja',
     audioSource: 'selected-window',
     source: 'spout',
-    spoutSender: `Game Capture Control E2E ${stamp}`,
+    spoutSender: `Video Mixer Control E2E ${stamp}`,
     spoutSenderPath: '',
     useTestSpoutSender: true,
     videoCodec: '',
@@ -538,8 +538,8 @@ function validatePackagedPublisherArtifact(config) {
     throw new Error('Release artifact manifest packagedAtUtc must be an ISO-8601 UTC timestamp');
   }
   if (!manifest.artifact || typeof manifest.artifact !== 'object' ||
-      manifest.artifact.relativePath !== 'game-capture.exe') {
-    throw new Error('Release artifact manifest must bind artifact.relativePath exactly to game-capture.exe');
+      manifest.artifact.relativePath !== 'video-mixer.exe') {
+    throw new Error('Release artifact manifest must bind artifact.relativePath exactly to video-mixer.exe');
   }
   if (!Number.isSafeInteger(manifest.artifact.size) || manifest.artifact.size < 1) {
     throw new Error('Release artifact manifest artifact.size must be a positive safe integer');
@@ -865,15 +865,15 @@ function spawnSpoutTestSender(config, exactArtifact = null) {
 
 function detectPublisherBinary(explicitPath) {
   if (explicitPath) {
-    return requireExplicitLeafFile(explicitPath, 'Explicit game-capture publisher');
+    return requireExplicitLeafFile(explicitPath, 'Explicit video-mixer publisher');
   }
 
   const distDir = path.resolve(__dirname, '../dist');
   if (fs.existsSync(distDir)) {
     const packaged = fs.readdirSync(distDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && /^game-capture-\d+\.\d+\.\d+-win64$/i.test(entry.name))
+      .filter((entry) => entry.isDirectory() && /^video-mixer-\d+\.\d+\.\d+-win64$/i.test(entry.name))
       .map((entry) => {
-        const executable = path.join(distDir, entry.name, 'game-capture.exe');
+        const executable = path.join(distDir, entry.name, 'video-mixer.exe');
         return fs.existsSync(executable)
           ? { executable, modified: fs.statSync(executable).mtimeMs }
           : null;
@@ -887,8 +887,8 @@ function detectPublisherBinary(explicitPath) {
   }
 
   const candidates = [
-    path.resolve(__dirname, '../build-review2/bin/Release/game-capture.exe'),
-    path.resolve(__dirname, '../build/bin/Release/game-capture.exe')
+    path.resolve(__dirname, '../build-review2/bin/Release/video-mixer.exe'),
+    path.resolve(__dirname, '../build/bin/Release/video-mixer.exe')
   ];
   return candidates.find((candidate) => fs.existsSync(candidate)) || '';
 }
@@ -914,7 +914,7 @@ function spawnPublisher(config, exactArtifact = null) {
     command = detectPublisherBinary(config.publisherPath);
   }
   if (!command) {
-    throw new Error('Could not find game-capture.exe. Build Release first or pass --publisher-path.');
+    throw new Error('Could not find video-mixer.exe. Build Release first or pass --publisher-path.');
   }
 
   const durationMs = publisherDurationMs(config);
@@ -1084,7 +1084,7 @@ async function waitForAndDismissUnsupportedAlert(page, timeoutMs, required = tru
       : { ok: true, state: { visible: false } };
   }
   const text = String(await modal.innerText()).trim();
-  // Current VDO.Ninja displays Game Capture's rejection `message` verbatim.
+  // Current VDO.Ninja displays Video Mixer's rejection `message` verbatim.
   // Keep accepting the legacy generic copy while hosted VDO deployments roll forward.
   const recognizedRejection =
     /not authorized|not supported|not publishing|not applicable|cannot be changed|only available to|request failed|did not recognize you as the director/i;
@@ -1462,7 +1462,7 @@ async function waitForDirectorMeshNode(page, uuid, timeoutMs) {
       const node = mesh && mesh.nodes ? mesh.nodes[peerUuid] : null;
       return node ? {
         ok: node.health === 'healthy' &&
-          String(node.browser || '').startsWith('Game Capture ') &&
+          String(node.browser || '').startsWith('Video Mixer ') &&
           Array.isArray(node.connections) &&
           node.connections.some((connection) => connection && connection.state === 'connected'),
         node: {
@@ -2113,7 +2113,7 @@ async function runRemoteControlContract({ page, uuid, config, publisher, report,
   const deviceProbeStart = await getDirectorProbeMessageCount(page);
   await contractCheck(enabled ? 'device-change-is-unsupported' : 'device-change-is-unauthorized', async () => {
     const request = await sendDirectorRequest(page, uuid, {
-      changeCamera: 'game-capture-e2e-nonexistent-device'
+      changeCamera: 'video-mixer-e2e-nonexistent-device'
     });
     const rejection = request.ok
       ? await waitForProbeMessage(
@@ -2738,8 +2738,8 @@ async function run() {
           map.meshRequestId === '${meshRequestId}' &&
           map.streamID === '${config.streamId}' &&
           map.label === '${config.label}' &&
-          String(map.browser || '').startsWith('Game Capture ') &&
-          map.runtime && map.runtime.name === 'Game Capture Native Qt' &&
+          String(map.browser || '').startsWith('Video Mixer ') &&
+          map.runtime && map.runtime.name === 'Video Mixer Native Qt' &&
           map.runtime.version && map.runtime.platform === 'Windows' &&
           map.source && map.source.streamID === '${config.streamId}' &&
           map.source.type === '${config.source}' &&
@@ -2779,7 +2779,7 @@ async function run() {
       );
       // Hosted VDO can briefly show its legacy Director-recognition modal even
       // after it consumes a successful connection map. The payload assertion
-      // above and healthy rendered node are authoritative for Game Capture.
+      // above and healthy rendered node are authoritative for Video Mixer.
       const alerts = await settleUnsupportedAlerts(page, 2000);
       return { ok: node.ok && alerts.ok, state: { node, alerts } };
     });

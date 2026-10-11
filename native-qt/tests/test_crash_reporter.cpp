@@ -177,7 +177,7 @@ int main(int argc, char **argv) {
 
     const auto root =
         std::filesystem::temp_directory_path() /
-        ("game-capture-crash-reporter-test-" + std::to_string(GetCurrentProcessId()));
+        ("video-mixer-crash-reporter-test-" + std::to_string(GetCurrentProcessId()));
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
 

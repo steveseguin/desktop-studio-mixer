@@ -380,10 +380,10 @@ void TestIceConfig::testFullOrderedConfigFingerprintSensitivity() {
     const std::string baseline =
         R"({"version":1,"servers":[{"urls":["turn:fingerprint-a.invalid:3478","turns:fingerprint-b.invalid:443"],"username":"user-a","credential":"secret-a","udp":true},{"urls":"turn:fingerprint-c.invalid:3478","username":"user-b","credential":"secret-b","udp":false}]})";
     const std::string expectedCanonical =
-        "game-capture-turn-registry-config-v1\n"
+        "video-mixer-turn-registry-config-v1\n"
         R"([{"urls":["turn:fingerprint-a.invalid:3478","turns:fingerprint-b.invalid:443"],"username":"user-a","credential":"secret-a","udp":true},{"urls":"turn:fingerprint-c.invalid:3478","username":"user-b","credential":"secret-b","udp":false}])";
     const std::string expectedConsumedCanonical =
-        "game-capture-consumed-turn-config-v1\n"
+        "video-mixer-consumed-turn-config-v1\n"
         R"([{"url":"turn:fingerprint-a.invalid:3478","username":"user-a","credential":"secret-a","udp":true},{"url":"turns:fingerprint-b.invalid:443","username":"user-a","credential":"secret-a","udp":true},{"url":"turn:fingerprint-c.invalid:3478","username":"user-b","credential":"secret-b","udp":false}])";
     const ResolvedIceConfig baselineResolved = accepted(baseline);
     const std::string baselineFingerprint = baselineResolved.turn.canonicalConfigSha256;

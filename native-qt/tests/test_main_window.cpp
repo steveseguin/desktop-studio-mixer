@@ -295,7 +295,7 @@ void TestMainWindow::cleanupTestCase() {
 }
 
 void TestMainWindow::init() {
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.clear();
     settings.sync();
 
@@ -310,7 +310,7 @@ void TestMainWindow::cleanup() {
 
 void TestMainWindow::testInitialState() {
     QVERIFY(window_ != nullptr);
-    QCOMPARE(window_->windowTitle(), QString("Game Capture - Powered by VDO.Ninja"));
+    QCOMPARE(window_->windowTitle(), QString("Video Mixer - Powered by VDO.Ninja"));
     QVERIFY(window_->width() >= 900);
     QVERIFY(window_->height() <= 760);
 }
@@ -435,7 +435,7 @@ void TestMainWindow::testResetDefaultsRestoresFreshInstallState() {
     QCoreApplication::processEvents();
     QVERIFY(goLiveButton->isEnabled());
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.setValue("test/obsoleteValue", "remove-me");
     settings.sync();
 
@@ -481,7 +481,7 @@ void TestMainWindow::testSystemTrayExists() {
     auto *trayIcon = window_->findChild<QSystemTrayIcon*>();
     QVERIFY(trayIcon != nullptr);
     QVERIFY(trayIcon->isVisible());
-    QCOMPARE(trayIcon->toolTip(), QString("Game Capture - Idle"));
+    QCOMPARE(trayIcon->toolTip(), QString("Video Mixer - Idle"));
 }
 
 void TestMainWindow::testStatsPanelHiddenInitially() {
@@ -653,7 +653,7 @@ void TestMainWindow::testPersistedCameraOptions() {
     delete window_;
     window_ = nullptr;
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.setValue("video/sourceMode", "camera");
     settings.setValue("camera/resolution", "1280x720");
     settings.setValue("camera/fps", 24);
@@ -675,7 +675,7 @@ void TestMainWindow::testPersistedSpoutModeUsesNoAudio() {
     delete window_;
     window_ = nullptr;
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.setValue("video/sourceMode", "spout");
     settings.setValue("audio/source", "selected-window");
     settings.sync();
@@ -694,7 +694,7 @@ void TestMainWindow::testPersistedCameraModeUsesMicrophone() {
     delete window_;
     window_ = nullptr;
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.setValue("video/sourceMode", "camera");
     settings.setValue("audio/source", "selected-window");
     settings.sync();
@@ -826,7 +826,7 @@ void TestMainWindow::testPersistedIceModePreserved() {
     delete window_;
     window_ = nullptr;
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.setValue("network/iceMode", savedMode);
     settings.sync();
 
@@ -840,7 +840,7 @@ void TestMainWindow::testInvalidPersistedIceModeDefaultsToAuto() {
     delete window_;
     window_ = nullptr;
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.setValue("network/iceMode", "invalid-mode");
     settings.sync();
 
@@ -1010,7 +1010,7 @@ void TestMainWindow::testRoomQualityUnavailableUi() {
     QCOMPARE(accessible->text(QAccessible::Description),
              kRoomQualityUnavailableAccessibleDescription);
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.sync();
     QCOMPARE(settings.value("stream/roomModeLqEnabled").toBool(), true);
 
@@ -1034,7 +1034,7 @@ void TestMainWindow::testRoomQualityLatentPreferenceSurvivesRestart() {
     QCoreApplication::processEvents();
     QCOMPARE(roomQualityToggles.count(), 0);
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.sync();
     QCOMPARE(settings.value("video/codec").toString(), QStringLiteral("vp9"));
     QCOMPARE(settings.value("stream/roomModeLqEnabled").toBool(), true);
@@ -1075,7 +1075,7 @@ void TestMainWindow::testRoomQualityFalsePreferenceRemainsFalse() {
     QVERIFY(!roomQuality->isChecked());
     QCOMPARE(roomQualityToggles.count(), 0);
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.sync();
     QCOMPARE(settings.value("stream/roomModeLqEnabled").toBool(), false);
 }
@@ -1128,7 +1128,7 @@ void TestMainWindow::testRoomQualityStartUsesLatentPreference() {
     encoder->setCurrentIndex(encoder->findData(QStringLiteral("software")));
     QCoreApplication::processEvents();
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.sync();
     QCOMPARE(settings.value("stream/roomModeLqEnabled").toBool(), requested);
 
@@ -1261,7 +1261,7 @@ void TestMainWindow::testRoomQualityUnavailableStartupPersistence() {
 
     delete window_;
     window_ = nullptr;
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.clear();
     settings.setValue("video/codec", codecValue);
     settings.setValue("video/encoderMode", QStringLiteral("software"));
@@ -1432,7 +1432,7 @@ void TestMainWindow::testRoomQualityCodecSyncPreservesAlphaAndEncoder() {
     const bool unavailableBeforeRestart =
         !roomQuality->isEnabled() && !roomQuality->isChecked();
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.sync();
     QCOMPARE(settings.value("video/codec").toString(), codecValue);
     QCOMPARE(settings.value("video/encoderMode").toString(), QStringLiteral("software"));
@@ -1602,7 +1602,7 @@ void TestMainWindow::testRoomQualityH265LatentAlphaEffectiveUi() {
     QCoreApplication::processEvents();
     const QString previewText = preview->text();
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Game Capture");
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "VDO.Ninja", "Video Mixer");
     settings.sync();
     QCOMPARE(settings.value("video/codec").toString(), QStringLiteral("h265"));
     QCOMPARE(settings.value("video/encoderMode").toString(), QStringLiteral("software"));

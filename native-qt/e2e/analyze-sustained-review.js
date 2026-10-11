@@ -12,7 +12,7 @@ const r=JSON.parse(fs.readFileSync(file,'utf8').replace(/^\uFEFF/,''));
 const percentile=(values,f)=>{const a=values.filter(Number.isFinite).sort((a,b)=>a-b);return a[Math.min(a.length-1,Math.floor(a.length*f))];};
 const summary=values=>({min:percentile(values,0),median:percentile(values,.5),p95:percentile(values,.95),max:percentile(values,1)});
 const memory=r.samples.filter(s=>s.processes).map(s=>{
-  const publisher=s.processes.find(p=>p.ProcessName==='game-capture');
+  const publisher=s.processes.find(p=>p.ProcessName==='video-mixer');
   if(!publisher)throw Error('Publisher process is missing from resource evidence');
   return {minute:(s.wallMs-r.startedMs)/60000,publisherPrivateMiB:publisher.PrivateMemorySize64/1048576,
     publisherWorkingMiB:publisher.WorkingSet64/1048576,handles:publisher.HandleCount,threads:publisher.ThreadCount,
