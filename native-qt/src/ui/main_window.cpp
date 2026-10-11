@@ -702,7 +702,14 @@ MainWindow::MainWindow(
         auto *captureControls = takeCentralWidget();
         auto *studio = new versus::mixer::MixerWidget(core_, tabs);
         connect(qApp, &QCoreApplication::aboutToQuit, studio, &versus::mixer::MixerWidget::shutdown);
-        tabs->addTab(studio, "Studio");
+        // Smaller displays must scroll the workspace instead of compressing
+        // meters and source controls below their usable sizes.
+        auto *studioScroll = new QScrollArea(tabs);
+        studioScroll->setObjectName("studioWorkspaceScroll");
+        studioScroll->setWidgetResizable(true);
+        studioScroll->setStyleSheet("QScrollArea#studioWorkspaceScroll { border:1px solid #50667b; background:#101b27; }");
+        studioScroll->setWidget(studio);
+        tabs->addTab(studioScroll, "Studio");
         tabs->addTab(captureControls, "Capture & output");
         setCentralWidget(tabs);
         connect(studio, &versus::mixer::MixerWidget::outputRequested, this, [this, tabs]() {

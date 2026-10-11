@@ -8,6 +8,9 @@ class MixerWidget : public QWidget {
 public:
     explicit MixerWidget(app::VersusApp *core, QWidget *parent = nullptr);
     ~MixerWidget() override;
+    // Let the scroll host shrink flexible canvases/lists to their minimum sizes.
+    // QLabel wrapping otherwise makes it request the entire preferred height.
+    bool hasHeightForWidth() const override { return false; }
     void setOutputState(const QString &label, const QString &status, bool enabled, bool active);
     void shutdown();
 signals:

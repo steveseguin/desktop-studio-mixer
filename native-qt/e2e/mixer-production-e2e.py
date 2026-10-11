@@ -83,9 +83,17 @@ try:
     add_source('Browser /','QA smooth browser',f'http://127.0.0.1:{server.server_port}/')
     press('takeScene'); time.sleep(5)
     near(color('programCanvas'),(36,180,106))
-    health = control('sourceHealth').window_text()
-    assert 'Windows capture' in health and float(re.search(r': ([\d.]+) fps',health)[1])>=20,health
-    results['smooth_browser'] = health
+    # Health is a one-second sample; verify consecutive samples to avoid
+    # deciding the result from an initial scheduling or UI Automation pause.
+    health_control = control('sourceHealth').wrapper_object()
+    browser_fps = []
+    for _ in range(5):
+        time.sleep(1.1)
+        health = health_control.window_text()
+        assert 'Windows capture' in health, health
+        browser_fps.append(float(re.search(r': ([\d.]+) fps', health)[1]))
+    assert float(np.median(browser_fps)) >= 20, browser_fps
+    results['smooth_browser'] = {'health': health, 'fpsSamples': browser_fps}
     press('reconnectSource'); time.sleep(4); near(color('programCanvas'),(36,180,106))
     results['live_browser_reconnect']='passed'
 
@@ -156,6 +164,10 @@ try:
     children.append(fixture); time.sleep(2)
     add_source('Game / window','QA game',device='Desktop Studio QA Window')
     press('takeScene'); near(color('programCanvas'),(196,58,70)); results['native_game_capture']='passed'
+    press('reconnectSource')
+    dialog=window.child_window(title='Edit source',control_type='Window')
+    dialog.child_window(title='OK',control_type='Button').invoke(); time.sleep(3)
+    near(color('programCanvas'),(196,58,70)); results['explicit_window_reconnect']='passed'
     add_source('Camera / webcam','QA webcam',device='HD Pro Webcam C920')
     time.sleep(5); camera=np.asarray(control('previewCanvas').capture_as_image().convert('RGB'))
     assert camera.std()>12, 'Camera has no useful picture'

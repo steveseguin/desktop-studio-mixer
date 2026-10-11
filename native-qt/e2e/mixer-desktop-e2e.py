@@ -24,7 +24,21 @@ window = app.window(title='Desktop Studio - Powered by VDO.Ninja')
 
 
 def control(name, root=window):
-    found = next(c for c in root.descendants() if c.element_info.automation_id.endswith('.' + name))
+    elements = root.descendants()
+    found = next(c for c in elements if c.element_info.automation_id.endswith('.' + name))
+    # Real pointer/screenshot workflows must reveal controls in the workspace,
+    # just as a user scrolls them into view on a smaller display. Layout checks
+    # opt out while inspecting intentionally clipped viewport edges.
+    if root is window and globals().get('reveal_workspace', True) and '.studioWorkspaceScroll.' in found.element_info.automation_id:
+        viewport = next((c for c in elements if c.element_info.automation_id.endswith('.studioWorkspaceScroll.qt_scrollarea_viewport')), None)
+        bar = next((c for c in elements if c.element_info.automation_id.endswith('.studioWorkspaceScroll.qt_scrollarea_vcontainer.QScrollBar')), None)
+        if viewport is not None and bar is not None:
+            rect, view = found.rectangle(), viewport.rectangle()
+            delta = rect.top-view.top-8 if rect.top < view.top+8 else max(0, rect.bottom-view.bottom+8)
+            if delta:
+                value = bar.iface_range_value
+                value.SetValue(max(value.CurrentMinimum, min(value.CurrentMaximum, value.CurrentValue+delta)))
+                time.sleep(.1)
     return root.child_window(auto_id=found.element_info.automation_id, control_type=found.element_info.control_type)
 
 

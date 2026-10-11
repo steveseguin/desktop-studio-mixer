@@ -293,8 +293,11 @@ struct MixerWidget::Impl {
         saveTimer.start(500);
     }
     void updateModeUi() {
+        // Include wrapped monitoring help in the audio panel's minimum height;
+        // QSplitter otherwise squeezes it into the track and master controls.
+        audioBox->setMinimumHeight(audioBox->heightForWidth(380));
         if (studioMode) {
-            audioBox->setMinimumWidth(0); audioBox->setMaximumWidth(QWIDGETSIZE_MAX);
+            audioBox->setMinimumWidth(380); audioBox->setMaximumWidth(QWIDGETSIZE_MAX);
             panels->addWidget(audioBox); panels->setSizes({240, 600, 370});
         } else {
             audioBox->setMinimumWidth(380); audioBox->setMaximumWidth(420);
@@ -456,7 +459,7 @@ struct MixerWidget::Impl {
         QObject::connect(edit, &QPushButton::clicked, q, [this] { addSourceDialog(true); });
         QObject::connect(reconnect, &QPushButton::clicked, q, [this] {
             if (auto item = source(selectedSource)) {
-                if (item->kind == "window") addSourceDialog(true);
+                if (item->kind == "window") addSourceDialog(true, true);
                 else { stopSource(item); startSource(item); message("Reconnecting " + item->name); }
             }
         });
@@ -778,7 +781,7 @@ struct MixerWidget::Impl {
         refreshModes(); rebuildControls(); previewTimer.start(100); dialog.exec();
     }
 
-    void addSourceDialog(bool editing = false) {
+    void addSourceDialog(bool editing = false, bool reconnect = false) {
         const auto existing = editing ? source(selectedSource) : std::shared_ptr<Source>{};
         if (editing && !existing) { message("Select a source to edit."); return; }
         QDialog dialog(q); dialog.setWindowTitle(editing ? "Edit source" : "Add source"); auto *form = new QFormLayout(&dialog);
@@ -843,10 +846,17 @@ struct MixerWidget::Impl {
             if (kind == "color" && !QColor(value.text()).isValid()) { help.setText("Enter a valid color, for example #24466f."); return; }
             if (kind == "image" && !QImageReader(value.text()).canRead()) { help.setText("Choose a readable image file."); return; }
             auto item = existing ? existing : std::make_shared<Source>();
-            if (existing) stopSource(item);
+            const auto locator = device.isVisible() ? device.currentData().toString() : value.text().trimmed();
+            // Labels and audio delay do not change the capture session. Keeping it
+            // alive avoids dropping video/audio or rejoining a remote guest.
+            const bool restart = existing && (reconnect || kind != item->kind ||
+                locator != item->locator || transparent.isChecked() != item->transparent);
+            if (restart && device.isVisible() && device.currentData(Qt::UserRole+1).toBool()) {
+                help.setText("The saved device is unavailable. Select an available device to reconnect."); return;
+            }
+            if (restart) stopSource(item);
             item->kind = kind; item->transparent = transparent.isChecked();
             item->audioDelayMs = audioDelay.value();
-            const auto locator = device.isVisible() ? device.currentData().toString() : value.text().trimmed();
             if (kind == "camera" && locator != item->locator) {
                 item->cameraControls = {}; item->cameraWidth = Width; item->cameraHeight = Height; item->cameraFps = 30;
             }
@@ -856,7 +866,7 @@ struct MixerWidget::Impl {
             if (kind == "color") item->color = QColor(item->locator);
             if (!existing && (kind == "microphone" || kind == "desktop")) item->followsScene = false;
             if (!existing && kind == "microphone") item->monitored = false;
-            if (existing) { startSource(item); rebuild(); changed(); }
+            if (existing) { if (restart) startSource(item); rebuild(); changed(); }
             else appendSource(item);
             dialog.accept();
         });
@@ -865,7 +875,16 @@ struct MixerWidget::Impl {
         if (existing) {
             name.setText(existing->name); value.setText(existing->locator); transparent.setChecked(existing->transparent);
             audioDelay.setValue(existing->audioDelayMs);
-            if (device.findData(existing->locator) >= 0) device.setCurrentIndex(device.findData(existing->locator));
+            const int selectedDevice = device.findData(existing->locator);
+            if (selectedDevice >= 0) device.setCurrentIndex(selectedDevice);
+            else if (!device.isHidden()) {
+                // Never substitute the first camera/mic/window when the saved
+                // device is disconnected. Renaming it must retain its identity.
+                device.insertItem(0, "Unavailable device (saved selection)", existing->locator);
+                device.setItemData(0, true, Qt::UserRole+1);
+                device.setItemData(0, "Choose another device to reconnect this source.", Qt::ToolTipRole);
+                device.setCurrentIndex(0);
+            }
         }
         dialog.exec();
     }
@@ -1253,14 +1272,14 @@ struct MixerWidget::Impl {
     bool save(const QString &path) {
         QJsonArray jsonSources, jsonScenes;
         for (const auto &item : sources) jsonSources.append(QJsonObject{{"id", item->id}, {"name", item->name}, {"kind", item->kind},
-            {"locator", item->locator}, {"invite", item->invite}, {"color", item->color.name()}, {"gain", item->gain.load()},
+            {"locator", item->locator}, {"invite", item->invite}, {"color", item->color.name(QColor::HexArgb)}, {"gain", item->gain.load()},
             {"muted", item->muted.load()}, {"followsScene", item->followsScene.load()}, {"monitored", item->monitored.load()}, {"transparent", item->transparent}, {"audioDelayMs", item->audioDelayMs.load()},
             {"cameraWidth", item->cameraWidth}, {"cameraHeight", item->cameraHeight}, {"cameraFps", item->cameraFps}, {"cameraControls", item->cameraControls}});
         for (const auto &scene : scenes) {
             QJsonArray layers;
             for (const auto &layer : scene.layers) layers.append(QJsonObject{{"source", layer.source}, {"x", layer.rect.x()}, {"y", layer.rect.y()},
                 {"w", layer.rect.width()}, {"h", layer.rect.height()}, {"visible", layer.visible}, {"opacity", layer.opacity}});
-            jsonScenes.append(QJsonObject{{"id", scene.id}, {"name", scene.name}, {"background", scene.background.name()}, {"layers", layers}});
+            jsonScenes.append(QJsonObject{{"id", scene.id}, {"name", scene.name}, {"background", scene.background.name(QColor::HexArgb)}, {"layers", layers}});
         }
         QDir().mkpath(QFileInfo(path).absolutePath()); QSaveFile file(path);
         if (!file.open(QIODevice::WriteOnly)) { message("Could not save show: " + file.errorString()); return false; }
