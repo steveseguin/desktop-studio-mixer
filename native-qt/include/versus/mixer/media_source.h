@@ -1,0 +1,31 @@
+#pragma once
+#include <QString>
+#include <atomic>
+#include <condition_variable>
+#include <functional>
+#include <mutex>
+#include <thread>
+#include "versus/video/window_capture.h"
+#include "versus/audio/window_audio_capture_core.h"
+namespace versus::mixer {
+class MediaSource {
+public:
+    ~MediaSource();
+    void start(const QString &path, std::function<void(video::CapturedFrame)> frame,
+               std::function<void(audio::StreamChunk&&)> audio);
+    void stop();
+    void setPaused(bool paused) { if (!paused && ended_) seek_ = true; paused_ = paused; wake_.notify_all(); }
+    void setLoop(bool loop) { loop_ = loop; }
+    void restart() { seek_ = true; paused_ = false; wake_.notify_all(); }
+    QString error() const { std::lock_guard lock(mutex_); return error_; }
+    bool ended() const { return ended_; }
+    bool hasVideo() const { return hasVideo_; }
+private:
+    std::atomic<bool> running_{false}, paused_{false}, loop_{true}, seek_{false}, ended_{false};
+    std::atomic<bool> hasVideo_{false};
+    mutable std::mutex mutex_;
+    std::condition_variable wake_;
+    QString error_;
+    std::thread worker_;
+};
+}

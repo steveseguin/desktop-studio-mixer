@@ -539,6 +539,7 @@ class WindowCapture::Impl {
             stopCapture();
         }
         targetHwnd_ = hwnd;
+        GetWindowThreadProcessId(hwnd, &targetProcessId_);
         targetWidth_ = width;
         targetHeight_ = height;
         targetFps_ = fps;
@@ -616,7 +617,13 @@ class WindowCapture::Impl {
         return framesSkippedBeforeReadback_.load(std::memory_order_relaxed);
     }
 
-    bool isCapturing() const { return capturing_.load(std::memory_order_acquire); }
+    bool isCapturing() const {
+        if (!capturing_.load(std::memory_order_acquire)) return false;
+        // WGC's Closed event can be delayed when its owner was a pool thread.
+        // Do not keep a frozen last frame marked healthy after the target exits.
+        DWORD process = 0;
+        return IsWindow(targetHwnd_) && GetWindowThreadProcessId(targetHwnd_, &process) && process == targetProcessId_;
+    }
 
   private:
 #ifdef VERSUS_USE_GRAPHICS_CAPTURE
@@ -1342,6 +1349,7 @@ class WindowCapture::Impl {
     winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice graphicsDevice_{nullptr};
 
     HWND targetHwnd_ = nullptr;
+    DWORD targetProcessId_ = 0;
     int targetWidth_ = 0;
     int targetHeight_ = 0;
     int targetFps_ = 60;

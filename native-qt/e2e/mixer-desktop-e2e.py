@@ -25,19 +25,23 @@ window = app.window(title='Desktop Studio - Powered by VDO.Ninja')
 
 def control(name, root=window):
     elements = root.descendants()
-    found = next(c for c in elements if c.element_info.automation_id.endswith('.' + name))
+    found = next(c for c in elements if (c.element_info.automation_id or '').endswith('.' + name))
     # Real pointer/screenshot workflows must reveal controls in the workspace,
     # just as a user scrolls them into view on a smaller display. Layout checks
     # opt out while inspecting intentionally clipped viewport edges.
-    if root is window and globals().get('reveal_workspace', True) and '.studioWorkspaceScroll.' in found.element_info.automation_id:
-        viewport = next((c for c in elements if c.element_info.automation_id.endswith('.studioWorkspaceScroll.qt_scrollarea_viewport')), None)
-        bar = next((c for c in elements if c.element_info.automation_id.endswith('.studioWorkspaceScroll.qt_scrollarea_vcontainer.QScrollBar')), None)
-        if viewport is not None and bar is not None:
-            rect, view = found.rectangle(), viewport.rectangle()
-            delta = rect.top-view.top-8 if rect.top < view.top+8 else max(0, rect.bottom-view.bottom+8)
+    if root is window and globals().get('reveal_workspace', True):
+        for name in ('audioTracksScroll','sourcesPanelScroll','scenesPanelScroll','audioPanelScroll','studioWorkspaceScroll'):
+            if '.'+name+'.' not in found.element_info.automation_id: continue
+            viewport=next((c for c in elements if (c.element_info.automation_id or '').endswith('.'+name)),None)
+            if not viewport: continue
+            bars=[c for c in viewport.descendants(control_type='ScrollBar') if c.is_visible() and c.rectangle().height()>c.rectangle().width()]
+            if not bars: continue
+            bar=min(bars,key=lambda c:len(c.element_info.automation_id))
+            bounds, rect=viewport.rectangle(),found.rectangle()
+            delta=rect.top-bounds.top-10 if rect.top<bounds.top+8 else rect.bottom-bounds.bottom+10 if rect.bottom>bounds.bottom-8 else 0
             if delta:
-                value = bar.iface_range_value
-                value.SetValue(max(value.CurrentMinimum, min(value.CurrentMaximum, value.CurrentValue+delta)))
+                value=bar.iface_range_value
+                value.SetValue(max(value.CurrentMinimum,min(value.CurrentMaximum,value.CurrentValue+delta)))
                 time.sleep(.1)
     return root.child_window(auto_id=found.element_info.automation_id, control_type=found.element_info.control_type)
 
@@ -65,6 +69,18 @@ def scene(name):
 
 def near(actual, expected):
     assert max(abs(a-b) for a, b in zip(actual, expected)) <= 8, (actual, expected)
+
+
+def media_fixture():
+    """Private moving video and tone; no dependency on another workflow's files."""
+    ffmpeg = Path(__file__).resolve().parents[1] / 'dist/desktop-studio-portable/ffmpeg/bin/ffmpeg.exe'
+    clip = report / 'fixture.mp4'
+    subprocess.run([str(ffmpeg), '-hide_banner', '-loglevel', 'error', '-y',
+                    '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30',
+                    '-f', 'lavfi', '-i', 'sine=frequency=731:sample_rate=48000',
+                    '-t', '3', '-c:v', 'libopenh264', '-pix_fmt', 'yuv420p',
+                    '-c:a', 'aac', str(clip)], check=True, timeout=30)
+    return clip
 
 
 def remove_sources(prefixes):

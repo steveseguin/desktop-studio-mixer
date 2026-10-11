@@ -104,8 +104,7 @@ class WindowAudioCaptureCore {
     std::mutex callbackMutex_;
     StreamCallback streamCallback_;
     std::atomic<bool> streaming_{false};
-    bool coInitialized_ = false;
-    bool roInitialized_ = false;
+    void *mtaCookie_ = nullptr;
 
 #ifdef _WIN32
     void *audioClient_ = nullptr;

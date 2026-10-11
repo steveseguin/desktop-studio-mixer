@@ -20,6 +20,8 @@ signals:
     void frameReady(const QImage &image);
     void audioProcessReady(quint32 processId);
     void audioReady(const QByteArray &pcm, int sampleRate);
+    void recovered();
+    void restartRequired();
     void errorOccurred(const QString &message);
 protected:
     void resizeEvent(QResizeEvent *event) override;

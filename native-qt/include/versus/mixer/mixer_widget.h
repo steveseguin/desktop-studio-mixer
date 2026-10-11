@@ -11,8 +11,11 @@ public:
     // Let the scroll host shrink flexible canvases/lists to their minimum sizes.
     // QLabel wrapping otherwise makes it request the entire preferred height.
     bool hasHeightForWidth() const override { return false; }
+    int heightForWidth(int) const override { return -1; }
     void setOutputState(const QString &label, const QString &status, bool enabled, bool active);
     void shutdown();
+    QSize canvasSize() const;
+    int canvasFrameRate() const;
 signals:
     void outputRequested();
     void toggleOutputRequested();

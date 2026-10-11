@@ -3005,6 +3005,10 @@ void MainWindow::onGoLiveClicked() {
 
         versus::video::EncoderConfig config =
             buildEncoderConfigFromUi(width, height, fps, bitrate);
+        if (sourceModeValue == "mixer") if (const auto *studio = findChild<versus::mixer::MixerWidget*>()) {
+            config.width = studio->canvasSize().width(); config.height = studio->canvasSize().height();
+            config.frameRate = studio->canvasFrameRate();
+        }
         if (!config.enableAlpha &&
             config.alphaBackgroundMode != versus::video::AlphaBackgroundMode::None &&
             config.codec == versus::video::VideoCodec::VP9) {

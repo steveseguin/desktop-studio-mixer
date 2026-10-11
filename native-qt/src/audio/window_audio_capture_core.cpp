@@ -29,6 +29,17 @@
 using Microsoft::WRL::ComPtr;
 
 namespace {
+class ScopedAudioRuntime {
+public:
+    ScopedAudioRuntime() {
+        auto hr = RoInitialize(RO_INIT_MULTITHREADED);
+        if (hr == RPC_E_CHANGED_MODE) hr = RoInitialize(RO_INIT_SINGLETHREADED);
+        initialized_ = SUCCEEDED(hr);
+    }
+    ~ScopedAudioRuntime() { if (initialized_) RoUninitialize(); }
+private:
+    bool initialized_ = false;
+};
 constexpr DWORD kDefaultSampleRate = 48000;
 constexpr WORD kDefaultChannelCount = 2;
 constexpr uint32_t kMinSupportedSampleRate = 8000;
@@ -450,24 +461,17 @@ class ActivateAudioInterfaceHandler
 namespace versus::audio {
 
 WindowAudioCaptureCore::WindowAudioCaptureCore() {
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    if (SUCCEEDED(hr)) {
-        coInitialized_ = true;
-    }
-    hr = RoInitialize(RO_INIT_MULTITHREADED);
-    if (SUCCEEDED(hr)) {
-        roInitialized_ = true;
-    }
+    // Source startup and retirement may run on different pool threads. A usage
+    // cookie owns MTA lifetime without uninitializing either thread's apartment.
+    CO_MTA_USAGE_COOKIE cookie{};
+    const HRESULT hr = CoIncrementMTAUsage(&cookie);
+    mtaCookie_ = cookie;
+    if (FAILED(hr)) spdlog::error("[Audio] Could not retain COM MTA: 0x{:08x}", static_cast<unsigned>(hr));
 }
 
 WindowAudioCaptureCore::~WindowAudioCaptureCore() {
     StopCapture();
-    if (roInitialized_) {
-        RoUninitialize();
-    }
-    if (coInitialized_) {
-        CoUninitialize();
-    }
+    if (mtaCookie_) CoDecrementMTAUsage(static_cast<CO_MTA_USAGE_COOKIE>(mtaCookie_));
 }
 
 std::vector<WindowInfo> WindowAudioCaptureCore::GetWindowList() {
@@ -475,10 +479,12 @@ std::vector<WindowInfo> WindowAudioCaptureCore::GetWindowList() {
 }
 
 std::vector<AudioSessionInfo> WindowAudioCaptureCore::GetAudioSessions() {
+    ScopedAudioRuntime apartment;
     return EnumerateAudioSessions();
 }
 
 std::vector<AudioDeviceInfo> WindowAudioCaptureCore::GetInputDevices() {
+    ScopedAudioRuntime apartment;
     return EnumerateInputDevices();
 }
 
@@ -547,6 +553,7 @@ CaptureResult WindowAudioCaptureCore::StartInputDeviceStreamCapture(const std::s
 }
 
 void WindowAudioCaptureCore::StopCapture() {
+    ScopedAudioRuntime apartment;
     std::thread threadToJoin;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -618,6 +625,7 @@ bool WindowAudioCaptureCore::IsCapturing() const {
 }
 
 CaptureResult WindowAudioCaptureCore::StartProcessLoopback(uint32_t processId, bool excludeProcessTree) {
+    ScopedAudioRuntime apartment;
     CaptureResult result;
 
     usingProcessLoopback_.store(false);
@@ -795,6 +803,7 @@ CaptureResult WindowAudioCaptureCore::StartProcessLoopback(uint32_t processId, b
 }
 
 CaptureResult WindowAudioCaptureCore::StartDefaultEndpoint(DefaultAudioEndpoint endpoint) {
+    ScopedAudioRuntime apartment;
     CaptureResult result;
 
     const bool inputEndpoint = endpoint == DefaultAudioEndpoint::MultimediaInput ||
@@ -963,6 +972,7 @@ CaptureResult WindowAudioCaptureCore::StartDefaultEndpoint(DefaultAudioEndpoint 
 }
 
 CaptureResult WindowAudioCaptureCore::StartInputDevice(const std::string &deviceId) {
+    ScopedAudioRuntime apartment;
     if (deviceId.empty()) {
         return StartDefaultEndpoint(DefaultAudioEndpoint::MultimediaInput);
     }
@@ -1129,6 +1139,7 @@ CaptureResult WindowAudioCaptureCore::StartInputDevice(const std::string &device
 }
 
 void WindowAudioCaptureCore::CaptureLoop() {
+    ScopedAudioRuntime apartment;
     HANDLE waitHandles[2] = {static_cast<HANDLE>(sampleReadyEvent_), static_cast<HANDLE>(stopEvent_)};
 
     while (true) {

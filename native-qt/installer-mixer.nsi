@@ -4,7 +4,7 @@ Unicode True
 !include "LogicLib.nsh"
 !include "x64.nsh"
 !ifndef VERSION
-!define VERSION "0.4.3"
+!define VERSION "0.5.0"
 !endif
 !ifndef BUILD_BIN_DIR
 !define BUILD_BIN_DIR "dist\desktop-studio-portable"
@@ -70,6 +70,7 @@ Section "Desktop Studio"
     File "${BUILD_BIN_DIR}\WebView2-LICENSE.txt"
     File "${BUILD_BIN_DIR}\README.md"
     File /r "${BUILD_BIN_DIR}\docs"
+    File /r "${BUILD_BIN_DIR}\licenses"
     File /nonfatal "${BUILD_BIN_DIR}\vdoninja.ico"
     File /r "${BUILD_BIN_DIR}\platforms"
     File /nonfatal /r "${BUILD_BIN_DIR}\styles"
@@ -100,6 +101,13 @@ Section "Desktop Studio"
 SectionEnd
 Section "Uninstall"
     !insertmacro RequireClosed
+    ; Remove only the camera registered by this installation. A separate
+    ; portable installation may own the same per-user camera identity.
+    ReadRegStr $0 HKCU "Software\Classes\CLSID\{71BD0D43-5EB7-4E61-A64A-25D544373297}\InprocServer32" ""
+    ${If} $0 == "$INSTDIR\desktop-studio-camera.dll"
+        DeleteRegKey HKCU "Software\Classes\CLSID\{860BB310-5D01-11D0-BD3B-00A0C911CE86}\Instance\{71BD0D43-5EB7-4E61-A64A-25D544373297}"
+        DeleteRegKey HKCU "Software\Classes\CLSID\{71BD0D43-5EB7-4E61-A64A-25D544373297}"
+    ${EndIf}
     Delete "$INSTDIR\desktop-studio.exe"
     Delete "$INSTDIR\video-mixer.exe"
     Delete "$INSTDIR\*.dll"
@@ -115,6 +123,7 @@ Section "Uninstall"
     RMDir /r "$INSTDIR\generic"
     RMDir /r "$INSTDIR\ffmpeg"
     RMDir /r "$INSTDIR\docs"
+    RMDir /r "$INSTDIR\licenses"
     Delete "$INSTDIR\uninstall.exe"
     RMDir "$INSTDIR"
     Delete "$SMPROGRAMS\Desktop Studio\Desktop Studio.lnk"

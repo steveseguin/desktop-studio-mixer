@@ -30,6 +30,8 @@ struct BrowserSource::Impl {
     QTimer timer;
     unsigned long mutedBrowserPid = 0;
     bool busy = false;
+    bool deliveryPending = false;
+    int failures = 0;
     QString captureMode = "Starting browser";
     std::unique_ptr<video::WindowCapture> capture;
     std::mutex frameMutex;
@@ -130,7 +132,8 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                                     [self](ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs*) -> HRESULT {
                                         if (self) {
                                             self->impl_->timer.stop();
-                                            emit self->errorOccurred("Browser process stopped. Select the source and press Reconnect.");
+                                            emit self->errorOccurred("Browser process stopped. Reconnecting automatically...");
+                                            QTimer::singleShot(2000, self, [self] { if (self) emit self->restartRequired(); });
                                         }
                                         return S_OK;
                                     }).Get(), &token);
@@ -139,7 +142,11 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                                         if (!self) return S_OK;
                                         BOOL success = FALSE;
                                         args->get_IsSuccess(&success);
-                                        if (!success) emit self->errorOccurred("Browser source could not load. Check its URL and connection.");
+                                        if (!success) {
+                                            emit self->errorOccurred("Browser source could not load. Retrying automatically...");
+                                            const int retry = std::min(30000, 1000 << std::min(5, self->impl_->failures++));
+                                            QTimer::singleShot(retry, self, [self] { if (self && self->impl_->web) self->impl_->web->Reload(); });
+                                        } else { self->impl_->failures = 0; emit self->recovered(); }
                                         return S_OK;
                                     }).Get(), &token);
                                 UINT32 pid = 0;
@@ -184,13 +191,17 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                                 if (renderFrames && !transparent) {
                                     auto *state = self->impl_.get();
                                     state->capture = std::make_unique<video::WindowCapture>();
-                                    state->capture->setFrameCallback([state](video::CapturedFrame frame) {
+                                    state->capture->setFrameCallback([state, self](video::CapturedFrame frame) {
                                         auto image = takeFrameImage(std::move(frame)); if (image.isNull()) return;
                                         std::lock_guard lock(state->frameMutex); state->latest = std::move(image);
+                                        if (!state->deliveryPending && self) {
+                                            state->deliveryPending = true;
+                                            QMetaObject::invokeMethod(self, [self] { if (self) self->capture(); }, Qt::QueuedConnection);
+                                        }
                                     });
                                     if (state->capture->startCapture(std::to_string(self->winId()), 1280, 720, 30)) {
                                         state->captureMode = "Windows capture / 30 fps";
-                                        state->timer.start(33);
+                                        // Delivery follows capture, coalescing under load instead of sampling through a second timer.
                                     } else state->capture.reset();
                                 }
                                 if (renderFrames && !self->impl_->capture) {
@@ -240,7 +251,7 @@ void BrowserSource::capture() {
 #ifdef _WIN32
     if (impl_->capture) {
         QImage image;
-        { std::lock_guard lock(impl_->frameMutex); image.swap(impl_->latest); }
+        { std::lock_guard lock(impl_->frameMutex); image.swap(impl_->latest); impl_->deliveryPending = false; }
         if (!image.isNull()) emit frameReady(image);
         return;
     }

@@ -1,0 +1,4 @@
+RNNoise and Windows virtual-camera components copied from OBS Studio commit 84f7d03132aadc312bc6f31eb75e3777890b2860.
+https://github.com/obsproject/obs-studio/tree/84f7d03132aadc312bc6f31eb75e3777890b2860
+RNNoise retains its BSD notices and COPYING. Virtual-camera code is covered by OBS-COPYING; libdshowcapture source retains LGPL notices. util headers retain ISC notices.
+Local changes: isolated Desktop Studio camera identity and shared-memory name, per-user registration, build integration, blank inactive placeholder, valid default capture dimensions, missing C standard-library declarations, and prefixed RNNoise symbols to coexist with Opus.

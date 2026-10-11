@@ -119,8 +119,7 @@ try:
     results['savedShow']='camera mode and explicitly changed controls persisted'
     # Restart the shipped portable app to verify actual hardware settings are reapplied.
     window.set_focus();window.type_keys('^q');app.wait_for_process_exit(timeout=15)
-    startup=subprocess.STARTUPINFO();startup.dwFlags=subprocess.STARTF_USESHOWWINDOW;startup.wShowWindow=win32con.SW_HIDE
-    child=subprocess.Popen([str(Path('dist/desktop-studio-portable/desktop-studio.exe').resolve())],startupinfo=startup)
+    child=subprocess.Popen([str(Path('dist/desktop-studio-portable/desktop-studio.exe').resolve())],creationflags=subprocess.CREATE_NO_WINDOW)
     (report/'app.pid').write_text(str(child.pid));time.sleep(3)
     app=Application(backend='uia').connect(process=child.pid);window=app.window(title='Desktop Studio - Powered by VDO.Ninja')
     # Helpers bind window as a default argument; rebind after restarting.

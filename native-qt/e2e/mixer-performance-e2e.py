@@ -27,11 +27,15 @@ window.set_focus()
 window.child_window(title='Studio', control_type='TabItem').click_input()
 single_canvas = os.environ.get('VIDEO_MIXER_E2E_LAYOUT') == 'single'
 studio_mode(not single_canvas)
+backend = os.environ.get('VIDEO_MIXER_E2E_BACKEND', 'GPU composition')
+choose_dialog(window, 'compositorBackend', backend)
+choose_dialog(window, 'canvasFormat', '1280x720 / 30 fps')
 original_press = press
 def press(name, root=window):
     if single_canvas and name in ('takeScene', 'fadeScene'): return
     original_press(name, root)
 results = {'cpuConvention': 'one logical core = 100%', 'logicalCores': psutil.cpu_count(),
+           'backend': backend,
            'layout': 'single' if single_canvas else 'studio',
            'exeSha256': hashlib.sha256(Path(process.exe()).read_bytes()).hexdigest(), 'scenarios': {}}
 
@@ -94,6 +98,10 @@ server = http.server.ThreadingHTTPServer(('127.0.0.1',0),Fixture)
 threading.Thread(target=server.serve_forever,daemon=True).start()
 try:
     scene('Opening'); press('takeScene')
+    remove_sources(('QA ', 'Social chat'))
+    add_source('Title', 'QA profile slate', 'Starting soon')
+    scene('Break'); add_source('Color', 'QA profile break', '#183657')
+    scene('Opening'); press('takeScene')
     measure('static_title')
     scene('Main')
     add_source('Camera / webcam', 'QA profile camera', device='HD Pro Webcam C920')
@@ -124,10 +132,12 @@ try:
     dialog = window.child_window(title='Record Program',control_type='Window'); dialog.wait('visible')
     edit = next(c for c in dialog.descendants(control_type='Edit') if c.is_visible() and c.element_info.automation_id=='1001')
     edit.set_edit_text(str(recording)); dialog.child_window(title='Save',control_type='Button').invoke()
-    wait_output(True)
+    deadline=time.time()+30
+    while time.time()<deadline and not control('recordingStatus').window_text().startswith('Recording:'): time.sleep(.3)
+    assert control('recordingStatus').window_text().startswith('Recording:')
     measure('mixed_recording')
     scene('Break'); press('fadeScene'); time.sleep(2)
-    press('studioStartOutput'); time.sleep(4)
+    press('studioRecord'); time.sleep(4)
     assert recording.stat().st_size > 10000
     results['recording'] = str(recording)
     measure('off_air_sources')

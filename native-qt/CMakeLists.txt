@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(video-mixer-native-qt VERSION 0.4.3 LANGUAGES CXX)
+project(video-mixer-native-qt VERSION 0.5.0 LANGUAGES C CXX)
 
 # CMake 4 removed compatibility modes older than 3.5. Opus 1.4 still
 # declares a 3.1 minimum, so give bundled dependencies the modern floor
@@ -29,6 +29,8 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 option(VERSUS_USE_NVENC "Enable NVIDIA NVENC hardware encoding" ON)
 option(VERSUS_USE_GRAPHICS_CAPTURE "Enable Windows Graphics Capture API (requires WinRT)" ON)
 option(VERSUS_USE_SPOUT "Enable Spout2 source support on Windows" ON)
+
+add_subdirectory(vendor)
 
 find_package(Threads REQUIRED)
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
@@ -153,6 +155,11 @@ endif()
 
 set(VERSUS_SOURCES
     src/main.cpp
+    src/mixer/guest_return.cpp
+    src/mixer/local_outputs.cpp
+    src/mixer/gpu_compositor.cpp
+    src/mixer/program_recorder.cpp
+    src/mixer/media_source.cpp
     src/mixer/mixer_widget.cpp
     src/mixer/browser_source.cpp
     src/mixer/audio_monitor.cpp
@@ -238,6 +245,7 @@ target_include_directories(video-mixer PRIVATE
 )
 
 target_link_libraries(video-mixer PRIVATE
+    studio-rnnoise studio-camera-queue
     Threads::Threads
     Qt6::Widgets
     Qt6::Network
@@ -272,6 +280,7 @@ if(WIN32)
         shlwapi
         winmm
         dwmapi
+        d2d1
         d3d11
         dxgi
         dbghelp
@@ -394,6 +403,11 @@ if(VERSUS_BUILD_TESTS)
 
     # Library target for testable code (without main.cpp)
     set(VERSUS_LIB_SOURCES
+        src/mixer/guest_return.cpp
+        src/mixer/local_outputs.cpp
+        src/mixer/gpu_compositor.cpp
+        src/mixer/program_recorder.cpp
+        src/mixer/media_source.cpp
         src/mixer/mixer_widget.cpp
         src/mixer/browser_source.cpp
         src/mixer/audio_monitor.cpp
@@ -427,7 +441,7 @@ if(VERSUS_BUILD_TESTS)
         APP_VERSION="${PROJECT_VERSION}"
     )
     target_include_directories(versus-lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-    target_link_libraries(versus-lib PUBLIC
+    target_link_libraries(versus-lib PUBLIC studio-rnnoise studio-camera-queue
         Threads::Threads
         Qt6::Widgets
         Qt6::Network
@@ -451,7 +465,7 @@ if(VERSUS_BUILD_TESTS)
         target_include_directories(versus-lib PRIVATE "${WEBVIEW2_SDK}/build/native/include")
         target_link_libraries(versus-lib PUBLIC "${WEBVIEW2_SDK}/build/native/x64/WebView2LoaderStatic.lib" version)
         target_link_libraries(versus-lib PUBLIC
-            ole32 crypt32 oleaut32 uuid user32 gdi32 shlwapi winmm dwmapi d3d11 dxgi winhttp
+            ole32 crypt32 oleaut32 uuid user32 gdi32 shlwapi winmm dwmapi d2d1 d3d11 dxgi winhttp
             dbghelp runtimeobject mf mfplat mfreadwrite mfuuid
         )
     endif()
@@ -657,4 +671,17 @@ if(VERSUS_BUILD_TESTS)
             ffmpeg_encoder_stall_helper)
     endif()
 
+endif()
+
+add_dependencies(video-mixer desktop-studio-camera)
+
+# Independent receiver used by the packaged-application workflow. Keep it out
+# of the shipped bin directory and do not build it with the application.
+if(WIN32 AND VERSUS_USE_SPOUT AND TARGET SpoutLibrary_static)
+    add_executable(studio_spout_output_probe EXCLUDE_FROM_ALL e2e/spout-output-probe.cpp)
+    set_target_properties(studio_spout_output_probe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qa"
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_include_directories(studio_spout_output_probe PRIVATE ${spout2_SOURCE_DIR}/SPOUTSDK/SpoutLibrary)
+    target_link_libraries(studio_spout_output_probe PRIVATE SpoutLibrary_static)
 endif()

@@ -47,6 +47,12 @@ if ($Package -or $Installer) {
     Copy-Item -Path (Join-Path $PSScriptRoot '../docs/mixer*.md') -Destination $packageDocs -Force
     Copy-Item (Join-Path $PSScriptRoot '../docs/game-capture-base.md') $packageDocs -Force
     Copy-Item (Join-Path $PSScriptRoot 'third_party/webview2/LICENSE.txt') (Join-Path $packageRoot 'WebView2-LICENSE.txt')
+    $notices = Join-Path $packageRoot 'licenses'
+    New-Item -ItemType Directory -Force -Path $notices | Out-Null
+    Copy-Item (Join-Path $PSScriptRoot 'vendor/PROVENANCE.txt') $notices -Force
+    Copy-Item (Join-Path $PSScriptRoot 'vendor/rnnoise/COPYING') (Join-Path $notices 'RNNoise-BSD.txt') -Force
+    Copy-Item (Join-Path $PSScriptRoot 'vendor/virtualcam/OBS-COPYING') (Join-Path $notices 'OBS-GPL.txt') -Force
+    Copy-Item (Join-Path $PSScriptRoot 'vendor/virtualcam/dshow/COPYING') (Join-Path $notices 'libdshowcapture-LGPL.txt') -Force
     Write-Output "Portable app: $packageRoot/desktop-studio.exe"
     $project = Get-Content (Join-Path $PSScriptRoot 'CMakeLists.txt') -Raw
     if ($project -notmatch 'project\(video-mixer-native-qt VERSION ([0-9.]+)') { throw 'Cannot read app version.' }
