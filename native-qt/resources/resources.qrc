@@ -1,5 +1,8 @@
 ﻿<!DOCTYPE RCC>
 <RCC version="1.0">
+  <qresource prefix="/mixer">
+    <file>mixer-audio.js</file>
+  </qresource>
   <qresource prefix="/icons">
     <file>vdoninja.ico</file>
     <file>logo.png</file>

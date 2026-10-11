@@ -10,13 +10,16 @@ namespace versus::mixer {
 class BrowserSource : public QWidget {
     Q_OBJECT
 public:
-    BrowserSource(const QString &id, const QUrl &url, bool renderFrames = true);
+    BrowserSource(const QString &id, const QUrl &url, bool renderFrames = true,
+                  bool transparent = false, bool allowTalkback = false);
     ~BrowserSource() override;
     void interact();
     void park();
+    QString captureDescription() const;
 signals:
     void frameReady(const QImage &image);
     void audioProcessReady(quint32 processId);
+    void audioReady(const QByteArray &pcm, int sampleRate);
     void errorOccurred(const QString &message);
 protected:
     void resizeEvent(QResizeEvent *event) override;

@@ -669,7 +669,6 @@ MainWindow::MainWindow(
     }
     if (runtimeOptions_.systemIntegrationsEnabled) {
         setupTrayIcon();
-        QTimer::singleShot(0, this, &MainWindow::showFirewallWarningIfNeeded);
     }
 
     // Stats timer (update every second when live)
@@ -701,6 +700,7 @@ MainWindow::MainWindow(
         tabs->setObjectName("workspaceTabs");
         auto *captureControls = takeCentralWidget();
         auto *studio = new versus::mixer::MixerWidget(core_, tabs);
+        connect(qApp, &QCoreApplication::aboutToQuit, studio, &versus::mixer::MixerWidget::shutdown);
         tabs->addTab(studio, "Studio");
         tabs->addTab(captureControls, "Capture & output");
         setCentralWidget(tabs);
@@ -710,6 +710,27 @@ MainWindow::MainWindow(
             tabs->setCurrentIndex(1);
             advancedToggle_->setChecked(true);
         });
+        connect(studio, &versus::mixer::MixerWidget::toggleOutputRequested, this, [this]() {
+            if (!isLive_ && !startInProgress_ && !stopInProgress_)
+                sourceModeSelect_->setCurrentIndex(sourceModeSelect_->findData("mixer"));
+            onGoLiveClicked();
+        });
+        connect(studio, &versus::mixer::MixerWidget::recordRequested, this, [this]() {
+            if (isLive_ || startInProgress_ || stopInProgress_) return;
+            const auto path = QFileDialog::getSaveFileName(this, "Record Program", QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)+"/Video Mixer recording.mkv", "Matroska video (*.mkv)");
+            if (path.isEmpty()) return;
+            sourceModeSelect_->setCurrentIndex(sourceModeSelect_->findData("mixer"));
+            outputSelect_->setCurrentIndex(outputSelect_->findData("file"));
+            outputUrlInput_->setText(path.endsWith(".mkv", Qt::CaseInsensitive) ? path : path+".mkv");
+            onGoLiveClicked();
+        });
+        auto *studioStatusTimer = new QTimer(studio);
+        connect(studioStatusTimer, &QTimer::timeout, studio, [this, studio]() {
+            const auto destination = outputSelect_ ? outputSelect_->currentText() : QString();
+            studio->setOutputState(goLiveButton_->text(), destination+" / "+statusLabel_->text(),
+                goLiveButton_->isEnabled(), isLive_ || startInProgress_ || stopInProgress_);
+        });
+        studioStatusTimer->start(200);
         sourceModeSelect_->setCurrentIndex(sourceModeSelect_->findData("mixer"));
         resize(1440, 960);
     }
@@ -831,13 +852,10 @@ void MainWindow::showFirewallWarningIfNeeded() {
         return;
     }
 
-    const bool installedPath = currentExecutableLooksInstalled(currentExe);
     const QString issue = firewall.present
         ? QString("The existing Windows Firewall rule points to:\n%1").arg(firewall.programPath)
         : QString("Windows Firewall does not have the Video Mixer WebRTC UDP rule.");
-    const QString guidance = installedPath
-        ? "Re-run the Video Mixer setup installer or add an inbound UDP allow rule for this executable."
-        : "Portable and ZIP copies cannot add this rule automatically. Use the Video Mixer setup installer or add an inbound UDP allow rule for this executable.";
+    const QString guidance = "Allow Video Mixer when Windows asks, or add an inbound UDP allow rule for this executable if direct connections fail. The per-user installer does not change firewall rules.";
 
     spdlog::warn("[UI] Windows Firewall rule is missing or does not match current executable: exe='{}' rulePresent={} ruleProgram='{}'",
                  currentExe.toStdString(),
@@ -896,6 +914,7 @@ void MainWindow::requestQuit() {
     }
 
     quitAfterPendingOps_ = false;
+    if (auto *studio = findChild<versus::mixer::MixerWidget*>()) studio->shutdown();
     qApp->quit();
 }
 
@@ -2842,6 +2861,10 @@ void MainWindow::onGoLiveClicked() {
     if (startInProgress_ || stopInProgress_ || startPending || stopPending) {
         return;
     }
+
+    // This check concerns native WebRTC publishing, not startup, recording or SRT.
+    if (!isLive_ && runtimeOptions_.systemIntegrationsEnabled && outputSelect_->currentData().toString() == "vdo")
+        showFirewallWarningIfNeeded();
 
     if (isLive_) {
         stopInProgress_ = true;

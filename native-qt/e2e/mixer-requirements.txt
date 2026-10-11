@@ -1,0 +1,4 @@
+-r desktop-ui-requirements.txt
+numpy==2.5.3
+SoundCard==0.4.6
+playwright==1.58.0

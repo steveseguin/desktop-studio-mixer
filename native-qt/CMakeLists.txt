@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(video-mixer-native-qt VERSION 0.1.0 LANGUAGES CXX)
+project(video-mixer-native-qt VERSION 0.2.0 LANGUAGES CXX)
 
 # CMake 4 removed compatibility modes older than 3.5. Opus 1.4 still
 # declares a 3.1 minimum, so give bundled dependencies the modern floor
@@ -155,6 +155,7 @@ set(VERSUS_SOURCES
     src/main.cpp
     src/mixer/mixer_widget.cpp
     src/mixer/browser_source.cpp
+    src/mixer/audio_monitor.cpp
     src/app/alpha_frame_pairer.cpp
     src/app/peer_operation_executor.cpp
     src/app/versus_app.cpp
@@ -386,6 +387,7 @@ if(VERSUS_BUILD_TESTS)
     set(VERSUS_LIB_SOURCES
         src/mixer/mixer_widget.cpp
         src/mixer/browser_source.cpp
+        src/mixer/audio_monitor.cpp
         src/app/alpha_frame_pairer.cpp
         src/app/peer_operation_executor.cpp
         src/app/versus_app.cpp

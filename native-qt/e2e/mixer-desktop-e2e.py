@@ -47,6 +47,30 @@ def near(actual, expected):
     assert max(abs(a-b) for a, b in zip(actual, expected)) <= 8, (actual, expected)
 
 
+def remove_sources(prefixes):
+    # Qt recycles row accessibility objects after deletion; reacquire each time.
+    while True:
+        window.set_focus()
+        control('mixerSources').wheel_mouse_input(wheel_dist=50)
+        all_rows = control('mixerSources').descendants(control_type='ListItem')
+        rows = [c for c in all_rows
+                if c.window_text().startswith(prefixes)]
+        if not rows: return
+        name = rows[0].window_text()
+        # This provider includes partially clipped rows. Scroll the target fully
+        # inside the viewport before clicking its label, away from the checkbox.
+        for _ in range(20):
+            row = next(c for c in control('mixerSources').descendants(control_type='ListItem') if c.window_text() == name)
+            rect, viewport = row.rectangle(), control('mixerSources').rectangle()
+            if viewport.top < rect.top and rect.bottom < viewport.bottom: break
+            control('mixerSources').wheel_mouse_input(wheel_dist=-1)
+        row.click_input(coords=(100, 12))
+        press('removeSource')
+        after = [c for c in control('mixerSources').descendants(control_type='ListItem')
+                 if c.window_text() == name]
+        assert not after, 'Take a scene without QA sources before removing them'
+
+
 def add(kind, name, value=None):
     press('addSource')
     dialog = window.child_window(title='Add source', control_type='Window')

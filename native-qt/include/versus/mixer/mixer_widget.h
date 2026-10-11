@@ -8,8 +8,12 @@ class MixerWidget : public QWidget {
 public:
     explicit MixerWidget(app::VersusApp *core, QWidget *parent = nullptr);
     ~MixerWidget() override;
+    void setOutputState(const QString &label, const QString &status, bool enabled, bool active);
+    void shutdown();
 signals:
     void outputRequested();
+    void toggleOutputRequested();
+    void recordRequested();
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

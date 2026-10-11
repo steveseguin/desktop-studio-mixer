@@ -1,5 +1,6 @@
 #include "versus/mixer/mixer_widget.h"
 #include "versus/mixer/browser_source.h"
+#include "versus/mixer/audio_monitor.h"
 #include "versus/app/versus_app.h"
 #include <QApplication>
 #include <QCheckBox>
@@ -34,6 +35,7 @@
 #include <QScrollArea>
 #include <QShortcut>
 #include <QSlider>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QTimer>
@@ -44,6 +46,7 @@
 #include <deque>
 #include <mutex>
 #include <thread>
+#include <QtEndian>
 
 namespace versus::mixer {
 namespace {
@@ -70,9 +73,16 @@ struct Source {
     std::mutex imageMutex, audioMutex;
     QImage image;
     std::deque<float> samples;
+    std::deque<float> delayedSamples;
+    std::atomic<int> audioDelayMs{0};
+    int appliedDelayMs = -1;
     audio::AudioResamplerState resampler;
     std::atomic<float> gain{1}, peak{0};
     std::atomic<bool> muted{false}, followsScene{true}, onProgram{false};
+    std::atomic<bool> monitored{true};
+    bool transparent = false;
+    std::atomic<int64_t> lastFrame{0};
+    std::atomic<unsigned> frames{0};
     std::unique_ptr<video::WindowCapture> window;
     std::unique_ptr<video::CameraCapture> camera;
     std::unique_ptr<video::SpoutCapture> spout;
@@ -157,6 +167,18 @@ struct MixerWidget::Impl {
     Canvas *previewView = nullptr, *programView = nullptr;
     QPointer<Canvas> outputView;
     QPointer<BrowserSource> chatDock;
+    QPointer<BrowserSource> talkback;
+    QString room = "mix"+newId().remove('-').left(24), roomPassword = newId().remove('-');
+    QLabel *sourceHealth = nullptr, *outputStatus = nullptr;
+    QPushButton *startOutput = nullptr, *recordOutput = nullptr;
+    QCheckBox *monitorEnable = nullptr;
+    QComboBox *monitorDevice = nullptr;
+    std::atomic<bool> monitoring{false};
+    std::atomic<int> monitorDeviceId{-1};
+    std::atomic<float> monitorGain{0.5f};
+    QElapsedTimer healthClock;
+    unsigned lastFrameCount = 0;
+    QString healthSource;
     QLabel *status = nullptr, *previewTitle = nullptr, *programTitle = nullptr;
     QVBoxLayout *audioRows = nullptr;
     std::vector<std::pair<std::weak_ptr<Source>, QProgressBar*>> meters;
@@ -172,7 +194,12 @@ struct MixerWidget::Impl {
         projectPath = QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation))
             .filePath("VideoMixer/studio.mixer.json");
         buildUi();
-        load(projectPath);
+        if (!load(projectPath) && QFileInfo::exists(projectPath)) {
+            // Preserve a damaged/unrecognized show before autosave creates a fresh one.
+            const auto backup = projectPath+".recovery-"+newId();
+            if (!QFile::copy(projectPath, backup)) projectPath += ".recovered.mixer.json";
+            message("The previous show could not be loaded. Its original file has been preserved.");
+        }
         if (scenes.empty()) {
             auto slate = std::make_shared<Source>();
             slate->name = "Starting soon"; slate->kind = "title"; slate->locator = "Starting soon";
@@ -191,14 +218,20 @@ struct MixerWidget::Impl {
         videoTimer.setTimerType(Qt::PreciseTimer);
         QObject::connect(&videoTimer, &QTimer::timeout, q, [this] { render(); });
         videoTimer.start(33);
+        healthClock.start();
         audioThread = std::thread([this] { mixAudio(); });
     }
     ~Impl() {
+        shutdown();
+    }
+    void shutdown() {
+        if (!running.exchange(false)) return;
         videoTimer.stop(); saveTimer.stop(); save(projectPath);
-        running = false;
         if (audioThread.joinable()) audioThread.join();
+        for (const auto &item : sources) stopSource(item);
         delete outputView.data();
         delete chatDock.data();
+        delete talkback.data();
         sources.clear();
     }
     Scene &preview() { return scenes[static_cast<size_t>(selectedScene)]; }
@@ -225,12 +258,22 @@ struct MixerWidget::Impl {
         auto *invite = button("Invite guest", "inviteGuest", toolbar, q);
         auto *wireless = button("Wireless camera", "inviteCamera", toolbar, q);
         auto *chat = button("Social chat", "socialChat", toolbar, q);
+        auto *talk = button("Guest talkback", "guestTalkback", toolbar, q);
         auto *output = button("Output settings", "mixerOutput", toolbar, q);
         QObject::connect(invite, &QPushButton::clicked, q, [this] { addInvite(false); });
         QObject::connect(wireless, &QPushButton::clicked, q, [this] { addInvite(true); });
         QObject::connect(chat, &QPushButton::clicked, q, [this] { addChat(); });
+        QObject::connect(talk, &QPushButton::clicked, q, [this] { openTalkback(); });
         QObject::connect(output, &QPushButton::clicked, q, [this] { emit q->outputRequested(); });
         root->addLayout(toolbar);
+        auto *outputBar = new QHBoxLayout;
+        startOutput = button("Start output", "studioStartOutput", outputBar, q);
+        recordOutput = button("Record...", "studioRecord", outputBar, q);
+        outputStatus = new QLabel("Configure a destination in Output settings, or record to a file.", q);
+        outputStatus->setObjectName("studioOutputStatus"); outputStatus->setWordWrap(true);
+        outputBar->addWidget(outputStatus, 1); root->addLayout(outputBar);
+        QObject::connect(startOutput, &QPushButton::clicked, q, [this] { emit q->toggleOutputRequested(); });
+        QObject::connect(recordOutput, &QPushButton::clicked, q, [this] { emit q->recordRequested(); });
         auto *monitors = new QHBoxLayout;
         auto monitor = [&](const QString &name, Canvas *&view, QLabel *&title) {
             auto *box = new QVBoxLayout;
@@ -293,11 +336,13 @@ struct MixerWidget::Impl {
             selectedScene = row; rebuildSources(); syncInspector(); changed();
         });
         QObject::connect(newScene, &QPushButton::clicked, q, [this] {
+            if (scenes.size() >= 64) { message("A show supports up to 64 scenes."); return; }
             bool ok; const auto name = QInputDialog::getText(q, "New scene", "Scene name", QLineEdit::Normal, "Scene " + QString::number(scenes.size()+1), &ok);
             if (!ok || name.trimmed().isEmpty()) return;
             Scene scene; scene.name = name.trimmed(); scenes.push_back(scene); selectedScene = static_cast<int>(scenes.size())-1; rebuild(); changed();
         });
         QObject::connect(duplicate, &QPushButton::clicked, q, [this] {
+            if (scenes.size() >= 64) { message("A show supports up to 64 scenes."); return; }
             Scene scene = preview(); scene.id = newId(); scene.name += " copy"; scenes.push_back(scene);
             selectedScene = static_cast<int>(scenes.size())-1; rebuild(); changed();
         });
@@ -322,6 +367,19 @@ struct MixerWidget::Impl {
         auto *remove = button("Remove", "removeSource", sourceButtons, q);
         auto *interact = button("Open / Invite", "interactSource", sourceButtons, q);
         sourceLayout->addLayout(sourceButtons);
+        auto *editButtons = new QHBoxLayout;
+        auto *edit = button("Edit source", "editSource", editButtons, q);
+        auto *reconnect = button("Reconnect", "reconnectSource", editButtons, q);
+        sourceLayout->addLayout(editButtons);
+        sourceHealth = new QLabel("Select a source to inspect its status.", q);
+        sourceHealth->setObjectName("sourceHealth"); sourceHealth->setWordWrap(true); sourceLayout->addWidget(sourceHealth);
+        QObject::connect(edit, &QPushButton::clicked, q, [this] { addSourceDialog(true); });
+        QObject::connect(reconnect, &QPushButton::clicked, q, [this] {
+            if (auto item = source(selectedSource)) {
+                if (item->kind == "window") addSourceDialog(true);
+                else { stopSource(item); startSource(item); message("Reconnecting " + item->name); }
+            }
+        });
         QObject::connect(add, &QPushButton::clicked, q, [this] { addSourceDialog(); });
         QObject::connect(remove, &QPushButton::clicked, q, [this] { removeSource(); });
         QObject::connect(interact, &QPushButton::clicked, q, [this] {
@@ -330,7 +388,9 @@ struct MixerWidget::Impl {
             else if (item->kind == "chat" && QUrlQuery(QUrl(item->locator)).hasQueryItem("session")) {
                 QUrl dock("https://socialstream.ninja/dock.html");
                 QUrlQuery query;
-                query.addQueryItem("session", QUrlQuery(QUrl(item->locator)).queryItemValue("session", QUrl::FullyDecoded));
+                const QUrlQuery overlayQuery(QUrl(item->locator));
+                for (const auto &key : {"session", "password", "server", "localserver"})
+                    if (overlayQuery.hasQueryItem(key)) query.addQueryItem(key, overlayQuery.queryItemValue(key, QUrl::FullyDecoded));
                 dock.setQuery(query);
                 delete chatDock.data();
                 chatDock = new BrowserSource("chat-dock", dock, false);
@@ -412,8 +472,17 @@ struct MixerWidget::Impl {
         masterSlider->setObjectName("masterGain"); master->addWidget(masterSlider);
         masterMeter = new QProgressBar(q); masterMeter->setRange(0, 100); masterMeter->setTextVisible(false); masterMeter->setMaximumWidth(90); master->addWidget(masterMeter);
         audioLayout->addLayout(master);
-        QObject::connect(masterSlider, &QSlider::valueChanged, q, [this](int value) { masterGain = value/100.0f; });
-        audioLayout->addWidget(new QLabel("Scene = audio follows Program.\nUncheck it for an always-on mic. Peak limiter enabled.", q));
+        QObject::connect(masterSlider, &QSlider::valueChanged, q, [this](int value) { masterGain = value/100.0f; changed(); });
+        monitorEnable = new QCheckBox("Headphone monitor", q); monitorEnable->setObjectName("monitorEnable");
+        monitorDevice = new QComboBox(q); monitorDevice->setObjectName("monitorDevice");
+        for (const auto &[id, name] : AudioMonitor::devices()) monitorDevice->addItem(name, id);
+        audioLayout->addWidget(monitorEnable); audioLayout->addWidget(monitorDevice);
+        auto *monitorVolume = new QSlider(Qt::Horizontal, q); monitorVolume->setRange(0, 100); monitorVolume->setValue(50);
+        monitorVolume->setAccessibleName("Headphone volume"); monitorVolume->setObjectName("monitorVolume"); audioLayout->addWidget(monitorVolume);
+        QObject::connect(monitorEnable, &QCheckBox::toggled, q, [this](bool value) { monitoring = value; });
+        QObject::connect(monitorDevice, &QComboBox::currentIndexChanged, q, [this] { monitorDeviceId = monitorDevice->currentData().toInt(); });
+        QObject::connect(monitorVolume, &QSlider::valueChanged, q, [this](int value) { monitorGain = value/100.0f; });
+        audioLayout->addWidget(new QLabel("Scene follows Program. Listen also hears sources off air.\nUse headphones for monitoring and guest talkback. Mics start with Listen off.", q));
         panels->setSizes({240, 600, 370}); root->addWidget(panels, 4);
         status = new QLabel("Add cameras, windows, audio, or browser sources to get started.", q);
         status->setObjectName("mixerStatus"); status->setWordWrap(true); status->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -460,32 +529,45 @@ struct MixerWidget::Impl {
             gain->setAccessibleName(item->name+" volume"); controls->addWidget(gain);
             auto *mute = new QCheckBox("Mute", row); mute->setChecked(item->muted); controls->addWidget(mute);
             auto *follow = new QCheckBox("Scene", row); follow->setChecked(item->followsScene); controls->addWidget(follow);
+            auto *listen = new QCheckBox("Listen", row); listen->setChecked(item->monitored); controls->addWidget(listen);
             auto *meter = new QProgressBar(row); meter->setRange(0, 100); meter->setTextVisible(false); meter->setMaximumWidth(65); controls->addWidget(meter);
             meters.emplace_back(item, meter);
             layout->addLayout(controls); audioRows->addWidget(row);
             QObject::connect(gain, &QSlider::valueChanged, q, [this, item](int value) { item->gain = value/100.0f; changed(); });
             QObject::connect(mute, &QCheckBox::toggled, q, [this, item](bool value) { item->muted = value; changed(); });
             QObject::connect(follow, &QCheckBox::toggled, q, [this, item](bool value) { item->followsScene = value; changed(); });
+            QObject::connect(listen, &QCheckBox::toggled, q, [this, item](bool value) { item->monitored = value; changed(); });
         }
         audioRows->addStretch();
     }
 
-    void addSourceDialog() {
-        QDialog dialog(q); dialog.setWindowTitle("Add source"); auto *form = new QFormLayout(&dialog);
+    void addSourceDialog(bool editing = false) {
+        const auto existing = editing ? source(selectedSource) : std::shared_ptr<Source>{};
+        if (editing && !existing) { message("Select a source to edit."); return; }
+        QDialog dialog(q); dialog.setWindowTitle(editing ? "Edit source" : "Add source"); auto *form = new QFormLayout(&dialog);
         QComboBox type; type.setObjectName("sourceKind");
         const std::vector<std::pair<QString, QString>> kinds = {{"Game / window", "window"}, {"Camera / webcam", "camera"},
             {"Microphone / audio input", "microphone"}, {"Desktop audio", "desktop"}, {"Spout2 feed", "spout"},
             {"Browser / remote VDO.Ninja feed", "browser"}, {"Image", "image"}, {"Title / slate", "title"}, {"Color", "color"}};
         for (const auto &[label, value] : kinds) type.addItem(label, value);
+        if (existing && type.findData(existing->kind) < 0) type.addItem(existing->kind, existing->kind);
         QLineEdit name; name.setObjectName("sourceName"); name.setPlaceholderText("Optional source name");
         QComboBox device; device.setObjectName("sourceDevice"); device.setMinimumWidth(400);
         QLineEdit value; value.setObjectName("sourceValue");
         QPushButton browse("Choose file / color");
         QLabel help; help.setWordWrap(true);
+        QCheckBox transparent("Preserve browser transparency (15 fps snapshots)"); transparent.setObjectName("browserTransparency");
+        QSpinBox audioDelay; audioDelay.setObjectName("sourceAudioDelay"); audioDelay.setRange(0, 500); audioDelay.setSuffix(" ms");
+        audioDelay.setToolTip("Delay this source's Program audio to match its picture. Headphone monitoring stays immediate.");
         form->addRow("Source type", &type); form->addRow("Name", &name); form->addRow("Device / window", &device);
-        form->addRow("URL / file / text / color", &value); form->addRow(&browse); form->addRow(&help);
+        form->addRow("URL / file / text / color", &value); form->addRow(&browse); form->addRow(&transparent); form->addRow(&help);
+        form->addRow("Audio delay", &audioDelay);
+        if (editing) form->addRow(new QLabel("Source changes apply to every scene, including Program.", &dialog));
         auto populate = [&] {
             const auto kind = type.currentData().toString(); device.clear();
+            transparent.setVisible(kind == "browser" || kind == "guest" || kind == "wireless" || kind == "chat");
+            audioDelay.setEnabled(kind == "browser" || kind == "guest" || kind == "wireless" || kind == "window" || kind == "microphone" || kind == "desktop");
+            audioDelay.setValue(kind == "browser" || kind == "guest" || kind == "wireless" ? 60 : 0);
             value.clear(); value.setVisible(true); device.setVisible(true); browse.setVisible(kind == "image" || kind == "color");
             if (kind == "window" || kind == "camera" || kind == "spout") {
                 const auto devices = kind == "camera" ? core->listCameras() : (kind == "spout" ? core->listSpoutSenders() : core->listWindows());
@@ -498,8 +580,8 @@ struct MixerWidget::Impl {
                 value.setVisible(false); help.setText("Microphones stay on across scenes by default. Use Mute or enable Scene in the audio mixer.");
             } else {
                 device.setVisible(false);
-                if (kind == "desktop") { value.setVisible(false); help.setText("Captures the default Windows output, including browser monitoring. Avoid adding it alongside the same individual audio feeds."); }
-                if (kind == "browser") { value.setPlaceholderText("https://..."); help.setText("Use a website, browser overlay, or VDO.Ninja viewing URL. Browser video currently captures up to 15 fps. Open / Invite allows interaction."); }
+                if (kind == "desktop") { value.setVisible(false); help.setText("Captures other applications, excluding Video Mixer, its browsers and monitoring. Avoid adding the same game's individual audio twice."); }
+                if (transparent.isVisible()) { value.setPlaceholderText("https://..."); help.setText("Smooth browser video uses Windows capture at 30 fps. Enable transparency for overlays. Open / Invite allows interaction; Escape parks the browser."); }
                 if (kind == "image") help.setText("PNG, JPEG and other Qt-supported images. Transparent PNGs remain transparent.");
                 if (kind == "title") { value.setText("Your title"); help.setText("A full-frame title card. Resize and position it in Preview."); }
                 if (kind == "color") { value.setText("#24466f"); help.setText("A solid color layer."); }
@@ -520,18 +602,31 @@ struct MixerWidget::Impl {
         QObject::connect(&buttons, &QDialogButtonBox::accepted, &dialog, [&] {
             const auto kind = type.currentData().toString();
             if (device.isVisible() && device.count() == 0) { help.setText("No source found. Connect a device or open a window first."); return; }
-            if (kind == "browser" && !webUrl(value.text().trimmed())) { help.setText("Enter a complete http:// or https:// source URL."); return; }
+            if (transparent.isVisible() && !webUrl(value.text().trimmed())) { help.setText("Enter a complete http:// or https:// source URL."); return; }
             if (kind == "color" && !QColor(value.text()).isValid()) { help.setText("Enter a valid color, for example #24466f."); return; }
             if (kind == "image" && !QImageReader(value.text()).canRead()) { help.setText("Choose a readable image file."); return; }
-            auto item = std::make_shared<Source>(); item->kind = kind;
+            auto item = existing ? existing : std::make_shared<Source>();
+            if (existing) stopSource(item);
+            item->kind = kind; item->transparent = transparent.isChecked();
+            item->audioDelayMs = audioDelay.value();
             item->locator = device.isVisible() ? device.currentData().toString() : value.text().trimmed();
             item->name = name.text().trimmed();
             if (item->name.isEmpty()) item->name = device.isVisible() ? device.currentText() : type.currentText();
             if (kind == "color") item->color = QColor(item->locator);
-            if (kind == "microphone" || kind == "desktop") item->followsScene = false;
-            appendSource(item); dialog.accept();
+            if (!existing && (kind == "microphone" || kind == "desktop")) item->followsScene = false;
+            if (!existing && kind == "microphone") item->monitored = false;
+            if (existing) { startSource(item); rebuild(); changed(); }
+            else appendSource(item);
+            dialog.accept();
         });
-        populate(); dialog.exec();
+        if (existing) { type.setCurrentIndex(type.findData(existing->kind)); type.setEnabled(false); }
+        populate();
+        if (existing) {
+            name.setText(existing->name); value.setText(existing->locator); transparent.setChecked(existing->transparent);
+            audioDelay.setValue(existing->audioDelayMs);
+            if (device.findData(existing->locator) >= 0) device.setCurrentIndex(device.findData(existing->locator));
+        }
+        dialog.exec();
     }
 
     void appendSource(const std::shared_ptr<Source> &item) {
@@ -542,13 +637,14 @@ struct MixerWidget::Impl {
     }
 
     void startSource(const std::shared_ptr<Source> &item) {
+        item->error.clear(); item->lastFrame = 0; item->frames = 0;
         const std::weak_ptr<Source> weak = item;
         auto frame = [weak](video::CapturedFrame captured) {
             const auto item = weak.lock();
             if (!item || captured.format != video::CapturedFrame::Format::BGRA || captured.width <= 0 || captured.height <= 0 ||
                 captured.stride < captured.width*4 || captured.data.size() < static_cast<size_t>(captured.stride)*captured.height) return;
             QImage image(captured.data.data(), captured.width, captured.height, captured.stride, QImage::Format_ARGB32);
-            std::lock_guard lock(item->imageMutex); item->image = image.copy();
+            std::lock_guard lock(item->imageMutex); item->image = image.copy(); item->lastFrame = now100ns(); ++item->frames;
         };
         auto audioChunk = [weak](audio::StreamChunk &&chunk) {
             const auto item = weak.lock(); if (!item) return;
@@ -578,23 +674,27 @@ struct MixerWidget::Impl {
             if (!item->spout->startCapture(item->locator.toStdString(), Width, Height, 30)) item->error = "Spout sender unavailable. Start the sender and add it again.";
         } else if (item->kind == "microphone" || item->kind == "desktop") {
             item->audio = std::make_unique<audio::WindowAudioCaptureCore>();
-            if (item->kind == "desktop") audioResult(item->audio->StartDefaultEndpointStreamCapture(audio::DefaultAudioEndpoint::MultimediaOutput, audioChunk));
+            if (item->kind == "desktop") audioResult(item->audio->StartStreamCapture(static_cast<uint32_t>(QCoreApplication::applicationPid()), audioChunk, true));
             else audioResult(item->audio->StartInputDeviceStreamCapture(item->locator.toStdString(), audioChunk));
         } else if (item->kind == "browser" || item->kind == "guest" || item->kind == "wireless" || item->kind == "chat") {
             if (!webUrl(item->locator)) { item->error = "Invalid browser URL."; return; }
-            item->browser = new BrowserSource(item->id, QUrl(item->locator));
+            item->browser = new BrowserSource(item->id, QUrl(item->locator), true, item->transparent);
             QObject::connect(item->browser, &BrowserSource::frameReady, q, [weak](const QImage &image) {
-                if (auto item = weak.lock()) { std::lock_guard lock(item->imageMutex); item->image = image; }
+                if (auto item = weak.lock()) { std::lock_guard lock(item->imageMutex); item->image = image; item->lastFrame = now100ns(); ++item->frames; }
             });
             QObject::connect(item->browser, &BrowserSource::errorOccurred, q, [this, weak](const QString &message) {
-                if (auto item = weak.lock()) { item->error = message; this->message(item->name+": "+message); }
-            });
-            QObject::connect(item->browser, &BrowserSource::audioProcessReady, q, [this, weak, audioChunk](quint32 pid) {
-                if (auto item = weak.lock(); item && item->hasAudio()) {
-                    item->audio = std::make_unique<audio::WindowAudioCaptureCore>();
-                    const auto result = item->audio->StartStreamCapture(pid, audioChunk);
-                    if (!result.success) { item->error = "Browser audio unavailable: " + QString::fromStdString(result.error); message(item->error); }
+                if (auto item = weak.lock()) {
+                    item->error = message;
+                    { std::lock_guard lock(item->imageMutex); item->image = {}; }
+                    this->message(item->name+": "+message);
                 }
+            });
+            QObject::connect(item->browser, &BrowserSource::audioReady, q, [weak, audioChunk](const QByteArray &pcm, int rate) {
+                const auto item = weak.lock(); if (!item || !item->hasAudio()) return;
+                audio::StreamChunk chunk; chunk.sampleRate = rate; chunk.captureTime100ns = now100ns();
+                chunk.samples.resize(pcm.size()/2);
+                for (qsizetype i = 0; i < pcm.size()/2; ++i) chunk.samples[i] = qFromLittleEndian<qint16>(pcm.constData()+i*2)/32768.0f;
+                audioChunk(std::move(chunk));
             });
         } else {
             QImage image;
@@ -613,6 +713,17 @@ struct MixerWidget::Impl {
             std::lock_guard lock(item->imageMutex); item->image = image;
         }
         if (!item->error.isEmpty()) message(item->name+": "+item->error);
+    }
+
+    void stopSource(const std::shared_ptr<Source> &item) {
+        if (item->window) item->window->stopCapture(); item->window.reset();
+        if (item->camera) item->camera->stopCapture(); item->camera.reset();
+        if (item->spout) item->spout->stopCapture(); item->spout.reset();
+        if (item->audio) item->audio->StopCapture(); item->audio.reset();
+        delete item->browser.data();
+        { std::lock_guard lock(item->audioMutex); item->samples.clear(); item->delayedSamples.clear(); item->appliedDelayMs = -1; item->resampler = {}; }
+        { std::lock_guard lock(item->imageMutex); item->image = {}; }
+        item->error.clear(); item->peak = 0;
     }
 
     void removeSource() {
@@ -638,19 +749,35 @@ struct MixerWidget::Impl {
             cameraOnly ? "Wireless camera" : "Guest", &ok);
         if (!ok || name.trimmed().isEmpty()) return;
         auto item = std::make_shared<Source>(); item->kind = cameraOnly ? "wireless" : "guest"; item->name = name.trimmed();
-        const auto stream = "mix" + newId().remove('-'); const auto password = newId().remove('-');
+        item->audioDelayMs = 60;
+        const auto stream = "mix" + newId().remove('-'); const auto password = roomPassword;
         QUrl view("https://vdo.ninja/"); QUrlQuery viewQuery;
         viewQuery.addQueryItem("view", stream); viewQuery.addQueryItem("password", password);
+        viewQuery.addQueryItem("room", room);
         viewQuery.addQueryItem("solo", ""); viewQuery.addQueryItem("cleanoutput", ""); view.setQuery(viewQuery); item->locator = view.toString(QUrl::FullyEncoded);
         QUrl push("https://vdo.ninja/"); QUrlQuery pushQuery;
         pushQuery.addQueryItem("push", stream); pushQuery.addQueryItem("password", password); pushQuery.addQueryItem("label", item->name);
+        pushQuery.addQueryItem("room", room); pushQuery.addQueryItem("broadcast", "");
         if (cameraOnly) pushQuery.addQueryItem("rear", "");
         push.setQuery(pushQuery); item->invite = push.toString(QUrl::FullyEncoded);
         appendSource(item); showInvite(item);
     }
+    void openTalkback() {
+        if (!talkback) {
+            QUrl url("https://vdo.ninja/"); QUrlQuery query;
+            query.addQueryItem("director", room); query.addQueryItem("password", roomPassword);
+            query.addQueryItem("vd", "0"); query.addQueryItem("muted", ""); query.addQueryItem("deaf", "");
+            query.addQueryItem("label", "Studio talkback"); url.setQuery(query);
+            talkback = new BrowserSource("talkback-"+room, url, false, false, true);
+            talkback->setWindowTitle("Video Mixer - Guest talkback (use headphones)");
+            QObject::connect(talkback, &BrowserSource::errorOccurred, q, [this](const QString &text) { message(text); });
+        }
+        talkback->interact();
+        message("Talkback: join with your microphone, then use the room's talk controls. It starts muted and deaf; monitor guests in Studio to avoid doubling audio.");
+    }
     void showInvite(const std::shared_ptr<Source> &item) {
         QDialog dialog(q); dialog.setWindowTitle(item->name+" - invite"); auto *layout = new QVBoxLayout(&dialog);
-        auto *help = new QLabel("Send this private link to the guest or open it on your phone.\nThey choose their camera and microphone, then join.\nAdd the source to your scene and press Take when ready.", &dialog); layout->addWidget(help);
+        auto *help = new QLabel("Send this private link to the guest or open it on your phone.\nThey choose their camera and microphone, then join. Use headphones.\nGuest talkback opens the private room's director controls.\nAdd the source to your scene and press Take when ready.", &dialog); layout->addWidget(help);
         auto *url = new QLineEdit(item->invite, &dialog); url->setReadOnly(true); url->setMinimumWidth(620); url->setObjectName("inviteUrl"); layout->addWidget(url);
         auto *buttons = new QHBoxLayout;
         auto *copy = button("Copy invite link", "copyInvite", buttons, &dialog);
@@ -666,6 +793,7 @@ struct MixerWidget::Impl {
         bool ok; const auto value = QInputDialog::getText(q, "Social Stream Ninja", "Paste your overlay URL, or enter your Social Stream session ID.\nConnect your social platforms in Social Stream Ninja first.", QLineEdit::Normal, {}, &ok).trimmed();
         if (!ok || value.isEmpty()) return;
         auto item = std::make_shared<Source>(); item->name = "Social chat"; item->kind = "chat";
+        item->transparent = true;
         if (webUrl(value)) item->locator = value;
         else {
             if (value.contains('/') || value.size() > 128) { message("Enter a session ID or a complete http(s) overlay URL."); return; }
@@ -745,21 +873,50 @@ struct MixerWidget::Impl {
         }
         for (const auto &[weak, meter] : meters) if (auto item = weak.lock()) meter->setValue(qRound(item->peak*100));
         masterMeter->setValue(qRound(masterPeak*100));
+        if (healthClock.elapsed() >= 1000) {
+            const auto elapsed = healthClock.restart();
+            if (auto item = source(selectedSource)) {
+                const auto count = item->frames.load();
+                const double fps = healthSource == item->id && count >= lastFrameCount ? (count-lastFrameCount)*1000.0/elapsed : 0;
+                healthSource = item->id; lastFrameCount = count;
+                QString text = item->error;
+                if (text.isEmpty()) {
+                    if (item->kind == "microphone" || item->kind == "desktop") text = "Audio capture active";
+                    else if (item->kind == "image" || item->kind == "title" || item->kind == "color") text = "Ready";
+                    else text = QString("%1 fps received").arg(fps, 0, 'f', 1);
+                    if (item->browser) text += " / " + item->browser->captureDescription();
+                }
+                sourceHealth->setText(item->name+": "+text);
+            } else sourceHealth->setText("Select a source to inspect its status.");
+        }
     }
     void mixAudio() {
         auto next = std::chrono::steady_clock::now();
+        AudioMonitor monitor;
+        int openedDevice = -999;
         while (running) {
             next += std::chrono::milliseconds(10);
             audio::StreamChunk chunk; chunk.samples.assign(960, 0); chunk.captureTime100ns = now100ns();
+            std::vector<float> headphones(960, 0);
             {
             std::lock_guard sourcesLock(sourcesMutex);
             for (const auto &item : sources) {
-                float peak = 0; const float gain = (!item->muted && (!item->followsScene || item->onProgram)) ? item->gain.load() : 0;
+                float peak = 0; const float sourceGain = item->muted ? 0 : item->gain.load();
+                const float gain = (!item->followsScene || item->onProgram) ? sourceGain : 0;
                 std::lock_guard lock(item->audioMutex);
+                const int delay = item->audioDelayMs.load();
+                if (item->appliedDelayMs != delay) {
+                    item->delayedSamples.assign(static_cast<size_t>(delay)*96, 0);
+                    item->appliedDelayMs = delay;
+                }
                 const auto count = std::min(item->samples.size(), chunk.samples.size());
-                for (size_t i = 0; i < count; ++i) {
-                    const float value = item->samples.front()*gain; item->samples.pop_front();
-                    chunk.samples[i] += value; peak = std::max(peak, std::abs(value));
+                for (size_t i = 0; i < chunk.samples.size(); ++i) {
+                    float sample = 0;
+                    if (i < count) { sample = item->samples.front(); item->samples.pop_front(); }
+                    item->delayedSamples.push_back(sample);
+                    const float delayed = item->delayedSamples.front(); item->delayedSamples.pop_front();
+                    chunk.samples[i] += delayed*gain; peak = std::max(peak, std::abs(sample*sourceGain));
+                    if (item->monitored) headphones[i] += sample*sourceGain;
                 }
                 item->peak = std::max(peak, item->peak.load()*0.92f);
             }
@@ -768,6 +925,19 @@ struct MixerWidget::Impl {
             for (auto &value : chunk.samples) { value *= masterGain; peak = std::max(peak, std::abs(value)); }
             if (peak > 0.98f) for (auto &value : chunk.samples) value *= 0.98f/peak;
             masterPeak = std::min(0.98f, peak);
+            if (monitoring) {
+                const int device = monitorDeviceId.load();
+                if (openedDevice != device) {
+                    const auto error = monitor.open(device); openedDevice = device;
+                    if (!error.isEmpty()) {
+                        monitoring = false;
+                        QMetaObject::invokeMethod(q, [this, error] { monitorEnable->setChecked(false); message(error); }, Qt::QueuedConnection);
+                    }
+                }
+                const float level = masterGain.load()*monitorGain.load();
+                for (auto &sample : headphones) sample = std::clamp(sample*level, -0.98f, 0.98f);
+                if (monitoring) monitor.write(headphones);
+            } else if (openedDevice != -999) { monitor.close(); openedDevice = -999; }
             if (core->isLive()) core->submitMixerAudio(std::move(chunk));
             if (next < std::chrono::steady_clock::now()-std::chrono::milliseconds(100)) next = std::chrono::steady_clock::now();
             std::this_thread::sleep_until(next);
@@ -778,7 +948,7 @@ struct MixerWidget::Impl {
         QJsonArray jsonSources, jsonScenes;
         for (const auto &item : sources) jsonSources.append(QJsonObject{{"id", item->id}, {"name", item->name}, {"kind", item->kind},
             {"locator", item->locator}, {"invite", item->invite}, {"color", item->color.name()}, {"gain", item->gain.load()},
-            {"muted", item->muted.load()}, {"followsScene", item->followsScene.load()}});
+            {"muted", item->muted.load()}, {"followsScene", item->followsScene.load()}, {"monitored", item->monitored.load()}, {"transparent", item->transparent}, {"audioDelayMs", item->audioDelayMs.load()}});
         for (const auto &scene : scenes) {
             QJsonArray layers;
             for (const auto &layer : scene.layers) layers.append(QJsonObject{{"source", layer.source}, {"x", layer.rect.x()}, {"y", layer.rect.y()},
@@ -787,7 +957,8 @@ struct MixerWidget::Impl {
         }
         QDir().mkpath(QFileInfo(path).absolutePath()); QSaveFile file(path);
         if (!file.open(QIODevice::WriteOnly)) { message("Could not save show: " + file.errorString()); return false; }
-        const auto bytes = QJsonDocument(QJsonObject{{"version", 1}, {"sources", jsonSources}, {"scenes", jsonScenes}}).toJson();
+        const auto bytes = QJsonDocument(QJsonObject{{"version", 1}, {"sources", jsonSources}, {"scenes", jsonScenes},
+            {"room", room}, {"roomPassword", roomPassword}, {"masterGain", masterGain.load()}}).toJson();
         if (file.write(bytes) != bytes.size() || !file.commit()) { message("Could not save show: " + file.errorString()); return false; }
         return true;
     }
@@ -812,6 +983,9 @@ struct MixerWidget::Impl {
             if (!item->invite.isEmpty() && !webUrl(item->invite)) { message("Invalid invite URL in show."); return false; }
             item->color = QColor(obj["color"].toString()); if (!item->color.isValid()) item->color = QColor("#183657");
             item->gain = static_cast<float>(std::clamp(obj["gain"].toDouble(1), 0.0, 2.0)); item->muted = obj["muted"].toBool(); item->followsScene = obj["followsScene"].toBool(true);
+            item->monitored = obj["monitored"].toBool(item->kind != "microphone"); item->transparent = obj["transparent"].toBool(item->kind == "chat");
+            const bool browserAudio = item->kind == "browser" || item->kind == "guest" || item->kind == "wireless";
+            item->audioDelayMs = std::clamp(obj["audioDelayMs"].toInt(browserAudio ? 60 : 0), 0, 500);
             incoming.push_back(item);
         }
         for (const auto &value : sceneData) {
@@ -829,6 +1003,21 @@ struct MixerWidget::Impl {
             incomingScenes.push_back(scene);
         }
         loading = true;
+        delete talkback.data();
+        room = data["room"].toString(); roomPassword = data["roomPassword"].toString();
+        if (room.size() < 16 || room.size() > 128 || roomPassword.size() < 16 || roomPassword.size() > 128) {
+            room = "mix"+newId().remove('-').left(24); roomPassword = newId().remove('-');
+        }
+        // VDO.Ninja limits room names to 30 characters. Migrate older local shows.
+        room = room.left(30);
+        for (auto &item : incoming) for (auto *link : {&item->locator, &item->invite}) {
+            if (!webUrl(*link)) continue;
+            QUrl url(*link); QUrlQuery query(url); const auto name = query.queryItemValue("room");
+            if (url.host() == "vdo.ninja" && name.size() > 30) {
+                query.removeAllQueryItems("room"); query.addQueryItem("room", name.left(30)); url.setQuery(query); *link = url.toString(QUrl::FullyEncoded);
+            }
+        }
+        if (auto *slider = q->findChild<QSlider*>("masterGain")) slider->setValue(qRound(std::clamp(data["masterGain"].toDouble(1), 0.0, 1.5)*100));
         std::vector<std::shared_ptr<Source>> old;
         { std::lock_guard lock(sourcesMutex); old.swap(sources); sources = std::move(incoming); }
         for (auto &item : old) {
@@ -847,4 +1036,10 @@ struct MixerWidget::Impl {
 
 MixerWidget::MixerWidget(app::VersusApp *core, QWidget *parent) : QWidget(parent), impl_(std::make_unique<Impl>(this, core)) {}
 MixerWidget::~MixerWidget() = default;
+void MixerWidget::shutdown() { impl_->shutdown(); }
+void MixerWidget::setOutputState(const QString &label, const QString &status, bool enabled, bool active) {
+    impl_->startOutput->setText(label); impl_->startOutput->setAccessibleName(label);
+    impl_->startOutput->setEnabled(enabled); impl_->recordOutput->setEnabled(enabled && !active);
+    impl_->outputStatus->setText(status);
+}
 } // namespace versus::mixer

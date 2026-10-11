@@ -1,4 +1,4 @@
-param([string]$BuildDirectory = 'build-mixer', [switch]$Package)
+param([string]$BuildDirectory = 'build-mixer', [switch]$Package, [switch]$Installer)
 $ErrorActionPreference = 'Stop'
 & (Join-Path $PSScriptRoot 'tools/restore-webview2.ps1')
 $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
@@ -27,14 +27,39 @@ foreach ($entry in $compilerEnv) {
 if ($LASTEXITCODE -ne 0) { throw 'Configure failed.' }
 & cmake --build $buildRoot --target video-mixer --parallel 8
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
-if ($Package) {
+if ($Package -or $Installer) {
     $packageRoot = Join-Path $PSScriptRoot 'dist/video-mixer-portable'
     New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
     Copy-Item -Path "$buildRoot/bin/*" -Destination $packageRoot -Recurse -Force
     $deploy = Join-Path $vcpkgRoot 'installed/x64-windows/tools/Qt6/bin/windeployqt.exe'
     & $deploy --release --no-translations --no-opengl-sw --compiler-runtime "$packageRoot/video-mixer.exe"
     if ($LASTEXITCODE -ne 0) { throw 'Qt packaging failed.' }
+    # App-local VC runtime keeps the portable package and per-user setup usable
+    # without an administrator installing the machine-wide redistributable.
+    $crt = Join-Path $env:VCToolsRedistDir 'x64/Microsoft.VC143.CRT'
+    if (!(Test-Path $crt)) { throw 'Cannot locate the Visual C++ x64 redistributable DLLs.' }
+    Copy-Item -Path (Join-Path $crt '*.dll') -Destination $packageRoot -Force
     Copy-Item (Join-Path $PSScriptRoot '../LICENSE') $packageRoot
+    Copy-Item (Join-Path $PSScriptRoot '../README.md') $packageRoot
+    Copy-Item (Join-Path $PSScriptRoot 'resources/vdoninja.ico') $packageRoot
+    $packageDocs = Join-Path $packageRoot 'docs'
+    New-Item -ItemType Directory -Force -Path $packageDocs | Out-Null
+    Copy-Item -Path (Join-Path $PSScriptRoot '../docs/mixer*.md') -Destination $packageDocs -Force
+    Copy-Item (Join-Path $PSScriptRoot '../docs/game-capture-base.md') $packageDocs -Force
     Copy-Item (Join-Path $PSScriptRoot 'third_party/webview2/LICENSE.txt') (Join-Path $packageRoot 'WebView2-LICENSE.txt')
     Write-Output "Portable app: $packageRoot/video-mixer.exe"
+    $project = Get-Content (Join-Path $PSScriptRoot 'CMakeLists.txt') -Raw
+    if ($project -notmatch 'project\(video-mixer-native-qt VERSION ([0-9.]+)') { throw 'Cannot read app version.' }
+    $appVersion = $matches[1]
+    $zipPath = Join-Path $PSScriptRoot "dist/video-mixer-$appVersion-windows-x64.zip"
+    & tar.exe -a -c -f $zipPath -C (Join-Path $PSScriptRoot 'dist') video-mixer-portable
+    if ($LASTEXITCODE -ne 0) { throw 'Portable archive failed.' }
+    if ($Installer) {
+        $nsis = "${env:ProgramFiles(x86)}/NSIS/makensis.exe"
+        if (!(Test-Path $nsis)) { throw 'Install NSIS 3 to build the installer.' }
+        $setupPath = Join-Path $PSScriptRoot "dist/video-mixer-$appVersion-setup.exe"
+        & $nsis /V2 "/DVERSION=$appVersion" "/DBUILD_BIN_DIR=$packageRoot" "/DOUTFILE=$setupPath" (Join-Path $PSScriptRoot 'installer-mixer.nsi')
+        if ($LASTEXITCODE -ne 0) { throw 'Installer packaging failed.' }
+        Write-Output "Installer: $setupPath"
+    }
 }

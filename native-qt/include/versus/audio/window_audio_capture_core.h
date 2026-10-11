@@ -73,7 +73,7 @@ class WindowAudioCaptureCore {
     std::vector<AudioDeviceInfo> GetInputDevices();
 
     CaptureResult StartCapture(uint32_t processId);
-    CaptureResult StartStreamCapture(uint32_t processId, StreamCallback callback);
+    CaptureResult StartStreamCapture(uint32_t processId, StreamCallback callback, bool excludeProcessTree = false);
     CaptureResult StartDefaultEndpointCapture(DefaultAudioEndpoint endpoint);
     CaptureResult StartDefaultEndpointStreamCapture(DefaultAudioEndpoint endpoint, StreamCallback callback);
     CaptureResult StartInputDeviceStreamCapture(const std::string &deviceId, StreamCallback callback);
@@ -83,7 +83,7 @@ class WindowAudioCaptureCore {
     bool IsCapturing() const;
 
   private:
-    CaptureResult StartProcessLoopback(uint32_t processId);
+    CaptureResult StartProcessLoopback(uint32_t processId, bool excludeProcessTree = false);
     CaptureResult StartDefaultEndpoint(DefaultAudioEndpoint endpoint);
     CaptureResult StartInputDevice(const std::string &deviceId);
     void CaptureLoop();

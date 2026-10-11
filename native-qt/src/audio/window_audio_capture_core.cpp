@@ -487,7 +487,7 @@ CaptureResult WindowAudioCaptureCore::StartCapture(uint32_t processId) {
     return StartProcessLoopback(processId);
 }
 
-CaptureResult WindowAudioCaptureCore::StartStreamCapture(uint32_t processId, StreamCallback callback) {
+CaptureResult WindowAudioCaptureCore::StartStreamCapture(uint32_t processId, StreamCallback callback, bool excludeProcessTree) {
     StopCapture();
 
     {
@@ -496,7 +496,7 @@ CaptureResult WindowAudioCaptureCore::StartStreamCapture(uint32_t processId, Str
     }
     streaming_.store(true);
 
-    CaptureResult result = StartProcessLoopback(processId);
+    CaptureResult result = StartProcessLoopback(processId, excludeProcessTree);
     if (!result.success) {
         std::lock_guard<std::mutex> lock(callbackMutex_);
         streamCallback_ = nullptr;
@@ -617,7 +617,7 @@ bool WindowAudioCaptureCore::IsCapturing() const {
     return capturing_.load();
 }
 
-CaptureResult WindowAudioCaptureCore::StartProcessLoopback(uint32_t processId) {
+CaptureResult WindowAudioCaptureCore::StartProcessLoopback(uint32_t processId, bool excludeProcessTree) {
     CaptureResult result;
 
     usingProcessLoopback_.store(false);
@@ -639,7 +639,7 @@ CaptureResult WindowAudioCaptureCore::StartProcessLoopback(uint32_t processId) {
     AUDIOCLIENT_ACTIVATION_PARAMS activationParams = {};
     activationParams.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
     activationParams.ProcessLoopbackParams.TargetProcessId = processId;
-    activationParams.ProcessLoopbackParams.ProcessLoopbackMode = PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
+    activationParams.ProcessLoopbackParams.ProcessLoopbackMode = excludeProcessTree ? PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE : PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
 
     ScopedPropVariant prop;
     prop.value.vt = VT_BLOB;
@@ -1260,7 +1260,7 @@ CaptureResult WindowAudioCaptureCore::StartCapture(uint32_t) {
     return {false, false, 0, 0, "Audio capture is only supported on Windows"};
 }
 
-CaptureResult WindowAudioCaptureCore::StartStreamCapture(uint32_t, StreamCallback) {
+CaptureResult WindowAudioCaptureCore::StartStreamCapture(uint32_t, StreamCallback, bool) {
     return {false, false, 0, 0, "Audio capture is only supported on Windows"};
 }
 
