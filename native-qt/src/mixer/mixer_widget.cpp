@@ -79,6 +79,7 @@ struct Source {
     QColor color{"#183657"};
     std::mutex imageMutex, audioMutex;
     QImage image;
+    bool imageStraightAlpha = false; // Protected by imageMutex, alongside image.
     std::deque<float> samples;
     std::deque<float> delayedSamples;
     std::atomic<int> audioDelayMs{0};
@@ -187,6 +188,7 @@ struct MixerWidget::Impl {
         qint64 frame;
         QRectF target;
         double opacity;
+        bool straightAlpha;
         bool operator==(const CompositionKey &) const = default;
     };
     struct CompositionCache {
@@ -883,7 +885,8 @@ struct MixerWidget::Impl {
             const auto item = weak.lock();
             if (!item) return;
             auto image = takeFrameImage(std::move(captured)); if (image.isNull()) return;
-            std::lock_guard lock(item->imageMutex); item->image = std::move(image); item->lastFrame = now100ns(); ++item->frames;
+            std::lock_guard lock(item->imageMutex); item->image = std::move(image); item->imageStraightAlpha = true;
+            item->lastFrame = now100ns(); ++item->frames;
         };
         auto audioChunk = [weak](audio::StreamChunk &&chunk) {
             const auto item = weak.lock(); if (!item) return;
@@ -1091,12 +1094,13 @@ struct MixerWidget::Impl {
         for (const auto &layer : scene.layers) {
             if (!layer.visible || layer.opacity <= 0) continue;
             auto item = source(layer.source); if (!item || !item->hasVideo()) continue;
-            QImage frame; { std::lock_guard lock(item->imageMutex); frame = item->image; }
+            QImage frame; bool straightAlpha;
+            { std::lock_guard lock(item->imageMutex); frame = item->image; straightAlpha = item->imageStraightAlpha; }
             if (frame.isNull()) continue;
             const QRectF bounds(layer.rect.x()*Width, layer.rect.y()*Height, layer.rect.width()*Width, layer.rect.height()*Height);
             QSizeF fitted(frame.size()); fitted.scale(bounds.size(), Qt::KeepAspectRatio);
             const QRectF target(bounds.center().x()-fitted.width()/2, bounds.center().y()-fitted.height()/2, fitted.width(), fitted.height());
-            keys.push_back({frame.cacheKey(), target, layer.opacity}); frames.push_back(std::move(frame));
+            keys.push_back({frame.cacheKey(), target, layer.opacity, straightAlpha}); frames.push_back(std::move(frame));
         }
         auto &cached = compositions[slot];
         for (const auto &candidate : compositions) {
@@ -1105,10 +1109,26 @@ struct MixerWidget::Impl {
                 return cached.image;
             }
         }
-        QImage image(Width, Height, QImage::Format_ARGB32_Premultiplied); image.fill(scene.background);
+        // An unscaled, opaque source already is the complete scene. Its const
+        // capture buffer remains shared until the last image reference is gone.
+        if (keys.size() == 1 && keys[0].opacity == 1.0 &&
+            keys[0].target == QRectF(0, 0, Width, Height) &&
+            frames[0].size() == QSize(Width, Height) && frames[0].format() == QImage::Format_RGB32) {
+            cached = {scene.background, std::move(keys), frames[0]};
+            return cached.image;
+        }
+        QImage image(Width, Height, scene.background.alpha() == 255 ? QImage::Format_RGB32 : QImage::Format_ARGB32_Premultiplied);
+        image.fill(scene.background);
         QPainter painter(&image); painter.setRenderHint(QPainter::SmoothPixmapTransform);
         for (size_t i = 0; i < keys.size(); ++i) {
-            painter.setOpacity(keys[i].opacity); painter.drawImage(keys[i].target, frames[i]);
+            painter.setOpacity(keys[i].opacity);
+            // Preserve Qt's original straight-alpha rounding for captured BGRA
+            // under transforms/opacity. frames keeps this const view alive.
+            const auto &source = frames[i];
+            const QImage pixels = keys[i].straightAlpha && source.format() == QImage::Format_RGB32
+                ? QImage(source.constBits(), source.width(), source.height(), source.bytesPerLine(), QImage::Format_ARGB32)
+                : source;
+            painter.drawImage(keys[i].target, pixels);
         }
         painter.end();
         cached = {scene.background, std::move(keys), std::move(image)};
@@ -1141,6 +1161,7 @@ struct MixerWidget::Impl {
             Profile::Scope profile(Profile::MixerSubmit);
             video::CapturedFrame captured;
             captured.width = Width; captured.height = Height; captured.stride = frame.bytesPerLine(); captured.timestamp = now100ns();
+            captured.opaque = !frame.hasAlphaChannel();
             captured.data.assign(frame.constBits(), frame.constBits()+frame.sizeInBytes()); core->submitMixerVideo(std::move(captured));
         }
         for (const auto &[weak, meter] : meters) if (auto item = weak.lock()) meter->setLevel(item->peak);

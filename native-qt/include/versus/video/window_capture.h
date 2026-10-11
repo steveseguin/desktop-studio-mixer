@@ -30,6 +30,9 @@ struct CapturedFrame {
     int stride = 0;
     int64_t timestamp = 0;
     enum class Format { BGRA, NV12, I420, Gray } format = Format::BGRA;
+    // BGRA producers may set this only when every pixel's alpha byte is 255.
+    // Unknown sources retain the full transparency path.
+    bool opaque = false;
 };
 
 namespace detail {

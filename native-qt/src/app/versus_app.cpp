@@ -536,7 +536,8 @@ bool buildAspectFitAlphaPlane(const video::CapturedFrame &frame,
 
 bool compositeAlphaBackground(video::CapturedFrame &frame,
                               const video::EncoderConfig &config) {
-    if (config.alphaBackgroundMode == video::AlphaBackgroundMode::None ||
+    if (frame.opaque ||
+        config.alphaBackgroundMode == video::AlphaBackgroundMode::None ||
         config.enableAlpha ||
         frame.format != video::CapturedFrame::Format::BGRA ||
         frame.width <= 0 ||

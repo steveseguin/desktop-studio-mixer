@@ -27,7 +27,8 @@ using Microsoft::WRL::ComPtr;
 
 namespace versus::mixer {
 struct BrowserSource::Impl {
-    QTimer timer, silenceTimer;
+    QTimer timer;
+    unsigned long mutedBrowserPid = 0;
     bool busy = false;
     QString captureMode = "Starting browser";
     std::unique_ptr<video::WindowCapture> capture;
@@ -144,8 +145,8 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                                 UINT32 pid = 0;
                                 web->get_BrowserProcessId(&pid);
                                 if (renderFrames) {
-                                    QObject::connect(&self->impl_->silenceTimer, &QTimer::timeout, self, [pid] { silenceBrowserPlayback(pid); });
-                                    self->impl_->silenceTimer.start(1000);
+                                    self->impl_->mutedBrowserPid = pid;
+                                    registerBrowserPlayback(pid);
                                     web->add_WebMessageReceived(Callback<ICoreWebView2WebMessageReceivedEventHandler>(
                                         [self](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs *args) -> HRESULT {
                                             if (!self) return S_OK;
@@ -211,7 +212,7 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
 
 BrowserSource::~BrowserSource() {
     impl_->timer.stop();
-    impl_->silenceTimer.stop();
+    unregisterBrowserPlayback(impl_->mutedBrowserPid);
     if (impl_->capture) impl_->capture->stopCapture();
 #ifdef _WIN32
     if (impl_->controller) impl_->controller->Close();

@@ -2,6 +2,10 @@
 #include "versus/mixer/audio_monitor.h"
 #include <algorithm>
 #include <array>
+#include <QCoreApplication>
+#include <QPointer>
+#include <QTimer>
+#include <map>
 #ifdef _WIN32
 #include <windows.h>
 #include <mmsystem.h>
@@ -74,11 +78,10 @@ void AudioMonitor::write(const std::vector<float> &samples) {
         impl_->next = (impl_->next+1)%impl_->buffers.size();
 #endif
 }
-void silenceBrowserPlayback(unsigned long browserPid) {
-    app::detail::PerformanceTrace::Scope profile(app::detail::PerformanceTrace::BrowserMute);
 #ifdef _WIN32
-    if (!browserPid) return;
-    std::set<DWORD> owned{browserPid};
+namespace {
+void silenceBrowserPlayback(std::set<DWORD> owned) {
+    app::detail::PerformanceTrace::Scope profile(app::detail::PerformanceTrace::BrowserMute);
     const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) return;
     std::vector<std::pair<DWORD, DWORD>> processes;
@@ -103,9 +106,56 @@ void silenceBrowserPlayback(unsigned long browserPid) {
             ComPtr<IAudioSessionControl2> control2; if (FAILED(control.As(&control2))) continue;
             DWORD pid = 0; control2->GetProcessId(&pid); if (!owned.contains(pid)) continue;
             ComPtr<ISimpleAudioVolume> volume;
-            if (SUCCEEDED(control.As(&volume))) volume->SetMute(TRUE, nullptr);
+            if (SUCCEEDED(control.As(&volume))) {
+                BOOL muted = FALSE;
+                if (FAILED(volume->GetMute(&muted)) || !muted) volume->SetMute(TRUE, nullptr);
+            }
         }
     }
+}
+
+class BrowserPlaybackSilencer : public QObject {
+public:
+    explicit BrowserPlaybackSilencer(QObject *parent) : QObject(parent) {
+        QObject::connect(&timer, &QTimer::timeout, this, [this] {
+            std::set<DWORD> owned;
+            for (const auto &[pid, references] : roots) owned.insert(pid);
+            if (!owned.empty()) silenceBrowserPlayback(std::move(owned));
+        });
+    }
+    void add(DWORD pid) {
+        ++roots[pid];
+        if (!timer.isActive()) timer.start(1000);
+    }
+    void remove(DWORD pid) {
+        const auto it = roots.find(pid);
+        if (it != roots.end() && --it->second == 0) roots.erase(it);
+        if (roots.empty()) timer.stop();
+    }
+private:
+    QTimer timer;
+    std::map<DWORD, unsigned> roots;
+};
+
+BrowserPlaybackSilencer *browserSilencer(bool create) {
+    static QPointer<BrowserPlaybackSilencer> silencer;
+    if (!silencer && create && QCoreApplication::instance())
+        silencer = new BrowserPlaybackSilencer(QCoreApplication::instance());
+    return silencer;
+}
+} // namespace
+#endif
+
+void registerBrowserPlayback(unsigned long browserPid) {
+#ifdef _WIN32
+    if (browserPid) if (auto *silencer = browserSilencer(true)) silencer->add(browserPid);
+#else
+    (void)browserPid;
+#endif
+}
+void unregisterBrowserPlayback(unsigned long browserPid) {
+#ifdef _WIN32
+    if (browserPid) if (auto *silencer = browserSilencer(false)) silencer->remove(browserPid);
 #else
     (void)browserPid;
 #endif

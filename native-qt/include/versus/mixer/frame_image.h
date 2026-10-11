@@ -12,7 +12,8 @@ inline QImage takeFrameImage(video::CapturedFrame frame) {
         frame.width > std::numeric_limits<int>::max()/4 || frame.stride < frame.width*4 ||
         frame.data.size()/static_cast<size_t>(frame.stride) < static_cast<size_t>(frame.height)) return {};
     auto *pixels = new std::vector<uint8_t>(std::move(frame.data));
-    return QImage(static_cast<const uchar*>(pixels->data()), frame.width, frame.height, frame.stride, QImage::Format_ARGB32,
+    return QImage(static_cast<const uchar*>(pixels->data()), frame.width, frame.height, frame.stride,
+        frame.opaque ? QImage::Format_RGB32 : QImage::Format_ARGB32,
         [](void *data) { delete static_cast<std::vector<uint8_t>*>(data); }, pixels);
 }
 } // namespace versus::mixer

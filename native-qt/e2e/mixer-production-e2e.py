@@ -69,6 +69,8 @@ class Fixture(http.server.BaseHTTPRequestHandler):
 const x=c.getContext('2d');function draw(){let n=Math.floor(a.currentTime*30);x.fillStyle='#24b46a';x.fillRect(0,0,1280,720);x.fillStyle='white';x.font='48px sans-serif';x.fillText('Mixer production / '+n,60,360);x.fillStyle='rgb('+n%255+',50,200)';x.fillRect(50,50,100,100);requestAnimationFrame(draw)}draw();</script>'''
         if self.path.startswith('/transparent'):
             body = b'<!doctype html><style>body{margin:0;background:transparent}.chat{position:absolute;bottom:10%;left:10%;background:#ee2255;color:white;font:40px sans-serif;padding:20px}</style><div class=chat>QA chat overlay</div>'
+        elif self.path.startswith('/second'):
+            body = body.replace(b'frequency.value=731', b'frequency.value=997')
         self.send_response(200); self.send_header('Content-Type','text/html'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
     def log_message(self,*_): pass
 
@@ -100,16 +102,35 @@ try:
 
     # Speaker loopback confirms off/on/muted routing rather than just meter movement.
     speaker=sc.default_speaker(); loop=sc.get_microphone(id=speaker.id,include_loopback=True)
-    def tone_level():
+    def tone_level(frequency=731):
         audio=loop.record(samplerate=48000,numframes=48000)
         mono=audio.mean(axis=1); t=np.arange(len(mono))/48000
-        return float(abs(np.sum(mono*np.exp(-2j*np.pi*731*t)))*2/len(mono))
+        return float(abs(np.sum(mono*np.exp(-2j*np.pi*frequency*t)))*2/len(mono))
     enabled(control('monitorEnable'),False); time.sleep(1); off=tone_level()
     enabled(control('monitorEnable'),True); time.sleep(1); on=tone_level()
     enabled(channel('QA browser','Mute'),True); time.sleep(1); muted=tone_level()
     enabled(channel('QA browser','Mute'),False); enabled(control('monitorEnable'),False)
     assert on>.008 and off<on*.15 and muted<on*.15,(off,on,muted)
     results['headphone_monitor']={'off731Hz':off,'on731Hz':on,'muted731Hz':muted}
+    # Distinct audio in two browser processes exercises the shared session scan,
+    # including one root reconnecting and another being removed.
+    add_source('Browser /','QA second browser',f'http://127.0.0.1:{server.server_port}/second')
+    press('takeScene'); time.sleep(2)
+    both_off = [tone_level(), tone_level(997)]
+    enabled(control('monitorEnable'),True); time.sleep(1)
+    both_on = [tone_level(), tone_level(997)]
+    enabled(control('monitorEnable'),False)
+    source_row('QA browser').select(); press('reconnectSource'); time.sleep(4)
+    after_reconnect = [tone_level(), tone_level(997)]
+    scene('Break'); press('takeScene'); remove('QA second browser')
+    scene('Main'); press('takeScene'); time.sleep(1)
+    after_remove = tone_level()
+    enabled(control('monitorEnable'),True); time.sleep(1); remaining_on = tone_level()
+    enabled(control('monitorEnable'),False)
+    assert max(both_off + after_reconnect + [after_remove]) < .001, (both_off, after_reconnect, after_remove)
+    assert min(both_on + [remaining_on]) > .008, (both_on, remaining_on)
+    results['shared_browser_muting'] = {'off':both_off, 'on':both_on, 'afterReconnect':after_reconnect,
+                                       'afterRemovalOff':after_remove, 'remainingMonitorOn':remaining_on}
     add_source('Desktop audio','QA desktop')
     enabled(control('monitorEnable'),True); time.sleep(2); with_desktop=tone_level()
     enabled(channel('QA browser','Mute'),True);time.sleep(1.5);desktop_muted=tone_level()
@@ -127,7 +148,8 @@ try:
     prompt.child_window(title='OK',control_type='Button').invoke(); time.sleep(3)
     near(color('previewCanvas'),(36,180,106)); press('takeScene')
     image=control('programCanvas').capture_as_image()
-    assert any(r>180 and g<80 and b<140 for r,g,b in image.convert('RGB').getdata()),'Chat was not rendered'
+    pixels=np.asarray(image.convert('RGB'))
+    assert np.any((pixels[:,:,0]>180) & (pixels[:,:,1]<80) & (pixels[:,:,2]<140)), 'Chat was not rendered'
     results['transparent_chat_overlay']='passed'
 
     fixture=subprocess.Popen([sys.executable,'-B',str(Path(__file__).with_name('mixer-sources-e2e.py')),'--fixture'],creationflags=subprocess.CREATE_NO_WINDOW)
@@ -166,7 +188,11 @@ try:
     assert receiver.returncode==0 and received.stat().st_size>10000,(receiver.returncode,received)
     meta=subprocess.run([str(ffmpeg),'-hide_banner','-i',str(received)],capture_output=True,text=True).stderr
     assert 'Video: h264' in meta and 'Audio: aac' in meta,meta
-    results['private_srt_receiver']={'path':str(received),'video':'H.264','audio':'AAC'}
+    raw=subprocess.check_output([str(ffmpeg),'-v','error','-i',str(received),'-vn','-f','f32le','-ac','1','-ar','48000','pipe:1'])
+    samples=np.frombuffer(raw,dtype=np.float32)[48000:96000]; t=np.arange(len(samples))/48000
+    tone=float(abs(np.sum(samples*np.exp(-2j*np.pi*731*t)))*2/len(samples))
+    assert tone>.03,tone
+    results['private_srt_receiver']={'path':str(received),'video':'H.264','audio':'AAC','tone731Hz':tone}
     scene('Break'); press('takeScene'); remove('QA browser'); scene('Opening'); press('takeScene')
     window.capture_as_image().save(str(report/'studio-phase2.png'))
 finally:

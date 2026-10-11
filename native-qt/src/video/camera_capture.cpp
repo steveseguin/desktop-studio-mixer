@@ -798,6 +798,7 @@ class CameraCapture::Impl {
         for (size_t pixel = 3; pixel < frame.data.size(); pixel += 4) {
             frame.data[pixel] = 255;
         }
+        frame.opaque = true;
         return true;
     }
 

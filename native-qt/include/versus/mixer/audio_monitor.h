@@ -17,7 +17,9 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
-// Silences only sessions in the owned WebView2 process tree. Browser samples
+// GUI-thread registration. One shared scan silences all owned WebView2 trees;
+// reference counts allow controllers sharing a browser process. Browser samples
 // arrive through the Web Audio bridge, independently of Windows session volume.
-void silenceBrowserPlayback(unsigned long browserPid);
+void registerBrowserPlayback(unsigned long browserPid);
+void unregisterBrowserPlayback(unsigned long browserPid);
 }

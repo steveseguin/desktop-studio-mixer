@@ -131,7 +131,7 @@ try:
     assert recording.stat().st_size > 10000
     results['recording'] = str(recording)
     measure('off_air_sources')
-    ffmpeg = Path('dist/video-mixer-portable/ffmpeg/bin/ffmpeg.exe').resolve()
+    ffmpeg = Path(__file__).resolve().parents[1] / 'dist/video-mixer-portable/ffmpeg/bin/ffmpeg.exe'
     metadata = subprocess.run([str(ffmpeg),'-hide_banner','-i',str(recording)],capture_output=True,text=True).stderr
     assert 'Video: h264' in metadata and '1280x720' in metadata and '30 fps' in metadata, metadata
     assert 'Audio: aac' in metadata and '48000 Hz, stereo' in metadata, metadata

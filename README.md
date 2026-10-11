@@ -2,7 +2,7 @@
 
 A native Windows video mixer based on [Game Capture](https://github.com/steveseguin/game-capture), with a separate executable, settings, installer identity, browser profiles, logs, and update feed.
 
-Development version: **0.4.0**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
+Development version: **0.4.1**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
 
 ## Use the studio
 
@@ -71,13 +71,13 @@ powershell -ExecutionPolicy Bypass -File native-qt/build-mixer.ps1 -Installer
 
 Portable executable: `native-qt/dist/video-mixer-portable/video-mixer.exe`.
 
-Archives and setup: `native-qt/dist/video-mixer-0.4.0-windows-x64.zip` and `video-mixer-0.4.0-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Video Mixer`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
+Archives and setup: `native-qt/dist/video-mixer-0.4.1-windows-x64.zip` and `video-mixer-0.4.1-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Video Mixer`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
 
 The pinned SDK is fetched from NuGet; other native dependencies use CMake FetchContent. Downloaded dependencies, build outputs, local shows, and QA artifacts are excluded from Git.
 
 ## Validation and provenance
 
-[Single-canvas and CPU validation](docs/mixer-0.4.0-validation.md) covers direct editing, layout persistence, SIMD color conversion, transparent-image caching, and current performance measurements. [Audio meters and scroll-panel validation](docs/mixer-0.3.2-validation.md) covers 0.3.2's visible track/master meters and distinct scroll surfaces. [Performance review and measurements](docs/mixer-performance-review.md) covers 0.3.1's scene caching, capture buffer ownership, audio-loop savings and canvas selection fixes, plus remaining camera-startup and browser-capture limits. [Camera-control validation](docs/mixer-camera-validation.md) covers 0.3.0. [0.2.0 installed-app validation](docs/mixer-0.2-validation.md) and [initial 0.1.0 validation](docs/mixer-validation.md) retain earlier workflow results and remaining gaps. Inherited gates remain under `native-qt/tests`, `qa`, and `e2e`. A successful build or gate is not end-to-end testing.
+[0.4.1 performance validation](docs/mixer-0.4.1-validation.md) covers opaque-frame shortcuts, shared browser audio-session scanning, exact-pixel gates, and current application measurements. [Single-canvas and CPU validation](docs/mixer-0.4.0-validation.md) covers direct editing, layout persistence, SIMD color conversion and transparent-image caching. [Audio meters and scroll-panel validation](docs/mixer-0.3.2-validation.md) covers 0.3.2's visible track/master meters and distinct scroll surfaces. [Performance review and measurements](docs/mixer-performance-review.md) covers 0.3.1's scene caching, capture buffer ownership, audio-loop savings and canvas selection fixes, plus remaining camera-startup and browser-capture limits. [Camera-control validation](docs/mixer-camera-validation.md) covers 0.3.0. [0.2.0 installed-app validation](docs/mixer-0.2-validation.md) and [initial 0.1.0 validation](docs/mixer-validation.md) retain earlier workflow results and remaining gaps. Inherited gates remain under `native-qt/tests`, `qa`, and `e2e`. A successful build or gate is not end-to-end testing.
 
 [Original Game Capture documentation](docs/game-capture-base.md) is historical reference; its release numbers and screenshots describe the base application.
 

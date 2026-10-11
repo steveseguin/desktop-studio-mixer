@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(video-mixer-native-qt VERSION 0.4.0 LANGUAGES CXX)
+project(video-mixer-native-qt VERSION 0.4.1 LANGUAGES CXX)
 
 # CMake 4 removed compatibility modes older than 3.5. Opus 1.4 still
 # declares a 3.1 minimum, so give bundled dependencies the modern floor
@@ -349,6 +349,10 @@ if(VERSUS_BUILD_TESTS)
     add_executable(bgra_nv12_gate tests/bgra_nv12_gate.cpp)
     target_include_directories(bgra_nv12_gate PRIVATE include)
     add_test(NAME bgra_nv12_gate COMMAND bgra_nv12_gate)
+    add_executable(opaque_composition_gate tests/opaque_composition_gate.cpp)
+    target_include_directories(opaque_composition_gate PRIVATE include)
+    target_link_libraries(opaque_composition_gate PRIVATE Qt6::Gui)
+    add_test(NAME opaque_composition_gate COMMAND opaque_composition_gate)
     find_package(Qt6 REQUIRED COMPONENTS Test Network)
 
     # Ensure Qt runtime DLLs and platform plugins are found when running tests via ctest.
@@ -385,6 +389,8 @@ if(VERSUS_BUILD_TESTS)
                 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${QT_RUNTIME_PATH_FOR_TESTS}")
         endif()
     endfunction()
+
+    versus_set_qt_test_environment(opaque_composition_gate)
 
     # Library target for testable code (without main.cpp)
     set(VERSUS_LIB_SOURCES
