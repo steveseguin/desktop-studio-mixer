@@ -15,6 +15,7 @@ ffmpeg = Path('dist/video-mixer-portable/ffmpeg/bin/ffmpeg.exe').resolve()
 results = {}
 children = []
 window.child_window(title='Studio', control_type='TabItem').click_input()
+studio_mode()
 
 def source_row(name):
     return next(c for c in control('mixerSources').descendants(control_type='ListItem') if c.window_text().startswith(name+'  ['))

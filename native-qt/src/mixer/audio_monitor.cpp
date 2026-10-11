@@ -1,3 +1,4 @@
+#include "versus/app/performance_trace.h"
 #include "versus/mixer/audio_monitor.h"
 #include <algorithm>
 #include <array>
@@ -74,6 +75,7 @@ void AudioMonitor::write(const std::vector<float> &samples) {
 #endif
 }
 void silenceBrowserPlayback(unsigned long browserPid) {
+    app::detail::PerformanceTrace::Scope profile(app::detail::PerformanceTrace::BrowserMute);
 #ifdef _WIN32
     if (!browserPid) return;
     std::set<DWORD> owned{browserPid};

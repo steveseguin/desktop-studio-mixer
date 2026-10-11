@@ -25,6 +25,7 @@ def point(x, y):
             round(rect.top+(rect.height()-720*scale)/2+y*720*scale))
 
 window.child_window(title='Studio',control_type='TabItem').click_input()
+studio_mode()
 try:
     scene('Opening'); press('takeScene'); scene('Main')
     add_source('Color','QA cache red','#e02020'); press('takeScene')

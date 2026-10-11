@@ -1,3 +1,4 @@
+#include "versus/app/performance_trace.h"
 #include "versus/mixer/browser_source.h"
 #include "versus/mixer/audio_monitor.h"
 #include "versus/mixer/frame_image.h"
@@ -32,6 +33,8 @@ struct BrowserSource::Impl {
     std::unique_ptr<video::WindowCapture> capture;
     std::mutex frameMutex;
     QImage latest;
+    QByteArray snapshotPng;
+    QImage snapshotImage;
 #ifdef _WIN32
     ComPtr<ICoreWebView2Controller> controller;
     ComPtr<ICoreWebView2> web;
@@ -257,9 +260,20 @@ void BrowserSource::capture() {
                 if (FAILED(GetHGlobalFromStream(stream.Get(), &buffer))) return S_OK;
                 auto *data = static_cast<const uchar*>(GlobalLock(buffer));
                 if (!data) return S_OK;
-                const QImage image = QImage::fromData(data, static_cast<int>(stat.cbSize.QuadPart), "PNG");
+                auto &state = *self->impl_;
+                const auto bytes = QByteArray::fromRawData(reinterpret_cast<const char*>(data), static_cast<int>(stat.cbSize.QuadPart));
+                // WebView still samples at the normal cadence. A static overlay
+                // can reuse its decoded pixels without hiding later changes.
+                if (state.snapshotImage.isNull() || bytes != state.snapshotPng) {
+                    app::detail::PerformanceTrace::Scope profile(app::detail::PerformanceTrace::BrowserDecode);
+                    const auto image = QImage::fromData(data, static_cast<int>(stat.cbSize.QuadPart), "PNG");
+                    if (!image.isNull()) {
+                        state.snapshotPng = QByteArray(bytes.constData(), bytes.size());
+                        state.snapshotImage = image;
+                    }
+                }
                 GlobalUnlock(buffer);
-                if (!image.isNull()) emit self->frameReady(image);
+                if (!state.snapshotImage.isNull()) emit self->frameReady(state.snapshotImage);
                 return S_OK;
             }).Get());
     if (FAILED(result)) impl_->busy = false;

@@ -32,6 +32,8 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QSaveFile>
+#include <QSettings>
+#include "versus/app/performance_trace.h"
 #include <QSignalBlocker>
 #include <QScrollArea>
 #include <QShortcut>
@@ -54,6 +56,7 @@
 
 namespace versus::mixer {
 namespace {
+using Profile = app::detail::PerformanceTrace;
 constexpr int Width = 1280, Height = 720;
 QString newId() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 int64_t now100ns() {
@@ -135,6 +138,7 @@ public:
     }
 protected:
     void paintEvent(QPaintEvent*) override {
+        Profile::Scope profile(Profile::CanvasPaint);
         QPainter painter(this);
         painter.fillRect(rect(), QColor("#080b11"));
         painter.drawImage(viewport(), image);
@@ -169,6 +173,7 @@ struct MixerWidget::Impl {
     QTimer videoTimer, saveTimer;
     QElapsedTimer transition;
     bool fading = false, rebuilding = false, loading = false;
+    bool studioMode = QSettings("VDO.Ninja", "Video Mixer").value("mixer/studioMode", false).toBool();
     std::mutex sourcesMutex;
     std::vector<std::shared_ptr<Source>> sources;
     std::vector<Scene> scenes;
@@ -194,6 +199,12 @@ struct MixerWidget::Impl {
     QListWidget *sceneList = nullptr, *sourceList = nullptr;
     Canvas *previewView = nullptr, *programView = nullptr;
     QPointer<Canvas> outputView;
+    QWidget *programPanel = nullptr;
+    QGroupBox *sourceBox = nullptr, *audioBox = nullptr;
+    QHBoxLayout *monitors = nullptr;
+    QSplitter *panels = nullptr;
+    QLabel *brand = nullptr;
+    QPushButton *takeButton = nullptr, *fadeButton = nullptr;
     QPointer<BrowserSource> chatDock;
     QPointer<BrowserSource> talkback;
     QString room = "mix"+newId().remove('-').left(24), roomPassword = newId().remove('-');
@@ -240,7 +251,7 @@ struct MixerWidget::Impl {
             Scene pause; pause.name = "Break"; pause.layers.push_back({breakTitle->id}); scenes.push_back(pause);
         }
         selectedScene = 0; program = scenes[0];
-        rebuild(); updateAudioRouting();
+        rebuild(); updateAudioRouting(); updateModeUi();
         saveTimer.setSingleShot(true);
         QObject::connect(&saveTimer, &QTimer::timeout, q, [this] { save(projectPath); });
         videoTimer.setTimerType(Qt::PreciseTimer);
@@ -271,7 +282,31 @@ struct MixerWidget::Impl {
         for (auto &layer : preview().layers) if (layer.source == selectedSource) return &layer;
         return nullptr;
     }
-    void changed() { if (!loading) saveTimer.start(500); }
+    void changed() {
+        if (loading) return;
+        if (!studioMode && !scenes.empty()) {
+            program = preview(); fading = false;
+            updateAudioRouting();
+        }
+        saveTimer.start(500);
+    }
+    void updateModeUi() {
+        if (studioMode) {
+            audioBox->setMinimumWidth(0); audioBox->setMaximumWidth(QWIDGETSIZE_MAX);
+            panels->addWidget(audioBox); panels->setSizes({240, 600, 370});
+        } else {
+            audioBox->setMinimumWidth(380); audioBox->setMaximumWidth(420);
+            monitors->addWidget(audioBox);
+            panels->setSizes({240, 1000});
+        }
+        audioBox->show();
+        programPanel->setVisible(studioMode);
+        takeButton->setVisible(studioMode); fadeButton->setVisible(studioMode);
+        brand->setText(QString("<b style='font-size:22px'>Video Mixer</b><br>") +
+            (studioMode ? "Studio mode: prepare in Preview, then Take to output." : "Single canvas: scene changes and edits go straight to output."));
+        sourceBox->setTitle(studioMode ? "Sources - checked items appear in Preview" : "Sources - checked items appear in output");
+        previewView->setAccessibleName(studioMode ? "Preview canvas" : "Output canvas - edits go live");
+    }
     void message(const QString &text) { status->setText(text); }
 
     void buildUi() {
@@ -281,7 +316,7 @@ struct MixerWidget::Impl {
             "QListWidget::indicator:checked { background:#00c2ff; } QListWidget::indicator:unchecked { background:#101b27; }");
         auto *root = new QVBoxLayout(q); root->setContentsMargins(18, 14, 18, 14); root->setSpacing(12);
         auto *toolbar = new QHBoxLayout;
-        auto *brand = new QLabel("<b style='font-size:22px'>Video Mixer</b><br>Build a scene. Preview it. Take it live.", q);
+        brand = new QLabel(q);
         toolbar->addWidget(brand); toolbar->addStretch();
         auto *invite = button("Invite guest", "inviteGuest", toolbar, q);
         auto *wireless = button("Wireless camera", "inviteCamera", toolbar, q);
@@ -302,25 +337,37 @@ struct MixerWidget::Impl {
         outputBar->addWidget(outputStatus, 1); root->addLayout(outputBar);
         QObject::connect(startOutput, &QPushButton::clicked, q, [this] { emit q->toggleOutputRequested(); });
         QObject::connect(recordOutput, &QPushButton::clicked, q, [this] { emit q->recordRequested(); });
-        auto *monitors = new QHBoxLayout;
+        monitors = new QHBoxLayout;
         auto monitor = [&](const QString &name, Canvas *&view, QLabel *&title) {
-            auto *box = new QVBoxLayout;
+            auto *panel = new QWidget(q);
+            auto *box = new QVBoxLayout(panel); box->setContentsMargins(0, 0, 0, 0);
             title = new QLabel(name, q); title->setStyleSheet("font-weight:700; color:#9ab5e8");
             box->addWidget(title); view = new Canvas(q); view->setObjectName(name.toLower()+"Canvas");
-            box->addWidget(view, 1); monitors->addLayout(box, 1);
+            box->addWidget(view, 1); monitors->addWidget(panel, 1);
+            return panel;
         };
         monitor("Preview", previewView, previewTitle);
-        monitor("Program", programView, programTitle);
+        programPanel = monitor("Program", programView, programTitle);
         root->addLayout(monitors, 5);
         auto *transport = new QHBoxLayout;
-        auto *take = button("Take / Cut", "takeScene", transport, q);
-        auto *fade = button("Fade (400 ms)", "fadeScene", transport, q);
+        auto *mode = new QCheckBox("Studio mode", q); mode->setObjectName("studioMode");
+        mode->setChecked(studioMode);
+        mode->setToolTip("Stage scenes in Preview before taking them live. Turning Studio mode off takes Preview to output and enables direct editing.");
+        transport->addWidget(mode);
+        QObject::connect(mode, &QCheckBox::toggled, q, [this](bool enabled) {
+            studioMode = enabled; draggingLayer = false;
+            QSettings("VDO.Ninja", "Video Mixer").setValue("mixer/studioMode", enabled);
+            changed(); updateModeUi(); rebuildSources();
+            message(enabled ? "Studio mode: layout edits stay in Preview until you Take." : "Single canvas: the selected scene is on output. Edits apply immediately.");
+        });
+        takeButton = button("Take / Cut", "takeScene", transport, q);
+        fadeButton = button("Fade (400 ms)", "fadeScene", transport, q);
         transport->addStretch();
         auto *popout = button("Program window", "programWindow", transport, q);
         auto *exportShow = button("Save show as...", "exportShow", transport, q);
         auto *importShow = button("Open show...", "importShow", transport, q);
-        QObject::connect(take, &QPushButton::clicked, q, [this] { takeScene(false); });
-        QObject::connect(fade, &QPushButton::clicked, q, [this] { takeScene(true); });
+        QObject::connect(takeButton, &QPushButton::clicked, q, [this] { takeScene(false); });
+        QObject::connect(fadeButton, &QPushButton::clicked, q, [this] { takeScene(true); });
         QObject::connect(popout, &QPushButton::clicked, q, [this] {
             if (!outputView) {
                 outputView = new Canvas;
@@ -349,7 +396,7 @@ struct MixerWidget::Impl {
         });
         root->addLayout(transport);
 
-        auto *panels = new QSplitter(Qt::Horizontal, q);
+        panels = new QSplitter(Qt::Horizontal, q);
         auto *sceneBox = new QGroupBox("Scenes", panels); auto *sceneLayout = new QVBoxLayout(sceneBox);
         sceneList = new QListWidget(sceneBox); sceneList->setObjectName("sceneList"); sceneLayout->addWidget(sceneList);
         auto *sceneButtons = new QHBoxLayout;
@@ -387,7 +434,7 @@ struct MixerWidget::Impl {
             if (color.isValid()) { preview().background = color; changed(); }
         });
 
-        auto *sourceBox = new QGroupBox("Sources - checked items appear in Preview", panels);
+        sourceBox = new QGroupBox("Sources", panels);
         auto *sourceLayout = new QVBoxLayout(sourceBox);
         sourceList = new QListWidget(sourceBox); sourceList->setObjectName("mixerSources"); sourceLayout->addWidget(sourceList);
         auto *sourceButtons = new QHBoxLayout;
@@ -498,7 +545,7 @@ struct MixerWidget::Impl {
             }
         };
 
-        auto *audioBox = new QGroupBox("Audio mixer", panels); auto *audioLayout = new QVBoxLayout(audioBox);
+        audioBox = new QGroupBox("Audio mixer", panels); auto *audioLayout = new QVBoxLayout(audioBox);
         auto *scroll = new QScrollArea(audioBox); scroll->setObjectName("audioTracksScroll"); scroll->setWidgetResizable(true);
         scroll->setStyleSheet("QScrollArea { border:1px solid #50667b; background:#101b27; }");
         scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -521,7 +568,8 @@ struct MixerWidget::Impl {
         QObject::connect(monitorEnable, &QCheckBox::toggled, q, [this](bool value) { monitoring = value; });
         QObject::connect(monitorDevice, &QComboBox::currentIndexChanged, q, [this] { monitorDeviceId = monitorDevice->currentData().toInt(); });
         QObject::connect(monitorVolume, &QSlider::valueChanged, q, [this](int value) { monitorGain = value/100.0f; });
-        audioLayout->addWidget(new QLabel("Scene follows Program. Listen also hears sources off air.\nUse headphones for monitoring and guest talkback. Mics start with Listen off.", q));
+        auto *monitorHelp = new QLabel("Scene follows Program. Listen also hears sources off air. Use headphones for monitoring and guest talkback. Mics start with Listen off.", q);
+        monitorHelp->setWordWrap(true); audioLayout->addWidget(monitorHelp);
         panels->setSizes({240, 600, 370}); root->addWidget(panels, 4);
         status = new QLabel("Add cameras, windows, audio, or browser sources to get started.", q);
         status->setObjectName("mixerStatus"); status->setWordWrap(true); status->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -535,7 +583,7 @@ struct MixerWidget::Impl {
             row->setData(Qt::UserRole, item->id); row->setFlags(row->flags() | Qt::ItemIsUserCheckable);
             const auto found = std::find_if(preview().layers.begin(), preview().layers.end(), [&](const auto &l) { return l.source == item->id && l.visible; });
             row->setCheckState(found == preview().layers.end() ? Qt::Unchecked : Qt::Checked);
-            row->setToolTip(item->error.isEmpty() ? "Toggle to include in Preview. Take to update Program." : item->error);
+            row->setToolTip(item->error.isEmpty() ? (studioMode ? "Toggle to include in Preview. Take to update Program." : "Toggle to show or hide this source in output immediately.") : item->error);
             if (item->id == selectedSource) sourceList->setCurrentItem(row);
         }
         rebuilding = false;
@@ -770,7 +818,7 @@ struct MixerWidget::Impl {
                 if (kind == "desktop") { value.setVisible(false); help.setText("Captures other applications, excluding Video Mixer, its browsers and monitoring. Avoid adding the same game's individual audio twice."); }
                 if (transparent.isVisible()) { value.setPlaceholderText("https://..."); help.setText("Smooth browser video uses Windows capture at 30 fps. Enable transparency for overlays. Open / Invite allows interaction; Escape parks the browser."); }
                 if (kind == "image") help.setText("PNG, JPEG and other Qt-supported images. Transparent PNGs remain transparent.");
-                if (kind == "title") { value.setText("Your title"); help.setText("A full-frame title card. Resize and position it in Preview."); }
+                if (kind == "title") { value.setText("Your title"); help.setText("A full-frame title card. Resize and position it on the canvas."); }
                 if (kind == "color") { value.setText("#24466f"); help.setText("A solid color layer."); }
             }
         };
@@ -927,7 +975,7 @@ struct MixerWidget::Impl {
     void removeSource() {
         auto item = source(selectedSource); if (!item) return;
         const bool usedOnProgram = std::any_of(program.layers.begin(), program.layers.end(), [&](const auto &layer) { return layer.source == item->id && layer.visible; });
-        if (usedOnProgram || (fading && std::any_of(previous.layers.begin(), previous.layers.end(), [&](const auto &layer) { return layer.source == item->id && layer.visible; }))) {
+        if (studioMode && (usedOnProgram || (fading && std::any_of(previous.layers.begin(), previous.layers.end(), [&](const auto &layer) { return layer.source == item->id && layer.visible; })))) {
             message("Take a scene without this source before removing it from the show."); return;
         }
         for (auto &scene : scenes) std::erase_if(scene.layers, [&](const auto &layer) { return layer.source == item->id; });
@@ -975,7 +1023,7 @@ struct MixerWidget::Impl {
     }
     void showInvite(const std::shared_ptr<Source> &item) {
         QDialog dialog(q); dialog.setWindowTitle(item->name+" - invite"); auto *layout = new QVBoxLayout(&dialog);
-        auto *help = new QLabel("Send this private link to the guest or open it on your phone.\nThey choose their camera and microphone, then join. Use headphones.\nGuest talkback opens the private room's director controls.\nAdd the source to your scene and press Take when ready.", &dialog); layout->addWidget(help);
+        auto *help = new QLabel("Send this private link to the guest or open it on your phone.\nThey choose their camera and microphone, then join. Use headphones.\nGuest talkback opens the private room's director controls.\nSingle canvas adds guests directly to output. Use Studio mode to prepare guests before taking them live.", &dialog); layout->addWidget(help);
         auto *url = new QLineEdit(item->invite, &dialog); url->setReadOnly(true); url->setMinimumWidth(620); url->setObjectName("inviteUrl"); layout->addWidget(url);
         auto *buttons = new QHBoxLayout;
         auto *copy = button("Copy invite link", "copyInvite", buttons, &dialog);
@@ -999,7 +1047,7 @@ struct MixerWidget::Impl {
             item->locator = url.toString(QUrl::FullyEncoded);
         }
         appendSource(item);
-        message("Chat overlay added. Select it and choose Open / Invite to open the chat dock and feature messages; then Take this scene to Program.");
+        message("Chat overlay added. Select it and choose Open / Invite to open the chat dock and feature messages; use Studio mode if you want to stage it before taking it live.");
     }
 
     void applyLayout(const QString &name) {
@@ -1036,6 +1084,7 @@ struct MixerWidget::Impl {
             [&](const auto &layer) { return layer.source == item->id && layer.visible; });
     }
     QImage compose(const Scene &scene, size_t slot) {
+        Profile::Scope profile(Profile::Compose);
         std::vector<CompositionKey> keys;
         std::vector<QImage> frames;
         keys.reserve(scene.layers.size()); frames.reserve(scene.layers.size());
@@ -1066,7 +1115,7 @@ struct MixerWidget::Impl {
         return cached.image;
     }
     void render() {
-        if (previewView->isVisible()) {
+        if (studioMode && previewView->isVisible()) {
             const auto item = source(selectedSource);
             const auto selection = item && item->hasVideo() && selectedLayer() ? selectedLayer()->rect : QRectF();
             previewView->present(compose(preview(), 0), selection);
@@ -1077,18 +1126,26 @@ struct MixerWidget::Impl {
             QImage old = compose(previous, 2); QPainter painter(&old); painter.setOpacity(fraction); painter.drawImage(0, 0, frame); painter.end(); frame = old;
             if (fraction >= 1) fading = false;
         }
-        programView->present(frame);
+        if (studioMode) programView->present(frame);
+        else if (previewView->isVisible()) {
+            const auto item = source(selectedSource);
+            const auto layer = selectedLayer();
+            const auto selection = item && item->hasVideo() && layer && layer->visible && layer->opacity > 0 ? layer->rect : QRectF();
+            previewView->present(frame, selection);
+        }
         if (outputView) outputView->present(frame);
-        previewTitle->setText("PREVIEW  /  " + preview().name);
         const bool publishingProgram = core->isLive() && core->getSourceHealth().mode == app::VideoSourceMode::Mixer;
+        previewTitle->setText(QString(studioMode ? "PREVIEW  /  " : publishingProgram ? "LIVE OUTPUT  /  " : "OUTPUT  /  ") + preview().name);
         programTitle->setText(QString(publishingProgram ? "LIVE OUTPUT  /  " : "PROGRAM  /  ") + program.name);
         if (publishingProgram) {
+            Profile::Scope profile(Profile::MixerSubmit);
             video::CapturedFrame captured;
             captured.width = Width; captured.height = Height; captured.stride = frame.bytesPerLine(); captured.timestamp = now100ns();
             captured.data.assign(frame.constBits(), frame.constBits()+frame.sizeInBytes()); core->submitMixerVideo(std::move(captured));
         }
         for (const auto &[weak, meter] : meters) if (auto item = weak.lock()) meter->setLevel(item->peak);
         masterMeter->setLevel(masterPeak);
+        Profile::instance().flush();
         if (healthClock.elapsed() >= 1000) {
             const auto elapsed = healthClock.restart();
             if (auto item = source(selectedSource)) {

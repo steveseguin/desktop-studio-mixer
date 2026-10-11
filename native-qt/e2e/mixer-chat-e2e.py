@@ -12,6 +12,7 @@ profile=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/browser'
 show=profile.parent/'studio.mixer.json'
 session='mixerqa'+uuid.uuid4().hex[:20]
 window.child_window(title='Studio',control_type='TabItem').click_input()
+studio_mode()
 scene('Break');press('takeScene')
 remove_sources(('Social chat ',))
 scene('Opening'); press('takeScene')

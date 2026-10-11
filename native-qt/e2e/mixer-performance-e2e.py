@@ -13,6 +13,7 @@ import ctypes
 import hashlib
 import numpy as np
 import psutil
+import os
 import win32gui
 import win32process
 
@@ -24,7 +25,14 @@ def restore_window(hwnd, _):
 win32gui.EnumWindows(restore_window, None)
 window.set_focus()
 window.child_window(title='Studio', control_type='TabItem').click_input()
+single_canvas = os.environ.get('VIDEO_MIXER_E2E_LAYOUT') == 'single'
+studio_mode(not single_canvas)
+original_press = press
+def press(name, root=window):
+    if single_canvas and name in ('takeScene', 'fadeScene'): return
+    original_press(name, root)
 results = {'cpuConvention': 'one logical core = 100%', 'logicalCores': psutil.cpu_count(),
+           'layout': 'single' if single_canvas else 'studio',
            'exeSha256': hashlib.sha256(Path(process.exe()).read_bytes()).hexdigest(), 'scenarios': {}}
 
 def save_results():
@@ -45,6 +53,7 @@ def measure(name):
     before = snapshot()
     threads = {t.id: t.user_time+t.system_time for t in process.threads()}
     start = time.perf_counter()
+    sample_start = time.time()
     samples, latency = [], []
     while time.perf_counter()-start < 30:
         time.sleep(.5)
@@ -57,7 +66,7 @@ def measure(name):
     duration = time.perf_counter()-start
     after = samples[-1]
     cpu = {pid: max(0, entry[0]-before.get(pid, (0,))[0])/duration*100 for pid, entry in after.items()}
-    result = {'seconds': round(duration, 2), 'parentCpuPercent': round(cpu[process.pid], 2),
+    result = {'sampleStartEpoch': sample_start, 'seconds': round(duration, 2), 'parentCpuPercent': round(cpu[process.pid], 2),
               'treeCpuPercent': round(sum(cpu.values()), 2),
               'treeRssMiB': round(sum(v[1] for v in after.values())/2**20, 1),
               'treeRssGrowthMiB': round((sum(v[1] for v in after.values())-sum(v[1] for v in before.values()))/2**20, 1),
@@ -90,7 +99,7 @@ try:
     add_source('Camera / webcam', 'QA profile camera', device='HD Pro Webcam C920')
     press('takeScene')
     measure('camera')
-    assert np.asarray(control('programCanvas').capture_as_image()).std() > 12
+    assert np.asarray(control('previewCanvas' if single_canvas else 'programCanvas').capture_as_image()).std() > 12
     add_source('Browser /', 'QA profile browser', f'http://127.0.0.1:{server.server_port}/')
     press('layout-Picture in picture'); press('takeScene')
     measure('camera_and_browser')

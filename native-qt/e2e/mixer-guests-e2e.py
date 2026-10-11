@@ -43,6 +43,7 @@ def wait_media(page,direction,timeout=45):
     raise AssertionError({'missingMedia':direction,'stats':latest,'body':page.locator('body').inner_text()[:1500]})
 
 window.child_window(title='Studio',control_type='TabItem').click_input()
+studio_mode()
 scene('Break'); press('takeScene')
 remove_sources(('QA guest ', 'QA phone '))
 scene('Main')

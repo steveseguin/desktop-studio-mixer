@@ -33,6 +33,12 @@ def press(name, root=window):
     time.sleep(0.2)
 
 
+def studio_mode(enabled=True):
+    box = control('studioMode')
+    if bool(box.get_toggle_state()) != enabled: box.toggle()
+    time.sleep(.3)
+
+
 def color(name):
     image = control(name).capture_as_image()
     return image.getpixel((image.width // 2, image.height // 4))[:3]
@@ -52,10 +58,18 @@ def remove_sources(prefixes):
     while True:
         window.set_focus()
         control('mixerSources').wheel_mouse_input(wheel_dist=50)
-        all_rows = control('mixerSources').descendants(control_type='ListItem')
-        rows = [c for c in all_rows
-                if c.window_text().startswith(prefixes)]
-        if not rows: return
+        # Single canvas leaves a shorter source list. Search every viewport;
+        # Qt may expose only visible rows to UI Automation.
+        seen = set()
+        while True:
+            all_rows = control('mixerSources').descendants(control_type='ListItem')
+            rows = [c for c in all_rows if c.window_text().startswith(prefixes)]
+            if rows: break
+            names = tuple(c.window_text() for c in all_rows)
+            if names in seen: return
+            seen.add(names)
+            control('mixerSources').wheel_mouse_input(wheel_dist=-2)
+            time.sleep(.15)
         name = rows[0].window_text()
         # This provider includes partially clipped rows. Scroll the target fully
         # inside the viewport before clicking its label, away from the checkbox.
@@ -126,6 +140,8 @@ server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 results = {}
 try:
+    window.child_window(title='Studio', control_type='TabItem').click_input()
+    studio_mode()
     scene('Opening')
     press('takeScene')
     scene('Main')

@@ -1,6 +1,8 @@
+#include "versus/app/performance_trace.h"
 #include "versus/video/video_encoder.h"
 #include "versus/video/h264_color_metadata.h"
 #include "versus/video/aspect_fit.h"
+#include "versus/video/bgra_nv12.h"
 #include "versus/video/window_capture.h"
 
 #include <spdlog/spdlog.h>
@@ -1774,6 +1776,7 @@ class VideoEncoder::Impl {
     bool encode(const CapturedFrame &input,
                 EncodedPacket &output,
                 int64_t sourceTimestamp) {
+        app::detail::PerformanceTrace::Scope profile(app::detail::PerformanceTrace::EncoderSubmit);
         lastEncodeFailureKind_.store(EncodeFailureKind::None, std::memory_order_relaxed);
         if (usingExternalFfmpeg_) {
             return encodeExternalFfmpegNvenc(input, output, sourceTimestamp);
@@ -4405,6 +4408,7 @@ class VideoEncoder::Impl {
     }
 
     bool prepareInputBuffer(const CapturedFrame &input, std::vector<uint8_t> &out) {
+        app::detail::PerformanceTrace::Scope profile(app::detail::PerformanceTrace::EncoderPrepare);
         const int dstW = std::max(1, config_.width);
         const int dstH = std::max(1, config_.height);
         const InputPacking packing = inputPackingFromSubtype(inputSubtype_);
@@ -4638,58 +4642,16 @@ class VideoEncoder::Impl {
 
     void convertBGRAtoNV12(const uint8_t* bgra, int srcW, int srcH, int srcStride,
                           uint8_t* nv12, int dstW, int dstH) {
-        const size_t scratchSize = static_cast<size_t>(dstW) * static_cast<size_t>(dstH) * 4;
-        if (conversionScratchBgra_.size() != scratchSize) {
-            conversionScratchBgra_.resize(scratchSize);
+        if (srcW == dstW && srcH == dstH) {
+            // Native-size mixer output needs no intermediate BGRA copy.
+            detail::bgraToNv12(bgra, dstW, dstH, srcStride, nv12);
+            return;
         }
+        const size_t scratchSize = static_cast<size_t>(dstW) * static_cast<size_t>(dstH) * 4;
+        conversionScratchBgra_.resize(scratchSize);
         blitBgraAspectFit(bgra, srcW, srcH, srcStride,
                           conversionScratchBgra_.data(), dstW, dstH, dstW * 4, config_);
-
-        uint8_t* yPlane = nv12;
-        uint8_t* uvPlane = nv12 + dstW * dstH;
-        if ((dstW & 1) != 0 || (dstH & 1) != 0) {
-            std::fill(uvPlane, uvPlane + (dstW * dstH / 2), static_cast<uint8_t>(128));
-        }
-
-        for (int y = 0; y < dstH; y++) {
-            const uint8_t* srcRow = conversionScratchBgra_.data() + static_cast<size_t>(y) * dstW * 4;
-            uint8_t* yRow = yPlane + static_cast<size_t>(y) * dstW;
-            for (int x = 0; x < dstW; x++) {
-                const uint8_t* pixel = srcRow + static_cast<size_t>(x) * 4;
-                const int b = pixel[0];
-                const int g = pixel[1];
-                const int r = pixel[2];
-
-                // BT.601 conversion
-                const int yVal = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
-                yRow[x] = static_cast<uint8_t>(std::clamp(yVal, 0, 255));
-            }
-        }
-
-        for (int y = 0; y + 1 < dstH; y += 2) {
-            const uint8_t* srcRow = conversionScratchBgra_.data() + static_cast<size_t>(y) * dstW * 4;
-            uint8_t* uvRow = uvPlane + static_cast<size_t>(y / 2) * dstW;
-            for (int x = 0; x + 1 < dstW; x += 2) {
-                const uint8_t* row0 = srcRow;
-                const uint8_t* row1 = conversionScratchBgra_.data() +
-                    static_cast<size_t>(std::min(y + 1, dstH - 1)) * dstW * 4;
-                const uint8_t* p00 = row0 + static_cast<size_t>(x) * 4;
-                const uint8_t* p01 = row0 + static_cast<size_t>(std::min(x + 1, dstW - 1)) * 4;
-                const uint8_t* p10 = row1 + static_cast<size_t>(x) * 4;
-                const uint8_t* p11 = row1 + static_cast<size_t>(std::min(x + 1, dstW - 1)) * 4;
-
-                const int b = (static_cast<int>(p00[0]) + static_cast<int>(p01[0]) +
-                               static_cast<int>(p10[0]) + static_cast<int>(p11[0]) + 2) / 4;
-                const int g = (static_cast<int>(p00[1]) + static_cast<int>(p01[1]) +
-                               static_cast<int>(p10[1]) + static_cast<int>(p11[1]) + 2) / 4;
-                const int r = (static_cast<int>(p00[2]) + static_cast<int>(p01[2]) +
-                               static_cast<int>(p10[2]) + static_cast<int>(p11[2]) + 2) / 4;
-                const int u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
-                const int v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
-                uvRow[x] = static_cast<uint8_t>(std::clamp(u, 0, 255));
-                uvRow[x + 1] = static_cast<uint8_t>(std::clamp(v, 0, 255));
-            }
-        }
+        detail::bgraToNv12(conversionScratchBgra_.data(), dstW, dstH, dstW * 4, nv12);
     }
 
     void convertBGRAtoI420(const uint8_t *bgra, int srcW, int srcH, int srcStride,

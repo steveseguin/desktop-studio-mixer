@@ -29,6 +29,7 @@ time.sleep(1.5)
 results = {}
 try:
     window.child_window(title='Studio', control_type='TabItem').click_input()
+    studio_mode()
     scene('Main')
     press('addSource')
     dialog = window.child_window(title='Add source', control_type='Window')

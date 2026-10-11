@@ -3,6 +3,7 @@ from pathlib import Path
 exec(Path(__file__).with_name('mixer-desktop-e2e.py').read_text().split('class Fixture')[0])
 import numpy as np
 window.child_window(title='Studio',control_type='TabItem').click_input()
+studio_mode()
 scene('Break'); press('takeScene')
 remove_sources(('QA ', 'Loopback browser', 'Social chat'))
 scene('Main')

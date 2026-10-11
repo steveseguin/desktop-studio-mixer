@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(video-mixer-native-qt VERSION 0.3.2 LANGUAGES CXX)
+project(video-mixer-native-qt VERSION 0.4.0 LANGUAGES CXX)
 
 # CMake 4 removed compatibility modes older than 3.5. Opus 1.4 still
 # declares a 3.1 minimum, so give bundled dependencies the modern floor
@@ -346,6 +346,9 @@ option(VERSUS_BUILD_TESTS "Build tests" OFF)
 
 if(VERSUS_BUILD_TESTS)
     enable_testing()
+    add_executable(bgra_nv12_gate tests/bgra_nv12_gate.cpp)
+    target_include_directories(bgra_nv12_gate PRIVATE include)
+    add_test(NAME bgra_nv12_gate COMMAND bgra_nv12_gate)
     find_package(Qt6 REQUIRED COMPONENTS Test Network)
 
     # Ensure Qt runtime DLLs and platform plugins are found when running tests via ctest.

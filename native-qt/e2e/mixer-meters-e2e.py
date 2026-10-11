@@ -12,6 +12,7 @@ def restore(hwnd, _):
     return True
 win32gui.EnumWindows(restore,None)
 window.set_focus(); window.child_window(title='Studio',control_type='TabItem').click_input()
+studio_mode()
 
 level = .02
 class Fixture(http.server.BaseHTTPRequestHandler):
@@ -52,9 +53,12 @@ try:
     scene('Opening');press('takeScene');remove_sources(('QA meter',));scene('Main')
     add_source('Browser /','QA meter tone',f'http://127.0.0.1:{server.server_port}/')
     time.sleep(3);press('takeScene');time.sleep(1)
+    # Exercise the relocated audio panel in the default single-canvas layout.
+    studio_mode(False)
     low=reading('QA meter tone');assert -40<low<-25,low
     meter_rect=meter('QA meter tone').rectangle();scroll_rect=control('audioTracksScroll').rectangle()
     assert scroll_rect.top < meter_rect.top and meter_rect.bottom < scroll_rect.bottom, 'Track meter is clipped'
+    assert scroll_rect.left < meter_rect.left and meter_rect.right < scroll_rect.right-15, 'Track meter is clipped horizontally'
     assert has_color(pixels('QA meter tone'),(57,217,154))>30
     results['quiet_signal_visible_dbfs']=low
     level=.4;time.sleep(1.5)
@@ -65,8 +69,13 @@ try:
     assert has_color(pixels('QA meter tone'),(255,89,107))>10
     results['amber_and_red_levels']=[medium,high]
     window.capture_as_image().save(str(report/'audio-meter-live.png'))
+    active_meter=meter('QA meter tone'); window.set_focus()
     level=.02;time.sleep(.35)
-    held=pixels('QA meter tone')
+    # Resolve UI Automation before lowering the signal: a fresh tree walk can
+    # outlast the one-second hold and measure the later decay instead.
+    held_image=active_meter.capture_as_image().convert('RGB')
+    held_image.save(str(report/'peak-held.png'))
+    held=np.asarray(held_image)
     locations=np.where(np.all(np.abs(held.astype(int)-np.asarray((242,247,252)))<4,axis=2))
     assert len(locations[1]) and locations[1].max()>held.shape[1]*.85
     results['peak_hold']='passed'
@@ -99,6 +108,7 @@ try:
     window.capture_as_image().save(str(report/'output-scroll-border.png'))
     results['output_scroll_boundary']='passed'
     window.child_window(title='Studio',control_type='TabItem').click_input()
+    studio_mode(True)
     scene('Opening');press('takeScene');remove_sources(('QA meter',))
     results['cleanup']='passed'
 finally:

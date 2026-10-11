@@ -74,6 +74,7 @@ def choose_mode(text):
 
 restore_window()
 window.child_window(title='Studio',control_type='TabItem').click_input()
+studio_mode()
 scene('Break');press('takeScene');remove_sources(('QA C920',))
 scene('Main');add_source('Camera / webcam','QA C920',device='HD Pro Webcam C920');press('takeScene');time.sleep(3)
 recording=report/f'camera-controls-{int(time.time())}.mkv'
