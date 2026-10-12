@@ -4,6 +4,9 @@
     <file>mixer-audio.js</file>
     <file>mixer-overlay.js</file>
     <file>mixer-webrtc.js</file>
+    <file>studio-control.json</file>
+    <file>studio-es.json</file>
+    <file>studio-fr.json</file>
   </qresource>
   <qresource prefix="/icons">
     <file>vdoninja.ico</file>

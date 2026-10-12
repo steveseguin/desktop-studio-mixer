@@ -1,5 +1,7 @@
 #pragma once
 #include <QWidget>
+#include <QJsonObject>
+#include <QImage>
 #include <memory>
 namespace versus::app { class VersusApp; }
 namespace versus::mixer {
@@ -16,6 +18,10 @@ public:
     void shutdown();
     QSize canvasSize() const;
     int canvasFrameRate() const;
+    QJsonObject controlState() const;
+    QJsonObject controlCommand(const QJsonObject &command);
+    QImage captureCanvas(const QString &target);
+    void setWorkspaceLayout(const QString &layout);
 signals:
     void outputRequested();
     void toggleOutputRequested();

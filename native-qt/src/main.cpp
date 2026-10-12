@@ -1,5 +1,8 @@
 ﻿#include <QApplication>
 #include <QIcon>
+#include <QDir>
+#include <QFileInfo>
+#include <QStandardPaths>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLockFile>
@@ -8,6 +11,11 @@
 #include <QPointer>
 #include <QTimer>
 #include <QUuid>
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#pragma comment(lib, "shell32.lib")
+#endif
 
 #include <algorithm>
 #include <array>
@@ -29,6 +37,7 @@
 #include "versus/control/local_control_server.h"
 #include "versus/diagnostics/crash_reporter.h"
 #include "versus/ui/main_window.h"
+#include "versus/ui/studio_preferences.h"
 #include "versus/video/window_capture.h"
 #include "versus/mixer/process_worker.h"
 
@@ -187,6 +196,8 @@ int main(int argc, char *argv[]) {
         return versus::mixer::ProcessWorker::run(argc, argv);
     // Check for --headless mode
     bool headless = false;
+    bool studioHeadless = false;
+    QString studioShow;
     versus::output::Config outputConfig;
     std::string streamId = "steve123";
     std::string password;
@@ -236,6 +247,11 @@ int main(int argc, char *argv[]) {
         std::string arg = argv[i];
         if (arg == "--headless") {
             headless = true;
+        } else if (arg == "--studio-headless") {
+            studioHeadless = true;
+            localControlEnabled = true;
+        } else if (arg.rfind("--studio-show=", 0) == 0) {
+            studioShow = QString::fromUtf8(arg.substr(14));
         } else if (arg.rfind("--output=", 0) == 0) {
             try { outputConfig.protocol = versus::output::parseProtocol(arg.substr(9)); }
             catch (const std::exception &error) { spdlog::error("{}", error.what()); return 2; }
@@ -512,7 +528,7 @@ int main(int argc, char *argv[]) {
         spdlog::set_level(spdlog::level::debug);
         spdlog::flush_on(spdlog::level::debug);
         spdlog::info("Logging to {}", logPath);
-        spdlog::info("Desktop Studio app starting (headless={})", headless);
+        spdlog::info("Desktop Studio app starting (headless={}, studioHeadless={})", headless, studioHeadless);
     } catch (...) {
         // Fall back to default logger
     }
@@ -574,7 +590,28 @@ int main(int argc, char *argv[]) {
     }
 
     QApplication app(argc, argv);
+    // Preserve paths outside the Windows active code page. A console-subsystem
+    // CRT may already have damaged argv before QApplication receives it.
+    QStringList pathArguments = QCoreApplication::arguments();
+#ifdef _WIN32
+    int wideCount = 0;
+    if (auto **wide = CommandLineToArgvW(GetCommandLineW(), &wideCount)) {
+        pathArguments.clear();
+        for (int n = 0; n < wideCount; ++n) pathArguments.append(QString::fromWCharArray(wide[n]));
+        LocalFree(wide);
+    }
+#endif
+    for (const auto &argument : pathArguments) {
+        if (argument.startsWith("--studio-show=")) studioShow = argument.mid(14);
+        if (argument.startsWith("--local-control-discovery=")) localControlDiscoveryArg = argument.mid(26).toUtf8().toStdString();
+    }
+    if (headless && studioHeadless) { spdlog::error("Choose --headless or --studio-headless, not both"); return 2; }
+    app.setProperty("studioHeadless", studioHeadless);
+    app.setProperty("studioShow", studioShow);
+    if (studioHeadless) app.setQuitOnLastWindowClosed(false);
     app.setWindowIcon(QIcon(":/icons/vdoninja.ico"));
+    versus::ui::StudioTranslator translator(&app);
+    app.installTranslator(&translator);
     app.setProperty("force_exit_without_shutdown", false);
     auto coreHolder = std::make_unique<versus::app::VersusApp>();
     auto &core = *coreHolder;
@@ -650,6 +687,10 @@ int main(int argc, char *argv[]) {
         localControlServer->setRefreshPeerTransportsCallback([&core]() {
             return core.refreshPeerTransportsForLocalControl();
         });
+        localControlServer->setStudioProvider([&guiWindow](const QString &operation, const QJsonObject &request) {
+            return guiWindow ? guiWindow->studioControl(operation, request)
+                : QJsonObject{{"error", "Mixer workspace is not ready"}};
+        });
 
         versus::control::LocalControlServerConfig controlConfig;
         controlConfig.port = static_cast<quint16>(localControlPort);
@@ -659,6 +700,7 @@ int main(int argc, char *argv[]) {
         if (!localControlServer->start(controlConfig)) {
             spdlog::warn("[Main] Local control server was requested but could not start");
             localControlServer.reset();
+            if (studioHeadless) return 2;
         }
     }
 
@@ -1014,9 +1056,24 @@ int main(int argc, char *argv[]) {
     }
 
     // Normal GUI mode
-    versus::ui::MainWindow window(&core);
+    const auto showPath = studioShow.isEmpty()
+        ? QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)).filePath("VideoMixer/studio.mixer.json")
+        : QFileInfo(studioShow).absoluteFilePath();
+    QDir().mkpath(QFileInfo(showPath).absolutePath());
+    QLockFile showLock(showPath+".lock");
+    if (!showLock.tryLock(0)) {
+        spdlog::error(showLock.error() == QLockFile::LockFailedError
+            ? "This show is already open in another Desktop Studio instance. Use --studio-show for a separate show."
+            : "Could not create a show lock. Check the show path and folder permissions.");
+        return 2;
+    }
+    versus::ui::MainWindow::RuntimeOptions runtime;
+    runtime.systemIntegrationsEnabled = !studioHeadless;
+    runtime.mixerEnabled = true;
+    runtime.persistedSettingsEnabled = studioShow.isEmpty();
+    versus::ui::MainWindow window(&core, runtime);
     guiWindow = &window;
-    window.show();
+    if (!studioHeadless) window.show();
     const int result = app.exec();
     if (app.property("force_exit_without_shutdown").toBool()) {
         forceExitProcess(result);

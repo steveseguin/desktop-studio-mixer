@@ -1,0 +1,711 @@
+{
+  "version": 1,
+  "description": "Desktop Studio local automation. Stable IDs; explicit set commands, no toggles. Network/browser/media/device work runs in isolated workers. Publishing and recording are asynchronous; poll state. Credentials omitted from state. Screenshot captures only app-rendered pixels.",
+  "commands": {
+    "scene.add": {
+      "description": "Create and select a scene. Single canvas mode takes it live.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "scene.add"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "background": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "command",
+        "name"
+      ]
+    },
+    "scene.select": {
+      "description": "Select a scene by stable ID. In single canvas mode it goes live.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "scene.select"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "command",
+        "id"
+      ]
+    },
+    "scene.rename": {
+      "description": "Rename a scene.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "scene.rename"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "command",
+        "id",
+        "name"
+      ]
+    },
+    "scene.remove": {
+      "description": "Remove a scene. Keep at least one.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "scene.remove"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "command",
+        "id"
+      ]
+    },
+    "scene.background": {
+      "description": "Set a scene background.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "scene.background"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "color": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "command",
+        "id",
+        "color"
+      ]
+    },
+    "scene.take": {
+      "description": "Take Preview to Program.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "scene.take"
+        },
+        "transition": {
+          "type": "string",
+          "enum": [
+            "cut",
+            "fade"
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "source.add": {
+      "description": "Create a source in the selected scene. Browser audio and transparency default on.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "source.add"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "camera",
+            "window",
+            "microphone",
+            "desktop",
+            "spout",
+            "browser",
+            "chat",
+            "media",
+            "image",
+            "title",
+            "color"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "locator": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "transparent": {
+          "type": "boolean"
+        },
+        "preserveColorMetadata": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "command",
+        "kind",
+        "name"
+      ]
+    },
+    "source.update": {
+      "description": "Change source configuration; changed capture settings reconnect the worker.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "source.update"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "locator": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "transparent": {
+          "type": "boolean"
+        },
+        "preserveColorMetadata": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "command",
+        "id"
+      ]
+    },
+    "source.remove": {
+      "description": "Remove a source; in Studio mode take it off Program first.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "source.remove"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "command",
+        "id"
+      ]
+    },
+    "source.reconnect": {
+      "description": "Reconnect an isolated source and reset its crash retry limit.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "source.reconnect"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "command",
+        "id"
+      ]
+    },
+    "layer.set": {
+      "description": "Set normalized layer geometry (0..1); optional scene defaults to Preview.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "layer.set"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "scene": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "w": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 1
+        },
+        "h": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 1
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "locked": {
+          "type": "boolean"
+        },
+        "fit": {
+          "type": "string",
+          "enum": [
+            "fit",
+            "fill",
+            "stretch"
+          ]
+        },
+        "cropX": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.95
+        },
+        "cropY": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.95
+        },
+        "cropW": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 1
+        },
+        "cropH": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "command",
+        "source"
+      ]
+    },
+    "layer.order": {
+      "description": "Move a layer to an index, zero is bottom.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "layer.order"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "scene": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31
+        }
+      },
+      "required": [
+        "command",
+        "source",
+        "index"
+      ]
+    },
+    "audio.set": {
+      "description": "Set track volume/routing/effects. Use source=master for master gain only (0..1.5).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "audio.set"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "gain": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "muted": {
+          "type": "boolean"
+        },
+        "followsScene": {
+          "type": "boolean"
+        },
+        "monitored": {
+          "type": "boolean"
+        },
+        "noiseSuppression": {
+          "type": "boolean"
+        },
+        "noiseGate": {
+          "type": "boolean"
+        },
+        "compression": {
+          "type": "boolean"
+        },
+        "audioDelayMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        }
+      },
+      "required": [
+        "command",
+        "source"
+      ]
+    },
+    "media.set": {
+      "description": "Control a media source.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "media.set"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "loop": {
+          "type": "boolean"
+        },
+        "restart": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "command",
+        "id"
+      ]
+    },
+    "record.start": {
+      "description": "Start independent Program recording to a new absolute .mkv path. Never overwrite.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "record.start"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "command",
+        "path"
+      ]
+    },
+    "record.stop": {
+      "description": "Finalize independent Program recording.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "record.stop"
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "show.save": {
+      "description": "Save a show with private source URLs and invite credentials. Writes only to an explicit path.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "show.save"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "command",
+        "path"
+      ]
+    },
+    "show.open": {
+      "description": "Load a show; outputs must be stopped. Autosave remains at the session show path.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "show.open"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "command",
+        "path"
+      ]
+    },
+    "workspace.set": {
+      "description": "Change display layout or single/studio workflow. Layout alone never changes Program.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "workspace.set"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "single",
+            "studio"
+          ]
+        },
+        "layout": {
+          "type": "string",
+          "enum": [
+            "balanced",
+            "simple",
+            "podcast",
+            "production"
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "canvas.set": {
+      "description": "Set canvas format or compositor while outputs are stopped.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "canvas.set"
+        },
+        "format": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "renderer": {
+          "type": "string",
+          "enum": [
+            "cpu",
+            "gpu"
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "output.configure": {
+      "description": "Configure output without starting it. Credential is token/key/passphrase for WHIP/RTMP/SRT. Secrets never appear in state.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "output.configure"
+        },
+        "protocol": {
+          "type": "string",
+          "enum": [
+            "vdo",
+            "rtmp",
+            "srt",
+            "whip",
+            "file"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "credential": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "stream_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "latency_ms": {
+          "type": "integer",
+          "minimum": 20,
+          "maximum": 8000
+        },
+        "stream": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "password": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "encoder": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "nvenc",
+            "qsv",
+            "amf",
+            "software"
+          ]
+        },
+        "bitrate_kbps": {
+          "type": "integer",
+          "minimum": 500,
+          "maximum": 50000
+        }
+      },
+      "required": [
+        "command",
+        "protocol"
+      ]
+    },
+    "output.start": {
+      "description": "Start configured Program output asynchronously. Poll state to confirm it becomes live.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "output.start"
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "output.stop": {
+      "description": "Stop Program publishing; independent recording continues.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "output.stop"
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "preferences.set": {
+      "description": "Set visual theme immediately; language applies next launch.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "preferences.set"
+        },
+        "theme": {
+          "type": "string",
+          "enum": [
+            "original",
+            "graphite",
+            "rose",
+            "neon",
+            "sand"
+          ]
+        },
+        "language": {
+          "type": "string",
+          "enum": [
+            "en",
+            "es",
+            "fr"
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    }
+  },
+  "screenshot": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "target": {
+        "type": "string",
+        "enum": [
+          "program",
+          "preview",
+          "window"
+        ]
+      },
+      "max_width": {
+        "type": "integer",
+        "minimum": 160,
+        "maximum": 3840
+      }
+    },
+    "required": [
+      "target"
+    ]
+  }
+}

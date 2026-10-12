@@ -66,16 +66,25 @@ void MediaSource::start(const QString &path, std::function<void(video::CapturedF
                             origin += Clock::now()-pauseStart; if (!running_) break;
                         }
                         if (seek_.exchange(false)) {
+                            // A manual restart can leave decoded samples queued
+                            // behind the current sample. Clear them before seek
+                            // so a later loop cannot inherit stale EOS state.
+                            hr = reader->Flush(MF_SOURCE_READER_ALL_STREAMS);
+                            if (FAILED(hr)) { fail("Could not reset media playback."); break; }
                             PROPVARIANT position{}; InitPropVariantFromInt64(0, &position);
-                            if (videoStream != DWORD(-1)) reader->SetStreamSelection(videoStream, TRUE);
-                            if (audioStream != DWORD(-1)) reader->SetStreamSelection(audioStream, TRUE);
                             hr = reader->SetCurrentPosition(GUID_NULL, position); PropVariantClear(&position);
                             if (FAILED(hr)) { fail("This file cannot seek or loop."); break; }
                             origin = Clock::now(); finished.clear(); ended_ = false;
                         }
                         DWORD stream = 0, flags = 0; LONGLONG pts = 0; ComPtr<IMFSample> sample;
-                        hr = reader->ReadSample(MF_SOURCE_READER_ANY_STREAM, 0, &stream, &flags, &pts, &sample);
-                        if (FAILED(hr)) { fail("Media decoding failed."); break; }
+                        // Keep decoder streams selected for their whole lifetime.
+                        // Deselecting/reselecting a drained transform at each loop
+                        // can make the Windows reader return E_FAIL after seeking.
+                        // Drain the remaining stream explicitly instead.
+                        const DWORD readStream = finished.contains(videoStream) ? audioStream :
+                            finished.contains(audioStream) ? videoStream : MF_SOURCE_READER_ANY_STREAM;
+                        hr = reader->ReadSample(readStream, 0, &stream, &flags, &pts, &sample);
+                        if (FAILED(hr)) { fail(QString("Media decoding failed (0x%1).").arg(quint32(hr), 8, 16, QChar('0'))); break; }
                         if ((flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) && stream == videoStream) {
                             ComPtr<IMFMediaType> type;
                             if (FAILED(reader->GetCurrentMediaType(stream, &type)) || FAILED(MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, &width, &height)) || !width || !height || width > 8192 || height > 8192) {
@@ -84,7 +93,7 @@ void MediaSource::start(const QString &path, std::function<void(video::CapturedF
                             stride = LONG(MFGetAttributeUINT32(type.Get(), MF_MT_DEFAULT_STRIDE, width*4));
                         }
                         if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
-                            finished.insert(stream); reader->SetStreamSelection(stream, FALSE);
+                            finished.insert(stream);
                             if ((videoStream == DWORD(-1) || finished.contains(videoStream)) && (audioStream == DWORD(-1) || finished.contains(audioStream))) {
                                 if (loop_) seek_ = true;
                                 else { ended_ = true; paused_ = true; }

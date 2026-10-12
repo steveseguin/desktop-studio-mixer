@@ -26,6 +26,7 @@
 namespace versus::ui {
 
 class MainWindowTestAccess;
+class StudioAppearance;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -34,6 +35,7 @@ class MainWindow : public QMainWindow {
     struct RuntimeOptions {
         bool persistedSettingsEnabled = true;
         bool systemIntegrationsEnabled = true;
+        bool mixerEnabled = false; // Also construct the mixer for windowless operation.
     };
 
     struct ParsedStreamTarget {
@@ -52,6 +54,7 @@ class MainWindow : public QMainWindow {
     ~MainWindow() override;
     static ParsedStreamTarget parseStreamTargetInput(const QString &input);
     static versus::webrtc::IceMode iceModeFromUiValue(const QString &value);
+    QJsonObject studioControl(const QString &operation, const QJsonObject &request);
 
   public slots:
     void updateStats(const StreamStats &stats);
@@ -116,6 +119,8 @@ class MainWindow : public QMainWindow {
 
     versus::app::VersusApp *core_ = nullptr;
     RuntimeOptions runtimeOptions_;
+    StudioAppearance *appearance_ = nullptr;
+    bool localAutomationCommand_ = false;
 
     // UI Components
     WindowListWidget *windowListWidget_ = nullptr;

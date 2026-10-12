@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QHash>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QObject>
 #include <QString>
 
@@ -30,6 +31,7 @@ class LocalControlServer : public QObject {
     using StopCallback = std::function<void()>;
     using QuitCallback = std::function<void()>;
     using RefreshPeerTransportsCallback = std::function<int()>;
+    using StudioProvider = std::function<QJsonObject(const QString &, const QJsonObject &)>;
 
     explicit LocalControlServer(QObject *parent = nullptr);
     ~LocalControlServer() override;
@@ -50,6 +52,7 @@ class LocalControlServer : public QObject {
     void setStopCallback(StopCallback callback);
     void setQuitCallback(QuitCallback callback);
     void setRefreshPeerTransportsCallback(RefreshPeerTransportsCallback callback);
+    void setStudioProvider(StudioProvider provider) { studioProvider_ = std::move(provider); }
 
     static QString defaultDiscoveryPath();
     static QString defaultReportDir();
@@ -87,6 +90,7 @@ class LocalControlServer : public QObject {
     StopCallback stopCallback_;
     QuitCallback quitCallback_;
     RefreshPeerTransportsCallback refreshPeerTransportsCallback_;
+    StudioProvider studioProvider_;
     QHash<QTcpSocket*, QByteArray> buffers_;
     bool discoveryFileWritten_ = false;
     QByteArray discoveryFileContents_;

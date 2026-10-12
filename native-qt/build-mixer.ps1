@@ -42,6 +42,16 @@ if ($Package -or $Installer) {
     Copy-Item (Join-Path $PSScriptRoot '../LICENSE') $packageRoot
     Copy-Item (Join-Path $PSScriptRoot '../README.md') $packageRoot
     Copy-Item (Join-Path $PSScriptRoot 'resources/vdoninja.ico') $packageRoot
+    $automation = Join-Path $packageRoot 'tools/mcp'
+    New-Item -ItemType Directory -Force -Path $automation | Out-Null
+    foreach ($file in @('studio-client.mjs','studio-cli.mjs','studio-mcp.mjs','studio.cmd','package.json','package-lock.json')) {
+        Copy-Item (Join-Path $PSScriptRoot "tools/mcp/$file") $automation -Force
+    }
+    Copy-Item (Join-Path $PSScriptRoot 'resources/studio-control.json') $automation -Force
+    # Install exact locked production dependencies into the package. Node itself
+    # is supplied by the local automation client, never embedded in the app.
+    & npm.cmd ci --omit=dev --ignore-scripts --prefix $automation --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw 'MCP packaging failed.' }
     $packageDocs = Join-Path $packageRoot 'docs'
     New-Item -ItemType Directory -Force -Path $packageDocs | Out-Null
     Copy-Item -Path (Join-Path $PSScriptRoot '../docs/mixer*.md') -Destination $packageDocs -Force

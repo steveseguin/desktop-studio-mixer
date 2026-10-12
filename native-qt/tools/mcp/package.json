@@ -1,11 +1,11 @@
 {
   "name": "video-mixer-mcp",
-  "version": "0.1.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "Local MCP controls for packaged Desktop Studio on Windows",
   "engines": { "node": ">=22" },
-  "scripts": { "start": "node server.mjs" },
+  "scripts": { "start": "node studio-mcp.mjs", "cli": "node studio-cli.mjs" },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.31.0",
     "zod": "4.5.4"

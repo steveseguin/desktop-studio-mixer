@@ -1,6 +1,11 @@
 ﻿#include "versus/mixer/mixer_widget.h"
 #include <QTabWidget>
 #include "versus/ui/main_window.h"
+#include "versus/ui/studio_preferences.h"
+#include "versus/control/studio_contract.h"
+#include <QActionGroup>
+#include <QBuffer>
+#include <QScopedValueRollback>
 
 #include "versus/ui/update_checker.h"
 
@@ -420,7 +425,7 @@ QWidget *wrapSensitiveLineEdit(QLineEdit *input,
     layout->setSpacing(6);
     layout->addWidget(input, 1);
 
-    auto *toggle = new QPushButton("Show", wrapper);
+    auto *toggle = new QPushButton(studioText("Show"), wrapper);
     toggle->setCheckable(true);
     toggle->setFixedWidth(58);
     toggle->setStyleSheet("QPushButton { padding: 6px; } QPushButton:focus { padding: 5px; }");
@@ -663,6 +668,7 @@ MainWindow::MainWindow(
 
     setupMenuBar();
     applyDarkTheme();
+    appearance_ = new StudioAppearance(this);
     setupUI();
     if (runtimeOptions_.persistedSettingsEnabled) {
         loadPersistedSettings();
@@ -696,7 +702,7 @@ MainWindow::MainWindow(
         updateGoLiveButton();
     });
 
-    if (runtimeOptions_.systemIntegrationsEnabled) {
+    if (core_ && (runtimeOptions_.systemIntegrationsEnabled || runtimeOptions_.mixerEnabled)) {
         auto *tabs = new QTabWidget(this);
         tabs->setObjectName("workspaceTabs");
         auto *captureControls = takeCentralWidget();
@@ -709,8 +715,8 @@ MainWindow::MainWindow(
         studioScroll->setWidgetResizable(true);
         studioScroll->setStyleSheet("QScrollArea#studioWorkspaceScroll { border:1px solid #50667b; background:#101b27; }");
         studioScroll->setWidget(studio);
-        tabs->addTab(studioScroll, "Studio");
-        tabs->addTab(captureControls, "Capture & output");
+        tabs->addTab(studioScroll, studioText("Studio"));
+        tabs->addTab(captureControls, studioText("Capture & output"));
         setCentralWidget(tabs);
         connect(studio, &versus::mixer::MixerWidget::outputRequested, this, [this, tabs]() {
             if (!isLive_ && !startInProgress_ && !stopInProgress_)
@@ -743,6 +749,7 @@ MainWindow::MainWindow(
         resize(1440, 960);
     }
 
+    appearance_->apply(QSettings("VDO.Ninja", "Video Mixer").value("ui/theme", "original").toString());
     // Initial window list
     refreshWindowList();
     refreshSelectedWindowPreview();
@@ -809,7 +816,7 @@ MainWindow::MainWindow(
                 }
                 resetOperatorHealthUi();
                 if (encoderStatusLabel_) {
-                    encoderStatusLabel_->setText("Active Encoder: (not streaming)");
+                    encoderStatusLabel_->setText(studioText("Active Encoder: (not streaming)"));
                     encoderStatusLabel_->setStyleSheet(QString("color: %1; font-size: 11px;").arg(COLOR_TEXT_DIM));
                 }
 
@@ -943,6 +950,115 @@ void MainWindow::requestStop() {
         return;
     }
     onGoLiveClicked();
+}
+
+QJsonObject MainWindow::studioControl(const QString &operation, const QJsonObject &request) {
+    using namespace versus::control;
+    const auto fail = [](const QString &why) { return QJsonObject{{"error", why}}; };
+    auto *studio = findChild<versus::mixer::MixerWidget*>();
+    if (!studio) return fail("Mixer workspace is not running");
+    if (quitRequested_) return fail("Application is shutting down");
+    if (operation == "schema") return studioSchema();
+    if (operation == "state") {
+        auto state = studio->controlState();
+        state["headless"] = qApp->property("studioHeadless").toBool();
+        const auto outputState = core_->getOutputStatus();
+        const bool external = core_->isExternalOutput();
+        static const char *outputStates[]{"stopped", "connecting", "live", "reconnecting", "error"};
+        state["output"] = QJsonObject{{"protocol", outputSelect_->currentData().toString()},
+            {"active", isLive_}, {"live", isLive_ && (!external || outputState.state == output::State::Live)},
+            {"state", external ? outputStates[int(outputState.state)] : isLive_ ? "live" : startInProgress_ ? "connecting" : "stopped"},
+            {"video_packets", qint64(outputState.videoPackets)}, {"audio_packets", qint64(outputState.audioPackets)},
+            {"starting", startInProgress_}, {"stopping", stopInProgress_},
+            {"status", statusLabel_->text()}, {"encoder", encoderStatusLabel_->text()}};
+        state["preferences"] = QJsonObject{{"theme", qApp->property("studioTheme").toString()},
+            {"language", qApp->property("studioLanguage").toString()},
+            {"next_language", QSettings("VDO.Ninja", "Video Mixer").value("ui/language", "en").toString()}};
+        return state;
+    }
+    if (operation == "screenshot") {
+        const auto error = validateStudioRequest(request, studioSchema()["screenshot"].toObject());
+        if (!error.isEmpty()) return fail(error);
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if (now-property("lastControlScreenshot").toLongLong() < 200) return fail("Screenshot rate limit: wait 200 ms");
+        setProperty("lastControlScreenshot", now);
+        const auto target = request["target"].toString();
+        // Repaint only our widget tree; no desktop/screen/window capture APIs.
+        QImage image = studio->captureCanvas(target);
+        if (target == "window") image = grab().toImage();
+        if (image.isNull()) return fail("No rendered frame is available yet");
+        const int width = request.contains("max_width") ? request["max_width"].toInt() : 1280;
+        if (image.width() > width) image = image.scaledToWidth(width, Qt::SmoothTransformation);
+        QByteArray bytes; QBuffer buffer(&bytes); buffer.open(QIODevice::WriteOnly);
+        if (!image.save(&buffer, "PNG", 30)) return fail("Could not encode screenshot");
+        return {{"mime_type", "image/png"}, {"width", image.width()}, {"height", image.height()},
+            {"target", target}, {"data", QString::fromLatin1(bytes.toBase64())}};
+    }
+    const auto command = request["command"].toString();
+    const auto error = validateStudioRequest(request, studioSchema()["commands"].toObject()[command].toObject());
+    if (!error.isEmpty()) return fail(error);
+    if (command == "preferences.set") {
+        if (request.contains("theme")) {
+            const auto theme = request["theme"].toString();
+            appearance_->apply(theme); QSettings("VDO.Ninja", "Video Mixer").setValue("ui/theme", theme);
+            if (auto *action = findChild<QAction*>("theme_"+theme)) action->setChecked(true);
+        }
+        if (request.contains("language")) {
+            const auto language = request["language"].toString();
+            QSettings("VDO.Ninja", "Video Mixer").setValue("ui/language", language);
+            if (auto *action = findChild<QAction*>("language_"+language)) action->setChecked(true);
+        }
+        return {{"ok", true}, {"language_requires_restart", request.contains("language")}};
+    }
+    if (command == "output.stop") { requestStop(); return {{"ok", true}, {"asynchronous", true}}; }
+    if (command == "output.start") {
+        if (startInProgress_ || stopInProgress_ || hasPendingAsyncOperation()) return fail("Output operation in progress");
+        if (isLive_) return fail("Output is already live");
+        if (outputSelect_->currentData() == "vdo" && streamIdInput_->text().trimmed().isEmpty()) return fail("Configure a VDO.Ninja stream ID first");
+        if (outputSelect_->currentData() == "file" && QFileInfo::exists(outputUrlInput_->text())) return fail("Recording file already exists");
+        sourceModeSelect_->setCurrentIndex(sourceModeSelect_->findData("mixer"));
+        const QScopedValueRollback<bool> automation(localAutomationCommand_, true);
+        onGoLiveClicked();
+        if (!startInProgress_ && !isLive_) return fail(statusLabel_->text());
+        return {{"ok", true}, {"asynchronous", true}};
+    }
+    if (command == "output.configure") {
+        if (isLive_ || startInProgress_ || stopInProgress_ || hasPendingAsyncOperation()) return fail("Stop output before configuring it");
+        const auto protocol = request["protocol"].toString();
+        output::Config config;
+        config.protocol = output::parseProtocol(protocol.toStdString());
+        config.url = request["url"].toString().toStdString();
+        const auto credential = request["credential"].toString().toStdString();
+        if (protocol == "whip") config.bearerToken = credential;
+        if (protocol == "rtmp") config.streamKey = credential;
+        if (protocol == "srt") config.passphrase = credential;
+        config.streamId = request["stream_id"].toString().toStdString();
+        config.latencyMs = request.contains("latency_ms") ? request["latency_ms"].toInt() : 120;
+        if (protocol != "vdo") {
+            const auto why = output::validateConfig(config);
+            if (!why.empty()) return fail(QString::fromStdString(why));
+            if (protocol == "file" && (!QFileInfo(request["url"].toString()).isAbsolute() || QFileInfo::exists(request["url"].toString()))) return fail("Use a new absolute recording path");
+        } else if (!parseStreamTargetInput(request["stream"].toString()).valid) return fail("Configure a valid VDO.Ninja stream ID or URL");
+        const int encoder = request.contains("encoder") ? encoderSelect_->findData(request["encoder"].toString()) : -1;
+        if (request.contains("encoder") && encoder < 0) return fail("Encoder is unavailable");
+        outputSelect_->setCurrentIndex(outputSelect_->findData(protocol));
+        outputUrlInput_->setText(request["url"].toString()); outputSecretInput_->setText(request["credential"].toString());
+        outputStreamIdInput_->setText(request["stream_id"].toString()); outputLatencySpin_->setValue(config.latencyMs);
+        streamIdInput_->setText(request["stream"].toString()); passwordInput_->setText(request["password"].toString());
+        // API output configuration describes a complete destination; never inherit
+        // a room, remote-control privilege or password from a previous GUI session.
+        roomInput_->clear(); remoteControlCheck_->setChecked(false);
+        if (encoder >= 0) encoderSelect_->setCurrentIndex(encoder);
+        if (request.contains("bitrate_kbps")) {
+            bitrateSelect_->setCurrentIndex(bitrateSelect_->count()-1);
+            customBitrateSpin_->setValue(request["bitrate_kbps"].toInt());
+        }
+        sourceModeSelect_->setCurrentIndex(sourceModeSelect_->findData("mixer"));
+        updateGoLiveButton(); return {{"ok", true}};
+    }
+    if ((command == "show.open" || command == "canvas.set") && (isLive_ || startInProgress_ || stopInProgress_ || hasPendingAsyncOperation()))
+        return fail("Stop output before changing the show or canvas");
+    return studio->controlCommand(request);
 }
 
 void MainWindow::loadPersistedSettings() {
@@ -1351,12 +1467,12 @@ void MainWindow::connectPersistedSettingSignals() {
 }
 
 void MainWindow::setupMenuBar() {
-    auto *fileMenu = menuBar()->addMenu("&File");
-    goLiveMenuAction_ = fileMenu->addAction("Go Live");
+    auto *fileMenu = menuBar()->addMenu(studioText("&File"));
+    goLiveMenuAction_ = fileMenu->addAction(studioText("Go Live"));
     goLiveMenuAction_->setEnabled(false);
     connect(goLiveMenuAction_, &QAction::triggered, this, &MainWindow::onGoLiveClicked);
 
-    copyShareLinkAction_ = fileMenu->addAction("Copy Share Link");
+    copyShareLinkAction_ = fileMenu->addAction(studioText("Copy Share Link"));
     copyShareLinkAction_->setEnabled(false);
     connect(copyShareLinkAction_, &QAction::triggered, this, [this]() {
         if (!core_) {
@@ -1370,7 +1486,7 @@ void MainWindow::setupMenuBar() {
         updateStatus("Share link copied to clipboard", "ready");
     });
 
-    openShareLinkAction_ = fileMenu->addAction("Open Share Link");
+    openShareLinkAction_ = fileMenu->addAction(studioText("Open Share Link"));
     openShareLinkAction_->setEnabled(false);
     connect(openShareLinkAction_, &QAction::triggered, this, [this]() {
         if (!core_) {
@@ -1384,7 +1500,7 @@ void MainWindow::setupMenuBar() {
     });
 
     fileMenu->addSeparator();
-    resetDefaultsAction_ = fileMenu->addAction("&Reset to Defaults...");
+    resetDefaultsAction_ = fileMenu->addAction(studioText("&Reset to Defaults..."));
     resetDefaultsAction_->setObjectName("resetDefaultsAction");
     resetDefaultsAction_->setEnabled(runtimeOptions_.persistedSettingsEnabled);
     resetDefaultsAction_->setStatusTip(
@@ -1394,27 +1510,61 @@ void MainWindow::setupMenuBar() {
     connect(resetDefaultsAction_, &QAction::triggered, this, &MainWindow::onResetToDefaults);
 
     fileMenu->addSeparator();
-    auto *quitAction = fileMenu->addAction("Quit");
+    auto *quitAction = fileMenu->addAction(studioText("Quit"));
     quitAction->setShortcut(QKeySequence("Ctrl+Q"));
     connect(quitAction, &QAction::triggered, this, [this]() {
         requestQuit();
     });
 
-    auto *viewMenu = menuBar()->addMenu("&View");
-    auto *refreshAction = viewMenu->addAction("Refresh Windows");
+    auto *viewMenu = menuBar()->addMenu(studioText("&View"));
+    auto *refreshAction = viewMenu->addAction(studioText("Refresh Windows"));
     connect(refreshAction, &QAction::triggered, this, [this]() {
         onRefreshWindows();
     });
 
-    minimizeToTrayOnCloseAction_ = viewMenu->addAction("Minimize To Tray On Close");
+    minimizeToTrayOnCloseAction_ = viewMenu->addAction(studioText("Minimize To Tray On Close"));
     minimizeToTrayOnCloseAction_->setCheckable(true);
     minimizeToTrayOnCloseAction_->setChecked(minimizeToTrayOnClose_);
     connect(minimizeToTrayOnCloseAction_, &QAction::toggled, this, [this](bool checked) {
         minimizeToTrayOnClose_ = checked;
     });
 
-    auto *helpMenu = menuBar()->addMenu("&Help");
-    auto *aboutAction = helpMenu->addAction("About Desktop Studio");
+    auto *languageMenu = menuBar()->addMenu(studioText("&Language"));
+    languageMenu->setObjectName("languageMenu");
+    auto *languages = new QActionGroup(this);
+    const QList<QPair<QString, QString>> languageChoices{{"en", "English"}, {"es", QString::fromUtf8("Español")}, {"fr", QString::fromUtf8("Français")}};
+    for (const auto &[id, label] : languageChoices) {
+        auto *action = languageMenu->addAction(label); action->setObjectName("language_"+id);
+        action->setCheckable(true); languages->addAction(action);
+        action->setChecked(QSettings("VDO.Ninja", "Video Mixer").value("ui/language", "en") == id);
+        connect(action, &QAction::triggered, this, [this, id] {
+            QSettings("VDO.Ninja", "Video Mixer").setValue("ui/language", id);
+            updateStatus(studioText("Language saved. Applies next launch; some technical messages remain in English."), "ready");
+        });
+    }
+    auto *appearanceMenu = menuBar()->addMenu(studioText("&Appearance"));
+    appearanceMenu->setObjectName("appearanceMenu");
+    auto *themes = new QActionGroup(this);
+    const QList<QPair<QString, QString>> themeChoices{{"original", "Original"}, {"graphite", "Graphite"}, {"rose", "Rose"}, {"neon", "Neon"}, {"sand", "Warm sand"}};
+    for (const auto &[id, label] : themeChoices) {
+        auto *action = appearanceMenu->addAction(studioText(label.toUtf8().constData())); action->setObjectName("theme_"+id);
+        action->setCheckable(true); themes->addAction(action);
+        action->setChecked(QSettings("VDO.Ninja", "Video Mixer").value("ui/theme", "original") == id);
+        connect(action, &QAction::triggered, this, [this, id] {
+            appearance_->apply(id); QSettings("VDO.Ninja", "Video Mixer").setValue("ui/theme", id);
+        });
+    }
+    appearanceMenu->addSeparator();
+    auto *layouts = appearanceMenu->addMenu(studioText("Workspace &layout"));
+    const QList<QPair<QString, QString>> layoutChoices{{"balanced", "&Balanced"}, {"simple", "&Simple"}, {"podcast", "&Podcast - larger audio mixer"}, {"production", "P&roduction - larger source panel"}};
+    for (const auto &[id, label] : layoutChoices) {
+        auto *action = layouts->addAction(studioText(label.toUtf8().constData())); action->setObjectName("layout_"+id);
+        connect(action, &QAction::triggered, this, [this, id] {
+            if (auto *studio = findChild<versus::mixer::MixerWidget*>()) studio->setWorkspaceLayout(id);
+        });
+    }
+    auto *helpMenu = menuBar()->addMenu(studioText("&Help"));
+    auto *aboutAction = helpMenu->addAction(studioText("About Desktop Studio"));
     connect(aboutAction, &QAction::triggered, this, [this]() {
         QMessageBox::about(
             this,
@@ -1423,12 +1573,12 @@ void MainWindow::setupMenuBar() {
                 .arg(APP_BRAND, APP_VERSION_TEXT));
     });
     helpMenu->addSeparator();
-    auto *openLogsAction = helpMenu->addAction("Open Log Folder");
+    auto *openLogsAction = helpMenu->addAction(studioText("Open Log Folder"));
     connect(openLogsAction, &QAction::triggered, this, []() {
         QDesktopServices::openUrl(QUrl::fromLocalFile(defaultLogFolderPath()));
     });
     helpMenu->addSeparator();
-    auto *openVdoAction = helpMenu->addAction("Open VDO.Ninja");
+    auto *openVdoAction = helpMenu->addAction(studioText("Open VDO.Ninja"));
     connect(openVdoAction, &QAction::triggered, this, []() {
         QDesktopServices::openUrl(QUrl("https://vdo.ninja/"));
     });
@@ -1441,15 +1591,15 @@ void MainWindow::setupUI() {
     layout->setContentsMargins(16, 16, 16, 16);
 
     auto *sourceLayout = new QHBoxLayout();
-    auto *sourceLabel = new QLabel("Video Source", this);
+    auto *sourceLabel = new QLabel(studioText("Video Source"), this);
     sourceLabel->setStyleSheet(QString("color: %1; font-weight: 600;").arg(COLOR_TEXT_DIM));
     sourceModeSelect_ = new QComboBox(this);
     sourceModeSelect_->setObjectName("sourceModeSelect");
-    sourceModeSelect_->setAccessibleName("Video source type");
-    sourceModeSelect_->addItem("Window", QVariant("window"));
-    sourceModeSelect_->addItem("Camera / Webcam", QVariant("camera"));
-    sourceModeSelect_->addItem("Spout2 (avatar apps)", QVariant("spout"));
-    sourceModeSelect_->addItem("Mixer program", QVariant("mixer"));
+    sourceModeSelect_->setAccessibleName(studioText("Video source type"));
+    sourceModeSelect_->addItem(studioText("Window"), QVariant("window"));
+    sourceModeSelect_->addItem(studioText("Camera / Webcam"), QVariant("camera"));
+    sourceModeSelect_->addItem(studioText("Spout2 (avatar apps)"), QVariant("spout"));
+    sourceModeSelect_->addItem(studioText("Mixer program"), QVariant("mixer"));
     sourceModeSelect_->setToolTip(
         "Window captures visible app/game windows. Camera / Webcam captures a Windows video input device. "
         "Spout2 is for local avatar/alpha senders such as VTube Studio, Warudo, VSeeFace, and VNyan. "
@@ -1520,33 +1670,33 @@ void MainWindow::setupUI() {
     cameraOptionsLayout->setContentsMargins(0, 0, 0, 0);
     cameraOptionsLayout->setSpacing(8);
 
-    auto *cameraResolutionLabel = new QLabel("Camera Resolution", this);
+    auto *cameraResolutionLabel = new QLabel(studioText("Camera Resolution"), this);
     cameraResolutionLabel->setStyleSheet(
         QString("color: %1; font-weight: 600;").arg(COLOR_TEXT_DIM));
     cameraResolutionSelect_ = new QComboBox(this);
     cameraResolutionSelect_->setObjectName("cameraResolutionSelect");
-    cameraResolutionSelect_->setAccessibleName("Camera resolution");
-    cameraResolutionSelect_->addItem("1920x1080", QVariant("1920x1080"));
-    cameraResolutionSelect_->addItem("1280x720", QVariant("1280x720"));
-    cameraResolutionSelect_->addItem("960x540", QVariant("960x540"));
-    cameraResolutionSelect_->addItem("640x480", QVariant("640x480"));
+    cameraResolutionSelect_->setAccessibleName(studioText("Camera resolution"));
+    cameraResolutionSelect_->addItem(studioText("1920x1080"), QVariant("1920x1080"));
+    cameraResolutionSelect_->addItem(studioText("1280x720"), QVariant("1280x720"));
+    cameraResolutionSelect_->addItem(studioText("960x540"), QVariant("960x540"));
+    cameraResolutionSelect_->addItem(studioText("640x480"), QVariant("640x480"));
     cameraResolutionSelect_->setToolTip(
-        "Requested camera capture resolution. If the camera does not offer this exact mode, Desktop Studio uses the closest supported mode.");
+        studioText("Requested camera capture resolution. If the camera does not offer this exact mode, Desktop Studio uses the closest supported mode."));
     installComboWheelGuard(cameraResolutionSelect_);
     cameraResolutionLabel->setBuddy(cameraResolutionSelect_);
 
-    auto *cameraFpsLabel = new QLabel("Frame Rate", this);
+    auto *cameraFpsLabel = new QLabel(studioText("Frame Rate"), this);
     cameraFpsLabel->setStyleSheet(
         QString("color: %1; font-weight: 600;").arg(COLOR_TEXT_DIM));
     cameraFpsSelect_ = new QComboBox(this);
     cameraFpsSelect_->setObjectName("cameraFpsSelect");
-    cameraFpsSelect_->setAccessibleName("Camera frame rate");
-    cameraFpsSelect_->addItem("60 fps", QVariant(60));
-    cameraFpsSelect_->addItem("30 fps", QVariant(30));
-    cameraFpsSelect_->addItem("24 fps", QVariant(24));
+    cameraFpsSelect_->setAccessibleName(studioText("Camera frame rate"));
+    cameraFpsSelect_->addItem(studioText("60 fps"), QVariant(60));
+    cameraFpsSelect_->addItem(studioText("30 fps"), QVariant(30));
+    cameraFpsSelect_->addItem(studioText("24 fps"), QVariant(24));
     cameraFpsSelect_->setCurrentIndex(1);
     cameraFpsSelect_->setToolTip(
-        "Requested camera frame rate. If the camera does not offer this exact rate, Desktop Studio uses the closest supported rate.");
+        studioText("Requested camera frame rate. If the camera does not offer this exact rate, Desktop Studio uses the closest supported rate."));
     installComboWheelGuard(cameraFpsSelect_);
     cameraFpsLabel->setBuddy(cameraFpsSelect_);
 
@@ -1558,11 +1708,11 @@ void MainWindow::setupUI() {
     layout->addWidget(cameraOptionsPanel_);
 
     auto *microphoneLayout = new QHBoxLayout();
-    auto *microphoneLabel = new QLabel("Microphone / Input", this);
+    auto *microphoneLabel = new QLabel(studioText("Microphone / Input"), this);
     microphoneLabel->setStyleSheet(QString("color: %1; font-weight: 600;").arg(COLOR_TEXT_DIM));
     microphoneDeviceSelect_ = new QComboBox(this);
     microphoneDeviceSelect_->setObjectName("microphoneDeviceSelect");
-    microphoneDeviceSelect_->setAccessibleName("Microphone or input device");
+    microphoneDeviceSelect_->setAccessibleName(studioText("Microphone or input device"));
     microphoneDeviceSelect_->setToolTip(
         "Choose the microphone/input used by Camera mode, the microphone audio source, or the additional audio mix. "
         "If the selected device is unavailable, capture falls back to the Windows default input.");
@@ -1591,13 +1741,13 @@ void MainWindow::setupUI() {
     auto *previewLayout = new QVBoxLayout(previewFrame);
     previewLayout->setContentsMargins(8, 8, 8, 8);
     previewLayout->setSpacing(4);
-    auto *previewTitle = new QLabel("Selected Source Preview", this);
+    auto *previewTitle = new QLabel(studioText("Selected Source Preview"), this);
     previewTitle->setStyleSheet(QString("color: %1; font-weight: bold;").arg(COLOR_TEXT_DIM));
     previewLayout->addWidget(previewTitle);
 
-    previewLabel_ = new QLabel("Select a window to see live preview", this);
+    previewLabel_ = new QLabel(studioText("Select a window to see live preview"), this);
     previewLabel_->setObjectName("selectedPreview");
-    previewLabel_->setAccessibleName("Selected source preview");
+    previewLabel_->setAccessibleName(studioText("Selected source preview"));
     previewLabel_->setAlignment(Qt::AlignCenter);
     previewLabel_->setMinimumHeight(150);
     previewLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -1616,11 +1766,11 @@ void MainWindow::setupUI() {
     sep1->setStyleSheet("background-color: #333;");
     layout->addWidget(sep1);
 
-    auto *heroTitle = new QLabel("Desktop Studio Live", this);
+    auto *heroTitle = new QLabel(studioText("Desktop Studio Live"), this);
     heroTitle->setStyleSheet(QString("color: %1; font-size: 18px; font-weight: 700;").arg(COLOR_TEXT));
     layout->addWidget(heroTitle);
 
-    auto *heroSubTitle = heroSubtitle_ = new QLabel("Select a video source, paste a Stream ID or VDO URL, then go live.", this);
+    auto *heroSubTitle = heroSubtitle_ = new QLabel(studioText("Select a video source, paste a Stream ID or VDO URL, then go live."), this);
     heroSubTitle->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     heroSubTitle->setWordWrap(true);
     layout->addWidget(heroSubTitle);
@@ -1634,13 +1784,13 @@ void MainWindow::setupUI() {
 
     streamIdInput_ = new QLineEdit(this);
     streamIdInput_->setObjectName("streamIdInput");
-    streamIdInput_->setAccessibleName("Stream ID or VDO.Ninja URL");
+    streamIdInput_->setAccessibleName(studioText("Stream ID or VDO.Ninja URL"));
     streamIdInput_->setPlaceholderText("Stream ID or VDO.Ninja URL (push/view)");
     basicForm->addRow("Stream / URL", streamIdInput_);
 
     passwordInput_ = new QLineEdit(this);
     passwordInput_->setObjectName("passwordInput");
-    passwordInput_->setAccessibleName("Stream password");
+    passwordInput_->setAccessibleName(studioText("Stream password"));
     passwordInput_->setPlaceholderText("Password (leave blank for default, 'false' to disable)");
     if (auto *passwordRow = wrapSensitiveLineEdit(passwordInput_, &passwordRevealButton_, "password", this)) {
         if (passwordRevealButton_) {
@@ -1652,7 +1802,7 @@ void MainWindow::setupUI() {
     }
     vdoTargetLayout->addLayout(basicForm);
 
-    auto *urlHint = new QLabel("Tip: paste a full VDO URL and Desktop Studio auto-uses stream/room/password.", this);
+    auto *urlHint = new QLabel(studioText("Tip: paste a full VDO URL and Desktop Studio auto-uses stream/room/password."), this);
     urlHint->setStyleSheet(QString("color: %1; font-size: 11px;").arg(COLOR_TEXT_DIM));
     urlHint->setWordWrap(true);
     vdoTargetLayout->addWidget(urlHint);
@@ -1664,7 +1814,7 @@ void MainWindow::setupUI() {
     outputSummaryLabel_->hide();
     layout->addWidget(outputSummaryLabel_);
 
-    advancedToggle_ = new QCheckBox("Show advanced settings", this);
+    advancedToggle_ = new QCheckBox(studioText("Show advanced settings"), this);
     advancedToggle_->setObjectName("advancedToggle");
     advancedToggle_->setChecked(false);
     advancedToggle_->setProperty("locked", false);
@@ -1690,12 +1840,12 @@ void MainWindow::setupUI() {
 
     outputSelect_ = new QComboBox(this);
     outputSelect_->setObjectName("outputSelect");
-    outputSelect_->setAccessibleName("Output destination");
-    outputSelect_->addItem("VDO.Ninja (default)", "vdo");
-    outputSelect_->addItem("WHIP", "whip");
-    outputSelect_->addItem("SRT (caller)", "srt");
-    outputSelect_->addItem("RTMP / RTMPS", "rtmp");
-    outputSelect_->addItem("Record to file (MKV)", "file");
+    outputSelect_->setAccessibleName(studioText("Output destination"));
+    outputSelect_->addItem(studioText("VDO.Ninja (default)"), "vdo");
+    outputSelect_->addItem(studioText("WHIP"), "whip");
+    outputSelect_->addItem(studioText("SRT (caller)"), "srt");
+    outputSelect_->addItem(studioText("RTMP / RTMPS"), "rtmp");
+    outputSelect_->addItem(studioText("Record to file (MKV)"), "file");
     installComboWheelGuard(outputSelect_);
     advancedForm->addRow("Output", outputSelect_);
     outputPanel_ = new QWidget(this);
@@ -1704,9 +1854,9 @@ void MainWindow::setupUI() {
     outputForm_->setContentsMargins(12, 0, 0, 0);
     outputUrlInput_ = new QLineEdit(this);
     outputUrlInput_->setObjectName("outputUrlInput");
-    outputUrlInput_->setAccessibleName("Output URL");
+    outputUrlInput_->setAccessibleName(studioText("Output URL"));
     outputForm_->addRow("URL / recording path", outputUrlInput_);
-    auto *recordingBrowse = new QPushButton("Choose recording file...", this);
+    auto *recordingBrowse = new QPushButton(studioText("Choose recording file..."), this);
     recordingBrowse->setObjectName("recordingBrowse");
     outputForm_->addRow(recordingBrowse);
     recordingBrowse->hide();
@@ -1719,8 +1869,8 @@ void MainWindow::setupUI() {
     });
     outputSecretInput_ = new QLineEdit(this);
     outputSecretInput_->setObjectName("outputSecretInput");
-    outputSecretInput_->setAccessibleName("Output credential");
-    outputSecretLabel_ = new QLabel("Bearer token", this);
+    outputSecretInput_->setAccessibleName(studioText("Output credential"));
+    outputSecretLabel_ = new QLabel(studioText("Bearer token"), this);
     auto *outputSecretRow = wrapSensitiveLineEdit(outputSecretInput_, &outputSecretRevealButton_, "output credential", this);
     outputForm_->addRow(outputSecretLabel_, outputSecretRow ? outputSecretRow : outputSecretInput_);
     outputStreamIdInput_ = new QLineEdit(this);
@@ -1741,7 +1891,7 @@ void MainWindow::setupUI() {
     roomInput_->setObjectName("roomInput");
     roomInput_->setPlaceholderText("Room ID (optional)");
     roomInput_->setToolTip(
-        "Room mode can route non-scene viewers to a lower-quality tier for bandwidth compatibility. Use the room-quality toggle below to disable that behavior.");
+        studioText("Room mode can route non-scene viewers to a lower-quality tier for bandwidth compatibility. Use the room-quality toggle below to disable that behavior."));
     advancedForm->addRow("Room", roomInput_);
 
     labelInput_ = new QLineEdit(this);
@@ -1751,26 +1901,26 @@ void MainWindow::setupUI() {
 
     resolutionSelect_ = new QComboBox(this);
     resolutionSelect_->setObjectName("resolutionSelect");
-    resolutionSelect_->addItem("1920x1080", QVariant("1920x1080"));
-    resolutionSelect_->addItem("1280x720", QVariant("1280x720"));
-    resolutionSelect_->addItem("960x540", QVariant("960x540"));
+    resolutionSelect_->addItem(studioText("1920x1080"), QVariant("1920x1080"));
+    resolutionSelect_->addItem(studioText("1280x720"), QVariant("1280x720"));
+    resolutionSelect_->addItem(studioText("960x540"), QVariant("960x540"));
     installComboWheelGuard(resolutionSelect_);
     advancedForm->addRow("Resolution", resolutionSelect_);
 
     fpsSelect_ = new QComboBox(this);
     fpsSelect_->setObjectName("fpsSelect");
-    fpsSelect_->addItem("60", QVariant(60));
-    fpsSelect_->addItem("30", QVariant(30));
+    fpsSelect_->addItem(studioText("60"), QVariant(60));
+    fpsSelect_->addItem(studioText("30"), QVariant(30));
     installComboWheelGuard(fpsSelect_);
     advancedForm->addRow("FPS", fpsSelect_);
 
     bitrateSelect_ = new QComboBox(this);
     bitrateSelect_->setObjectName("bitrateSelect");
-    bitrateSelect_->addItem("Ultra (20000 kbps)", QVariant(20000));
-    bitrateSelect_->addItem("High (12000 kbps)", QVariant(12000));
-    bitrateSelect_->addItem("Medium (6000 kbps)", QVariant(6000));
-    bitrateSelect_->addItem("Low (3000 kbps)", QVariant(3000));
-    bitrateSelect_->addItem("Custom", QVariant(-1));
+    bitrateSelect_->addItem(studioText("Ultra (20000 kbps)"), QVariant(20000));
+    bitrateSelect_->addItem(studioText("High (12000 kbps)"), QVariant(12000));
+    bitrateSelect_->addItem(studioText("Medium (6000 kbps)"), QVariant(6000));
+    bitrateSelect_->addItem(studioText("Low (3000 kbps)"), QVariant(3000));
+    bitrateSelect_->addItem(studioText("Custom"), QVariant(-1));
     bitrateSelect_->setCurrentIndex(1);
     installComboWheelGuard(bitrateSelect_);
     connect(bitrateSelect_, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -1800,16 +1950,16 @@ void MainWindow::setupUI() {
     roomQualityLayout->setSpacing(2);
 
     roomModeLqCheck_ = new QCheckBox(
-        "Use 640x360 for room guests/directors/viewers",
+        studioText("Use 640x360 for room guests/directors/viewers"),
         roomQualityField);
     roomModeLqCheck_->setObjectName("roomModeLqCheck");
     roomModeLqCheck_->setChecked(true);
     roomModeLqCheck_->setToolTip(
-        "Enabled: non-scene room peers use the low-quality 640x360 tier. Disabled: room peers stay on the full-resolution HQ path.");
+        studioText("Enabled: non-scene room peers use the low-quality 640x360 tier. Disabled: room peers stay on the full-resolution HQ path."));
     roomQualityLayout->addWidget(roomModeLqCheck_);
 
     roomModeLqAvailabilityLabel_ = new QLabel(
-        "Room Quality is unavailable with this codec. Select H.264 to use it.",
+        studioText("Room Quality is unavailable with this codec. Select H.264 to use it."),
         roomQualityField);
     roomModeLqAvailabilityLabel_->setObjectName("roomModeLqAvailabilityLabel");
     roomModeLqAvailabilityLabel_->setWordWrap(true);
@@ -1817,7 +1967,7 @@ void MainWindow::setupUI() {
     roomModeLqAvailabilityLabel_->setStyleSheet(
         QString("color: %1; font-size: 11px;").arg(COLOR_TEXT_DIM));
     roomModeLqAvailabilityLabel_->setAccessibleName(
-        "Room Quality unavailable. H.264 is required.");
+        studioText("Room Quality unavailable. H.264 is required."));
     roomModeLqAvailabilityLabel_->setAccessibleDescription(
         "Your saved Room Quality preference will be restored when H.264 is selected.");
     roomModeLqAvailabilityLabel_->setBuddy(roomModeLqCheck_);
@@ -1828,30 +1978,30 @@ void MainWindow::setupUI() {
 
     iceModeSelect_ = new QComboBox(this);
     iceModeSelect_->setObjectName("iceModeSelect");
-    iceModeSelect_->addItem("Auto with TURN fallback (Recommended)", QVariant("all"));
-    iceModeSelect_->addItem("Direct STUN", QVariant("stun-only"));
-    iceModeSelect_->addItem("Relay Only", QVariant("relay"));
-    iceModeSelect_->addItem("Host Only (LAN)", QVariant("host-only"));
+    iceModeSelect_->addItem(studioText("Auto with TURN fallback (Recommended)"), QVariant("all"));
+    iceModeSelect_->addItem(studioText("Direct STUN"), QVariant("stun-only"));
+    iceModeSelect_->addItem(studioText("Relay Only"), QVariant("relay"));
+    iceModeSelect_->addItem(studioText("Host Only (LAN)"), QVariant("host-only"));
     iceModeSelect_->setToolTip(
-        "Auto allows host, STUN/direct, and TURN relay candidates. ICE selects the working path automatically.");
+        studioText("Auto allows host, STUN/direct, and TURN relay candidates. ICE selects the working path automatically."));
     installComboWheelGuard(iceModeSelect_);
     advancedForm->addRow("ICE Mode", iceModeSelect_);
 
     audioSourceSelect_ = new QComboBox(this);
     audioSourceSelect_->setObjectName("audioSourceSelect");
-    audioSourceSelect_->addItem("Selected window/app audio", QVariant("selected-window"));
-    audioSourceSelect_->addItem("Default output mix", QVariant("default-output"));
-    audioSourceSelect_->addItem("Communications output (VOIP)", QVariant("communications-output"));
-    audioSourceSelect_->addItem("Selected microphone/input", QVariant("default-microphone"));
-    audioSourceSelect_->addItem("No audio", QVariant("none"));
+    audioSourceSelect_->addItem(studioText("Selected window/app audio"), QVariant("selected-window"));
+    audioSourceSelect_->addItem(studioText("Default output mix"), QVariant("default-output"));
+    audioSourceSelect_->addItem(studioText("Communications output (VOIP)"), QVariant("communications-output"));
+    audioSourceSelect_->addItem(studioText("Selected microphone/input"), QVariant("default-microphone"));
+    audioSourceSelect_->addItem(studioText("No audio"), QVariant("none"));
     audioSourceSelect_->setToolTip(
-        "Use Communications output for VOIP-style games, or Selected microphone/input for the device chosen above.");
+        studioText("Use Communications output for VOIP-style games, or Selected microphone/input for the device chosen above."));
     installComboWheelGuard(audioSourceSelect_);
     advancedForm->addRow("Audio Source", audioSourceSelect_);
 
-    audioEncodingToggle_ = new QCheckBox("Audio encoding", this);
+    audioEncodingToggle_ = new QCheckBox(studioText("Audio encoding"), this);
     audioEncodingToggle_->setObjectName("audioEncodingToggle");
-    audioEncodingToggle_->setToolTip("Expand optional codec, bitrate and channel settings.");
+    audioEncodingToggle_->setToolTip(studioText("Expand optional codec, bitrate and channel settings."));
     advancedForm->addRow(audioEncodingToggle_);
     audioEncodingPanel_ = new QWidget(this);
     audioEncodingPanel_->setObjectName("audioEncodingPanel");
@@ -1862,8 +2012,8 @@ void MainWindow::setupUI() {
     connect(audioEncodingToggle_, &QCheckBox::toggled, audioEncodingPanel_, &QWidget::setVisible);
     audioCodecSelect_ = new QComboBox(this);
     audioCodecSelect_->setObjectName("audioCodecSelect");
-    audioCodecSelect_->addItem("Opus (48 kHz)", "opus");
-    audioCodecSelect_->addItem("PCM (experimental)", "pcm");
+    audioCodecSelect_->addItem(studioText("Opus (48 kHz)"), "opus");
+    audioCodecSelect_->addItem(studioText("PCM (experimental)"), "pcm");
     installComboWheelGuard(audioCodecSelect_);
     audioEncodingForm->addRow("Codec", audioCodecSelect_);
     audioEncodingNote_ = new QLabel(this);
@@ -1889,14 +2039,14 @@ void MainWindow::setupUI() {
 
     audioChannelsSelect_ = new QComboBox(this);
     audioChannelsSelect_->setObjectName("audioChannelsSelect");
-    audioChannelsSelect_->addItem("Stereo (2 channels)", 2);
-    audioChannelsSelect_->addItem("Mono (1 channel)", 1);
+    audioChannelsSelect_->addItem(studioText("Stereo (2 channels)"), 2);
+    audioChannelsSelect_->addItem(studioText("Mono (1 channel)"), 1);
     audioChannelsSelect_->setToolTip(
         "Stereo preserves left/right separation. Mono combines both channels. "
         "Applies to the mixed audio sent to all viewers on the next stream.");
     installComboWheelGuard(audioChannelsSelect_);
     audioEncodingForm->addRow("Channels", audioChannelsSelect_);
-    audioRedCheck_ = new QCheckBox("Packet-loss protection (RED, experimental)", this);
+    audioRedCheck_ = new QCheckBox(studioText("Packet-loss protection (RED, experimental)"), this);
     audioRedCheck_->setObjectName("audioRedCheck");
     audioRedCheck_->setToolTip("Repeats the previous Opus packet when it fits. Roughly doubles audio bandwidth. "
         "Receivers that do not select RED use plain Opus. Does not protect against clipping or capture glitches.");
@@ -1906,11 +2056,11 @@ void MainWindow::setupUI() {
     connect(audioBitrateSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::updateAudioEncodingControls);
     updateAudioEncodingControls();
 
-    includeMicrophoneCheck_ = new QCheckBox("Also add microphone/input", this);
+    includeMicrophoneCheck_ = new QCheckBox(studioText("Also add microphone/input"), this);
     includeMicrophoneCheck_->setObjectName("includeMicrophoneCheck");
     includeMicrophoneCheck_->setChecked(false);
     includeMicrophoneCheck_->setToolTip(
-        "Mixes the selected microphone/input into the selected audio source so game/app audio and the on-screen player's mic are sent together.");
+        studioText("Mixes the selected microphone/input into the selected audio source so game/app audio and the on-screen player's mic are sent together."));
     advancedForm->addRow("Additional Audio", includeMicrophoneCheck_);
 
     primaryAudioGainSpin_ = new QSpinBox(this);
@@ -1918,7 +2068,7 @@ void MainWindow::setupUI() {
     primaryAudioGainSpin_->setRange(0, 200);
     primaryAudioGainSpin_->setValue(100);
     primaryAudioGainSpin_->setSuffix("%");
-    primaryAudioGainSpin_->setToolTip("Applies gain to the selected game/app audio before mixing.");
+    primaryAudioGainSpin_->setToolTip(studioText("Applies gain to the selected game/app audio before mixing."));
     installSpinWheelGuard(primaryAudioGainSpin_);
     advancedForm->addRow("Game Audio Gain", primaryAudioGainSpin_);
 
@@ -1927,21 +2077,21 @@ void MainWindow::setupUI() {
     microphoneAudioGainSpin_->setRange(0, 200);
     microphoneAudioGainSpin_->setValue(100);
     microphoneAudioGainSpin_->setSuffix("%");
-    microphoneAudioGainSpin_->setToolTip("Applies gain to the added microphone/input before mixing.");
+    microphoneAudioGainSpin_->setToolTip(studioText("Applies gain to the added microphone/input before mixing."));
     installSpinWheelGuard(microphoneAudioGainSpin_);
     advancedForm->addRow("Mic Gain", microphoneAudioGainSpin_);
 
-    audioLimiterCheck_ = new QCheckBox("Limit mixed output", this);
+    audioLimiterCheck_ = new QCheckBox(studioText("Limit mixed output"), this);
     audioLimiterCheck_->setObjectName("audioLimiterCheck");
     audioLimiterCheck_->setChecked(true);
-    audioLimiterCheck_->setToolTip("Soft-limits combined game/app and microphone audio before Opus encoding.");
+    audioLimiterCheck_->setToolTip(studioText("Soft-limits combined game/app and microphone audio before Opus encoding."));
     advancedForm->addRow("Audio Limiter", audioLimiterCheck_);
 
-    remoteControlCheck_ = new QCheckBox("Enable director control via data channel", this);
+    remoteControlCheck_ = new QCheckBox(studioText("Enable director control via data channel"), this);
     remoteControlCheck_->setObjectName("remoteControlCheck");
     remoteControlCheck_->setChecked(false);
     remoteControlCheck_->setToolTip(
-        "Allows a trusted VDO.Ninja director to request bitrate or resolution changes over the data channel while you are live.");
+        studioText("Allows a trusted VDO.Ninja director to request bitrate or resolution changes over the data channel while you are live."));
     advancedForm->addRow("Remote Control", remoteControlCheck_);
 
     remoteControlTokenInput_ = new QLineEdit(this);
@@ -1967,25 +2117,25 @@ void MainWindow::setupUI() {
 
     encoderSelect_ = new QComboBox(this);
     encoderSelect_->setObjectName("encoderSelect");
-    encoderSelect_->addItem("Auto (Hardware, then Software)", QVariant("auto"));
-    encoderSelect_->addItem("NVIDIA NVENC", QVariant("nvenc"));
-    encoderSelect_->addItem("FFmpeg NVENC (Advanced)", QVariant("ffmpeg_nvenc"));
-    encoderSelect_->addItem("Intel Quick Sync", QVariant("qsv"));
-    encoderSelect_->addItem("AMD AMF", QVariant("amf"));
-    encoderSelect_->addItem("Software", QVariant("software"));
+    encoderSelect_->addItem(studioText("Auto (Hardware, then Software)"), QVariant("auto"));
+    encoderSelect_->addItem(studioText("NVIDIA NVENC"), QVariant("nvenc"));
+    encoderSelect_->addItem(studioText("FFmpeg NVENC (Advanced)"), QVariant("ffmpeg_nvenc"));
+    encoderSelect_->addItem(studioText("Intel Quick Sync"), QVariant("qsv"));
+    encoderSelect_->addItem(studioText("AMD AMF"), QVariant("amf"));
+    encoderSelect_->addItem(studioText("Software"), QVariant("software"));
     installComboWheelGuard(encoderSelect_);
     advancedForm->addRow("Encoder", encoderSelect_);
 
     codecSelect_ = new QComboBox(this);
     codecSelect_->setObjectName("codecSelect");
-    codecSelect_->addItem("H.264 (Compatibility)", QVariant("h264"));
-    codecSelect_->addItem("H.265 / HEVC (Experimental, auto fallback)", QVariant("h265"));
-    codecSelect_->addItem("AV1 (Experimental, auto fallback)", QVariant("av1"));
-    codecSelect_->addItem("VP9 (OBS Alpha Preview, auto fallback)", QVariant("vp9"));
+    codecSelect_->addItem(studioText("H.264 (Compatibility)"), QVariant("h264"));
+    codecSelect_->addItem(studioText("H.265 / HEVC (Experimental, auto fallback)"), QVariant("h265"));
+    codecSelect_->addItem(studioText("AV1 (Experimental, auto fallback)"), QVariant("av1"));
+    codecSelect_->addItem(studioText("VP9 (OBS Alpha Preview, auto fallback)"), QVariant("vp9"));
     installComboWheelGuard(codecSelect_);
     advancedForm->addRow("Video Codec", codecSelect_);
 
-    alphaWorkflowCheck_ = new QCheckBox("Enable alpha workflow (experimental)", this);
+    alphaWorkflowCheck_ = new QCheckBox(studioText("Enable alpha workflow (experimental)"), this);
     alphaWorkflowCheck_->setObjectName("alphaWorkflowCheck");
     alphaWorkflowCheck_->setChecked(false);
     alphaWorkflowCheck_->setEnabled(false);
@@ -1993,9 +2143,9 @@ void MainWindow::setupUI() {
 
     alphaBackgroundModeSelect_ = new QComboBox(this);
     alphaBackgroundModeSelect_->setObjectName("alphaBackgroundModeSelect");
-    alphaBackgroundModeSelect_->addItem("No background fill", QVariant("none"));
-    alphaBackgroundModeSelect_->addItem("Chroma background", QVariant("chroma"));
-    alphaBackgroundModeSelect_->addItem("Opaque background", QVariant("opaque"));
+    alphaBackgroundModeSelect_->addItem(studioText("No background fill"), QVariant("none"));
+    alphaBackgroundModeSelect_->addItem(studioText("Chroma background"), QVariant("chroma"));
+    alphaBackgroundModeSelect_->addItem(studioText("Opaque background"), QVariant("opaque"));
     alphaBackgroundModeSelect_->setToolTip(
         "Composites transparent BGRA/Spout2 pixels over a solid color before encoding. "
         "Use chroma background with H.264/NVENC when true VP9 alpha is too CPU-heavy.");
@@ -2004,7 +2154,7 @@ void MainWindow::setupUI() {
 
     alphaBackgroundColorButton_ = new QPushButton(this);
     alphaBackgroundColorButton_->setObjectName("alphaBackgroundColorButton");
-    alphaBackgroundColorButton_->setToolTip("Choose the solid background color used for chroma or opaque alpha background mode.");
+    alphaBackgroundColorButton_->setToolTip(studioText("Choose the solid background color used for chroma or opaque alpha background mode."));
     alphaBackgroundColorButton_->setMinimumHeight(34);
     updateAlphaBackgroundColorButton();
     connect(alphaBackgroundColorButton_, &QPushButton::clicked, this, &MainWindow::chooseAlphaBackgroundColor);
@@ -2052,7 +2202,7 @@ void MainWindow::setupUI() {
     syncCodecUiState();
     updateOutputControls();
 
-    encoderStatusLabel_ = new QLabel("Active Encoder: (not streaming)", this);
+    encoderStatusLabel_ = new QLabel(studioText("Active Encoder: (not streaming)"), this);
     encoderStatusLabel_->setObjectName("encoderStatusLabel");
     encoderStatusLabel_->setStyleSheet(QString("color: %1; font-size: 11px;").arg(COLOR_TEXT_DIM));
     layout->addWidget(encoderStatusLabel_);
@@ -2061,9 +2211,9 @@ void MainWindow::setupUI() {
     auto *buttonLayout = new QHBoxLayout();
     buttonLayout->addStretch();
 
-    goLiveButton_ = new QPushButton("GO LIVE", this);
+    goLiveButton_ = new QPushButton(studioText("GO LIVE"), this);
     goLiveButton_->setObjectName("goLiveButton");
-    goLiveButton_->setAccessibleName("Go live");
+    goLiveButton_->setAccessibleName(studioText("Go live"));
     goLiveButton_->setFixedSize(200, 50);
     goLiveButton_->setEnabled(false);
     updateGoLiveButton();
@@ -2074,7 +2224,7 @@ void MainWindow::setupUI() {
     layout->addLayout(buttonLayout);
 
     // Status label
-    statusLabel_ = new QLabel("Select a window to capture", this);
+    statusLabel_ = new QLabel(studioText("Select a window to capture"), this);
     statusLabel_->setTextFormat(Qt::PlainText);
     statusLabel_->setObjectName("statusLabel");
     statusLabel_->setAlignment(Qt::AlignCenter);
@@ -2086,29 +2236,29 @@ void MainWindow::setupUI() {
     auto *healthLayout = new QGridLayout();
     healthLayout->setHorizontalSpacing(12);
     healthLayout->setVerticalSpacing(4);
-    auto *healthTitle = new QLabel("Connection Health", this);
+    auto *healthTitle = new QLabel(studioText("Connection Health"), this);
     healthTitle->setStyleSheet(QString("color: %1; font-weight: 600;").arg(COLOR_TEXT));
     healthLayout->addWidget(healthTitle, 0, 0, 1, 2);
 
-    connectionHealthLabel_ = new QLabel("ICE: - | Selected path: - | Peers: 0", this);
+    connectionHealthLabel_ = new QLabel(studioText("ICE: - | Selected path: - | Peers: 0"), this);
     connectionHealthLabel_->setObjectName("connectionHealthLabel");
     connectionHealthLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     connectionHealthLabel_->setWordWrap(true);
     healthLayout->addWidget(connectionHealthLabel_, 1, 0, 1, 2);
 
-    connectionMediaLabel_ = new QLabel("Codec: - | FPS: - | Resolution: - | Bitrate: -", this);
+    connectionMediaLabel_ = new QLabel(studioText("Codec: - | FPS: - | Resolution: - | Bitrate: -"), this);
     connectionMediaLabel_->setObjectName("connectionMediaLabel");
     connectionMediaLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     connectionMediaLabel_->setWordWrap(true);
     healthLayout->addWidget(connectionMediaLabel_, 2, 0, 1, 2);
 
-    systemResourceLabel_ = new QLabel("System: CPU - | RAM -", this);
+    systemResourceLabel_ = new QLabel(studioText("System: CPU - | RAM -"), this);
     systemResourceLabel_->setObjectName("systemResourceLabel");
     systemResourceLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     systemResourceLabel_->setWordWrap(true);
     healthLayout->addWidget(systemResourceLabel_, 3, 0, 1, 2);
 
-    connectionIssueLabel_ = new QLabel("Drops/encode/video/audio send: 0/0/0/0 | Last disconnect: none", this);
+    connectionIssueLabel_ = new QLabel(studioText("Drops/encode/video/audio send: 0/0/0/0 | Last disconnect: none"), this);
     connectionIssueLabel_->setObjectName("connectionIssueLabel");
     connectionIssueLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     connectionIssueLabel_->setWordWrap(true);
@@ -2119,7 +2269,7 @@ void MainWindow::setupUI() {
     auto *audioGrid = new QGridLayout();
     audioGrid->setHorizontalSpacing(10);
     audioGrid->setVerticalSpacing(5);
-    auto *audioTitle = new QLabel("Audio Sources", this);
+    auto *audioTitle = new QLabel(studioText("Audio Sources"), this);
     audioTitle->setStyleSheet(QString("color: %1; font-weight: 600;").arg(COLOR_TEXT));
     audioGrid->addWidget(audioTitle, 0, 0, 1, 3);
 
@@ -2144,7 +2294,7 @@ void MainWindow::setupUI() {
     };
 
     auto makeLevelLabel = [this](const QString &objectName) {
-        auto *label = new QLabel("-inf dB", this);
+        auto *label = new QLabel(studioText("-inf dB"), this);
         label->setObjectName(objectName);
         const QString accessibleName = objectName == "audioLevelLabel"
             ? QStringLiteral("Mixed output decibel level")
@@ -2158,7 +2308,7 @@ void MainWindow::setupUI() {
         return label;
     };
 
-    auto *mixedAudioLabel = new QLabel("Mixed output", this);
+    auto *mixedAudioLabel = new QLabel(studioText("Mixed output"), this);
     mixedAudioLabel->setObjectName("mixedAudioSourceLabel");
     mixedAudioLabel->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     audioGrid->addWidget(mixedAudioLabel, 1, 0);
@@ -2169,7 +2319,7 @@ void MainWindow::setupUI() {
     audioLevelLabel_ = makeLevelLabel("audioLevelLabel");
     audioGrid->addWidget(audioLevelLabel_, 1, 2);
 
-    primaryAudioSourceLabel_ = new QLabel("Primary: -", this);
+    primaryAudioSourceLabel_ = new QLabel(studioText("Primary: -"), this);
     primaryAudioSourceLabel_->setObjectName("primaryAudioSourceLabel");
     primaryAudioSourceLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     audioGrid->addWidget(primaryAudioSourceLabel_, 2, 0);
@@ -2180,7 +2330,7 @@ void MainWindow::setupUI() {
     primaryAudioLevelLabel_ = makeLevelLabel("primaryAudioLevelLabel");
     audioGrid->addWidget(primaryAudioLevelLabel_, 2, 2);
 
-    microphoneAudioSourceLabel_ = new QLabel("Mic/input: Off", this);
+    microphoneAudioSourceLabel_ = new QLabel(studioText("Mic/input: Off"), this);
     microphoneAudioSourceLabel_->setObjectName("microphoneAudioSourceLabel");
     microphoneAudioSourceLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     audioGrid->addWidget(microphoneAudioSourceLabel_, 3, 0);
@@ -2195,7 +2345,7 @@ void MainWindow::setupUI() {
     layout->addLayout(audioGrid);
 
     // Share link
-    shareLabel_ = new QLabel("", this);
+    shareLabel_ = new QLabel(studioText(""), this);
     shareLabel_->setObjectName("shareLinkLabel");
     shareLabel_->setAlignment(Qt::AlignCenter);
     shareLabel_->setTextInteractionFlags(Qt::TextBrowserInteraction);
@@ -2207,11 +2357,11 @@ void MainWindow::setupUI() {
     auto *shareActionsLayout = new QHBoxLayout();
     shareActionsLayout->addStretch();
 
-    copyShareLinkButton_ = new QPushButton("Copy Link", this);
+    copyShareLinkButton_ = new QPushButton(studioText("Copy Link"), this);
     copyShareLinkButton_->setObjectName("shareCopyButton");
     copyShareLinkButton_->setAccessibleDescription(
         "Copies the viewer link after streaming starts.");
-    copyShareLinkButton_->setToolTip("Available after streaming starts");
+    copyShareLinkButton_->setToolTip(studioText("Available after streaming starts"));
     copyShareLinkButton_->setEnabled(false);
     connect(copyShareLinkButton_, &QPushButton::clicked, this, [this]() {
         if (copyShareLinkAction_) {
@@ -2220,11 +2370,11 @@ void MainWindow::setupUI() {
     });
     shareActionsLayout->addWidget(copyShareLinkButton_);
 
-    openShareLinkButton_ = new QPushButton("Open Link", this);
+    openShareLinkButton_ = new QPushButton(studioText("Open Link"), this);
     openShareLinkButton_->setObjectName("shareOpenButton");
     openShareLinkButton_->setAccessibleDescription(
         "Opens the viewer link after streaming starts.");
-    openShareLinkButton_->setToolTip("Available after streaming starts");
+    openShareLinkButton_->setToolTip(studioText("Available after streaming starts"));
     openShareLinkButton_->setEnabled(false);
     connect(openShareLinkButton_, &QPushButton::clicked, this, [this]() {
         if (openShareLinkAction_) {
@@ -2313,7 +2463,7 @@ void MainWindow::setupTrayIcon() {
             QSignalBlocker blocker(minimizeToTrayOnCloseAction_);
             minimizeToTrayOnCloseAction_->setChecked(false);
             minimizeToTrayOnCloseAction_->setEnabled(false);
-            minimizeToTrayOnCloseAction_->setToolTip("System tray is unavailable on this system");
+            minimizeToTrayOnCloseAction_->setToolTip(studioText("System tray is unavailable on this system"));
         }
         return;
     }
@@ -2337,26 +2487,26 @@ void MainWindow::setupTrayIcon() {
 
     trayMenu_ = new QMenu(this);
 
-    showHideAction_ = trayMenu_->addAction("Hide");
+    showHideAction_ = trayMenu_->addAction(studioText("Hide"));
     connect(showHideAction_, &QAction::triggered, this, [this]() {
         if (isVisible()) {
             hide();
-            showHideAction_->setText("Show");
+            showHideAction_->setText(studioText("Show"));
         } else {
             show();
             raise();
             activateWindow();
-            showHideAction_->setText("Hide");
+            showHideAction_->setText(studioText("Hide"));
         }
     });
 
     trayMenu_->addSeparator();
 
-    goLiveAction_ = trayMenu_->addAction("Go Live");
+    goLiveAction_ = trayMenu_->addAction(studioText("Go Live"));
     goLiveAction_->setEnabled(false);
     connect(goLiveAction_, &QAction::triggered, this, &MainWindow::onGoLiveClicked);
 
-    copyShareLinkTrayAction_ = trayMenu_->addAction("Copy Share Link");
+    copyShareLinkTrayAction_ = trayMenu_->addAction(studioText("Copy Share Link"));
     copyShareLinkTrayAction_->setEnabled(false);
     connect(copyShareLinkTrayAction_, &QAction::triggered, this, [this]() {
         if (!core_) {
@@ -2370,7 +2520,7 @@ void MainWindow::setupTrayIcon() {
         updateStatus("Share link copied to clipboard", "ready");
     });
 
-    openShareLinkTrayAction_ = trayMenu_->addAction("Open Share Link");
+    openShareLinkTrayAction_ = trayMenu_->addAction(studioText("Open Share Link"));
     openShareLinkTrayAction_->setEnabled(false);
     connect(openShareLinkTrayAction_, &QAction::triggered, this, [this]() {
         if (!core_) {
@@ -2385,7 +2535,7 @@ void MainWindow::setupTrayIcon() {
 
     trayMenu_->addSeparator();
 
-    auto *quitAction = trayMenu_->addAction("Quit");
+    auto *quitAction = trayMenu_->addAction(studioText("Quit"));
     connect(quitAction, &QAction::triggered, this, [this]() {
         requestQuit();
     });
@@ -2713,7 +2863,7 @@ void MainWindow::refreshMicrophoneDevices(const QString &preferredDeviceId) {
         : preferredDeviceId;
     QSignalBlocker blocker(microphoneDeviceSelect_);
     microphoneDeviceSelect_->clear();
-    microphoneDeviceSelect_->addItem("Windows default microphone/input", QVariant(QString()));
+    microphoneDeviceSelect_->addItem(studioText("Windows default microphone/input"), QVariant(QString()));
     microphoneDeviceSelect_->setItemData(
         0,
         "Uses the current Windows default input device at the moment capture starts.",
@@ -2883,7 +3033,7 @@ void MainWindow::onGoLiveClicked() {
     }
 
     // This check concerns native WebRTC publishing, not startup, recording or SRT.
-    if (!isLive_ && runtimeOptions_.systemIntegrationsEnabled && outputSelect_->currentData().toString() == "vdo")
+    if (!isLive_ && !localAutomationCommand_ && runtimeOptions_.systemIntegrationsEnabled && outputSelect_->currentData().toString() == "vdo")
         showFirewallWarningIfNeeded();
 
     if (isLive_) {
@@ -2946,7 +3096,7 @@ void MainWindow::onGoLiveClicked() {
                 }
                 self->resetOperatorHealthUi();
                 if (self->encoderStatusLabel_) {
-                    self->encoderStatusLabel_->setText("Active Encoder: (not streaming)");
+                    self->encoderStatusLabel_->setText(studioText("Active Encoder: (not streaming)"));
                     self->encoderStatusLabel_->setStyleSheet(
                         QString("color: %1; font-size: 11px;").arg(COLOR_TEXT_DIM));
                 }
@@ -3323,42 +3473,42 @@ void MainWindow::updateGoLiveButton() {
 
     const bool recording = outputSelect_ && outputSelect_->currentData().toString() == "file";
     if (startInProgress_) {
-        goLiveButton_->setText("STARTING...");
-        goLiveButton_->setAccessibleName("Starting stream");
+        goLiveButton_->setText(studioText("STARTING..."));
+        goLiveButton_->setAccessibleName(studioText("Starting stream"));
         goLiveButton_->setAccessibleDescription("Desktop Studio is starting the stream.");
-        goLiveButton_->setToolTip("Starting the stream...");
+        goLiveButton_->setToolTip(studioText("Starting the stream..."));
         goLiveButton_->setEnabled(false);
         goLiveButton_->setStyleSheet(QString(
             "QPushButton:disabled { background-color: %1; color: %2; border: 1px solid #ffd47a; "
             "font-size: 14px; font-weight: bold; }")
             .arg(COLOR_YELLOW, COLOR_ACCENT_TEXT));
         if (goLiveAction_) {
-            goLiveAction_->setText("Starting...");
+            goLiveAction_->setText(studioText("Starting..."));
             goLiveAction_->setEnabled(false);
         }
         if (goLiveMenuAction_) {
-            goLiveMenuAction_->setText("Starting...");
+            goLiveMenuAction_->setText(studioText("Starting..."));
             goLiveMenuAction_->setEnabled(false);
         }
         return;
     }
 
     if (stopInProgress_) {
-        goLiveButton_->setText("STOPPING...");
-        goLiveButton_->setAccessibleName("Stopping stream");
+        goLiveButton_->setText(studioText("STOPPING..."));
+        goLiveButton_->setAccessibleName(studioText("Stopping stream"));
         goLiveButton_->setAccessibleDescription("Desktop Studio is stopping the stream.");
-        goLiveButton_->setToolTip("Stopping the stream...");
+        goLiveButton_->setToolTip(studioText("Stopping the stream..."));
         goLiveButton_->setEnabled(false);
         goLiveButton_->setStyleSheet(QString(
             "QPushButton:disabled { background-color: %1; color: %2; border: 1px solid #ffd47a; "
             "font-size: 14px; font-weight: bold; }")
             .arg(COLOR_YELLOW, COLOR_ACCENT_TEXT));
         if (goLiveAction_) {
-            goLiveAction_->setText("Stopping...");
+            goLiveAction_->setText(studioText("Stopping..."));
             goLiveAction_->setEnabled(false);
         }
         if (goLiveMenuAction_) {
-            goLiveMenuAction_->setText("Stopping...");
+            goLiveMenuAction_->setText(studioText("Stopping..."));
             goLiveMenuAction_->setEnabled(false);
         }
         return;
@@ -3368,7 +3518,7 @@ void MainWindow::updateGoLiveButton() {
         goLiveButton_->setText(recording ? "STOP RECORDING" : "STOP");
         goLiveButton_->setAccessibleName(recording ? "Stop recording" : "Stop streaming");
         goLiveButton_->setAccessibleDescription("Stop the active stream.");
-        goLiveButton_->setToolTip("Stop streaming");
+        goLiveButton_->setToolTip(studioText("Stop streaming"));
         goLiveButton_->setEnabled(true);
         goLiveButton_->setStyleSheet(QString(
             "QPushButton { background-color: %1; color: %2; border: 1px solid #ff8991; "
@@ -3377,11 +3527,11 @@ void MainWindow::updateGoLiveButton() {
             "QPushButton:focus { border: 2px solid %2; }"
         ).arg(COLOR_RED, COLOR_ACCENT_TEXT));
         if (goLiveAction_) {
-            goLiveAction_->setText("Stop");
+            goLiveAction_->setText(studioText("Stop"));
             goLiveAction_->setEnabled(true);
         }
         if (goLiveMenuAction_) {
-            goLiveMenuAction_->setText("Stop");
+            goLiveMenuAction_->setText(studioText("Stop"));
             goLiveMenuAction_->setEnabled(true);
         }
     } else {
@@ -3399,11 +3549,11 @@ void MainWindow::updateGoLiveButton() {
         goLiveButton_->setEnabled(sourceSelected);
         goLiveButton_->setStyleSheet(QString());
         if (goLiveAction_) {
-            goLiveAction_->setText("Go Live");
+            goLiveAction_->setText(studioText("Go Live"));
             goLiveAction_->setEnabled(sourceSelected);
         }
         if (goLiveMenuAction_) {
-            goLiveMenuAction_->setText("Go Live");
+            goLiveMenuAction_->setText(studioText("Go Live"));
             goLiveMenuAction_->setEnabled(sourceSelected);
             goLiveMenuAction_->setStatusTip(
                 sourceSelected
@@ -3455,14 +3605,14 @@ void MainWindow::onTrayIconActivated(QSystemTrayIcon::ActivationReason reason) {
         if (isVisible()) {
             hide();
             if (showHideAction_) {
-                showHideAction_->setText("Show");
+                showHideAction_->setText(studioText("Show"));
             }
         } else {
             show();
             raise();
             activateWindow();
             if (showHideAction_) {
-                showHideAction_->setText("Hide");
+                showHideAction_->setText(studioText("Hide"));
             }
         }
     }
@@ -3639,7 +3789,7 @@ void MainWindow::updateOutputControls() {
         : "H.264 video and 48 kHz AAC audio. Enter a server URL and stream key, or paste the complete publishing URL. RTMPS encrypts the connection.");
     if (protocol == "file") {
         outputUrlInput_->setPlaceholderText("C:/Users/You/Videos/show.mkv");
-        outputHelp_->setText("Records Program video and mixed audio to a new MKV file using H.264 and AAC. Existing files are never overwritten. Stop output to finalize the recording.");
+        outputHelp_->setText(studioText("Records Program video and mixed audio to a new MKV file using H.264 and AAC. Existing files are never overwritten. Stop output to finalize the recording."));
     }
     outputSecretInput_->setEnabled(protocol != "file");
     updateAudioEncodingControls();
@@ -3782,11 +3932,11 @@ void MainWindow::refreshFfmpegStatus() {
                              encoderSelect_->currentData().toString() == "qsv")) ||
          alphaWorkflowSelected);
     if (!needsFfmpeg) {
-        ffmpegStatusLabel_->setText("Needed for VP9/AV1/H.265, FFmpeg NVENC, Intel Quick Sync, or OBS alpha.");
+        ffmpegStatusLabel_->setText(studioText("Needed for VP9/AV1/H.265, FFmpeg NVENC, Intel Quick Sync, or OBS alpha."));
         ffmpegStatusLabel_->setStyleSheet(QString("color: %1; font-size: 11px;").arg(COLOR_TEXT_DIM));
         return;
     }
-    ffmpegStatusLabel_->setText("Checking ffmpeg.exe...");
+    ffmpegStatusLabel_->setText(studioText("Checking ffmpeg.exe..."));
     ffmpegStatusLabel_->setStyleSheet(QString("color: %1; font-size: 11px;").arg(COLOR_TEXT_DIM));
     ffmpegProbeRequested_ = true;
     if (!ffmpegProbeTimer_) {
@@ -3847,7 +3997,7 @@ void MainWindow::showFfmpegStatus(const versus::video::FfmpegProbeInfo &info) {
         return;
     }
     if (!info.resolved) {
-        ffmpegStatusLabel_->setText("ffmpeg.exe not found. Use the bundled FFmpeg or a compatible custom path for the selected codec/workflow.");
+        ffmpegStatusLabel_->setText(studioText("ffmpeg.exe not found. Use the bundled FFmpeg or a compatible custom path for the selected codec/workflow."));
         ffmpegStatusLabel_->setStyleSheet(QString("color: %1; font-size: 11px; font-weight: 600;").arg(COLOR_YELLOW));
         return;
     }
@@ -3930,7 +4080,7 @@ void MainWindow::updateAudioMeter(QProgressBar *meter, QLabel *label, float rms,
     meter->setValue(meterPct);
 
     if (db <= -89.0) {
-        label->setText("-inf dB");
+        label->setText(studioText("-inf dB"));
     } else {
         label->setText(QString("%1 dB").arg(db, 0, 'f', 1));
     }
@@ -3954,15 +4104,15 @@ void MainWindow::resetOperatorHealthUi() {
         connectionHealthLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     }
     if (connectionMediaLabel_) {
-        connectionMediaLabel_->setText("Codec: - | FPS: - | Resolution: - | Bitrate: -");
+        connectionMediaLabel_->setText(studioText("Codec: - | FPS: - | Resolution: - | Bitrate: -"));
         connectionMediaLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     }
     if (systemResourceLabel_) {
-        systemResourceLabel_->setText("System: CPU - | RAM -");
+        systemResourceLabel_->setText(studioText("System: CPU - | RAM -"));
         systemResourceLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     }
     if (connectionIssueLabel_) {
-        connectionIssueLabel_->setText("Drops/encode/video/audio send: 0/0/0/0 | Last disconnect: none");
+        connectionIssueLabel_->setText(studioText("Drops/encode/video/audio send: 0/0/0/0 | Last disconnect: none"));
         connectionIssueLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     }
 
@@ -4058,7 +4208,7 @@ void MainWindow::syncMixerCaptureControls() {
             primaryAudioGainSpin_, microphoneAudioGainSpin_}) {
         if (field) {
             field->setEnabled(configControlsEnabled_ && !mixer);
-            if (mixer) field->setToolTip("Manage mixer sources and audio levels in Studio.");
+            if (mixer) field->setToolTip(studioText("Manage mixer sources and audio levels in Studio."));
         }
     }
     if (previewLabel_) previewLabel_->parentWidget()->setVisible(!mixer);
@@ -4215,7 +4365,7 @@ void MainWindow::refreshSelectedWindowPreview() {
 
     if (sourceMode == "mixer") {
         previewLabel_->setPixmap(QPixmap());
-        previewLabel_->setText("Program output comes from the Studio tab. Manage audio with the Studio faders.");
+        previewLabel_->setText(studioText("Program output comes from the Studio tab. Manage audio with the Studio faders."));
         return;
     }
     if (sourceMode == "camera") {
@@ -4327,7 +4477,7 @@ void MainWindow::refreshSelectedWindowPreview() {
         selectedWindowId_.toStdString(), 420, 220);
     if (preview.isNull()) {
         previewLabel_->setPixmap(QPixmap());
-        previewLabel_->setText("Preview unavailable for this window");
+        previewLabel_->setText(studioText("Preview unavailable for this window"));
         return;
     }
 
@@ -4354,7 +4504,7 @@ void MainWindow::refreshPublisherCameraPreview() {
     const auto frame = core_->getPublisherPreviewFrame();
     if (!frame || frame->data.empty() || frame->width <= 0 || frame->height <= 0) {
         previewLabel_->setPixmap(QPixmap());
-        previewLabel_->setText("Waiting for live camera preview...");
+        previewLabel_->setText(studioText("Waiting for live camera preview..."));
         return;
     }
 
@@ -4385,7 +4535,7 @@ void MainWindow::refreshPublisherCameraPreview() {
 
     if (image.isNull()) {
         previewLabel_->setPixmap(QPixmap());
-        previewLabel_->setText("Live camera preview is unavailable for this pixel format");
+        previewLabel_->setText(studioText("Live camera preview is unavailable for this pixel format"));
         return;
     }
 
@@ -4434,7 +4584,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         event->ignore();
         hide();
         if (showHideAction_) {
-            showHideAction_->setText("Show");
+            showHideAction_->setText(studioText("Show"));
         }
         return;
     }

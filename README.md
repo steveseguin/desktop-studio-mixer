@@ -2,9 +2,15 @@
 
 A native Windows production studio for scenes, sources, audio mixing and live output. **Desktop Studio** complements Web Studio and Web Mixer. It is based on [Game Capture](https://github.com/steveseguin/game-capture), with its own executable, settings, installer identity, browser profiles, logs, and update feed.
 
-Development version: **0.6.2**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
+Development version: **0.7.0**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
 
 Previously named **Video Mixer**. Setup upgrades the existing installation and replaces its Start menu shortcuts. Existing shows, output profiles, camera settings, browser profiles and the layout preference carry over. The repository/build target, `%LOCALAPPDATA%/VideoMixer` data folder and `VDO.Ninja/Video Mixer` settings identity remain stable for compatibility. Older validation documents use the name of the version they measured.
+
+## Automation and workspace preferences
+
+Use the bundled CLI or stdio MCP server to control scenes, sources, audio, recording and publishing, including windowless operation. Capture Program, Preview or the app window directly as PNG. See [automation setup and API reference](docs/mixer-automation.md).
+
+The **Language** menu adds English, Spanish and French core controls. **Appearance** offers five palettes and four workspace layouts. The default styling stays unchanged; accessibility adds descriptive labels, per-track names and keyboard access.
 
 ## Use the studio
 
@@ -86,11 +92,13 @@ powershell -ExecutionPolicy Bypass -File native-qt/build-mixer.ps1 -Installer
 
 Portable executable: `native-qt/dist/desktop-studio-portable/desktop-studio.exe`.
 
-Archives and setup: `native-qt/dist/desktop-studio-0.6.2-windows-x64.zip` and `desktop-studio-0.6.2-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
+Archives and setup: `native-qt/dist/desktop-studio-0.7.0-windows-x64.zip` and `desktop-studio-0.7.0-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
 
 The pinned SDK is fetched from NuGet; other native dependencies use CMake FetchContent. Downloaded dependencies, build outputs, local shows, and QA artifacts are excluded from Git.
 
 ## Validation and provenance
+
+[0.7.0 automation and accessibility validation](docs/mixer-0.7.0-validation.md) covers packaged CLI/MCP control, windowless screenshots and production, private RTMP/SRT/WHIP receivers, browser recovery, keyboard access, themes and language menus.
 
 [0.6.2 browser resilience validation](docs/mixer-0.6.2-validation.md) covers a live VDO.Ninja viewer, default audio, actual GPU decoding, resource exhaustion, hangs and repeated crashes during recording. [0.6.1 overlay background validation](docs/mixer-0.6.1-validation.md) covers default transparency, page security policies, reloads, source modes, composed recording and the real Social Stream Ninja workflow. [0.6.0 isolation, browser security and performance validation](docs/mixer-0.6.0-validation.md) records real publishing, recording, hardware, failure-injection and sustained workflows.
 

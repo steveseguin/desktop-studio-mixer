@@ -11,6 +11,8 @@
 #include "versus/mixer/audio_level_meter.h"
 #include "versus/app/versus_app.h"
 #include <QApplication>
+#include <QAccessible>
+#include "versus/ui/studio_preferences.h"
 #include <QCheckBox>
 #include <QClipboard>
 #include <QColorDialog>
@@ -62,6 +64,7 @@
 #include <QtEndian>
 
 namespace versus::mixer {
+using ui::studioText;
 namespace {
 using Profile = app::detail::PerformanceTrace;
 constexpr int Width = 1280, Height = 720;
@@ -189,8 +192,10 @@ protected:
     }
 };
 QPushButton *button(const QString &text, const QString &name, QBoxLayout *layout, QWidget *parent) {
-    auto *result = new QPushButton(text, parent);
-    result->setObjectName(name); result->setAccessibleName(text);
+    auto *result = new QPushButton(studioText(text.toUtf8().constData()), parent);
+    result->setObjectName(name);
+    if (text.size() > 1) result->setAccessibleName(result->text());
+    ui::accessibleWidget(result);
     layout->addWidget(result); return result;
 }
 bool webUrl(const QString &value) {
@@ -249,6 +254,7 @@ struct MixerWidget::Impl {
     };
     // Bounded to Preview, Program and the outgoing transition scene.
     std::array<CompositionCache, 3> compositions;
+    QImage lastProgram;
     QListWidget *sceneList = nullptr, *sourceList = nullptr;
     Canvas *previewView = nullptr, *programView = nullptr;
     QPointer<Canvas> outputView;
@@ -285,6 +291,8 @@ struct MixerWidget::Impl {
     Impl(MixerWidget *widget, app::VersusApp *appCore) : q(widget), core(appCore) {
         projectPath = QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation))
             .filePath("VideoMixer/studio.mixer.json");
+        if (!qApp->property("studioShow").toString().isEmpty())
+            projectPath = QFileInfo(qApp->property("studioShow").toString()).absoluteFilePath();
         buildUi();
         if (!load(projectPath) && QFileInfo::exists(projectPath)) {
             // Preserve a damaged/unrecognized show before autosave creates a fresh one.
@@ -391,7 +399,18 @@ struct MixerWidget::Impl {
         sourceBox->setTitle(studioMode ? "Sources - checked items appear in Preview" : "Sources - checked items appear in output");
         previewView->setAccessibleName(studioMode ? "Preview canvas" : "Output canvas - edits go live");
     }
-    void message(const QString &text) { status->setText(text); }
+    void message(const QString &text) {
+        if (status->text() == text) return;
+        status->setText(text);
+        if (status->isVisible()) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+            QAccessibleAnnouncementEvent event(status, text);
+#else
+            QAccessibleEvent event(status, QAccessible::NameChanged);
+#endif
+            QAccessible::updateAccessibility(&event);
+        }
+    }
 
     void buildUi() {
         q->setMinimumSize(1100, 620);
@@ -411,8 +430,8 @@ struct MixerWidget::Impl {
         QObject::connect(invite, &QPushButton::clicked, q, [this] { addInvite(false); });
         QObject::connect(wireless, &QPushButton::clicked, q, [this] { addInvite(true); });
         QObject::connect(chat, &QPushButton::clicked, q, [this] { addChat(); });
-        talk->setText("Private talkback"); talk->setCheckable(true);
-        talk->setToolTip("While enabled, microphone inputs go only to guests and are removed from Program. Add your microphone as a source first.");
+        talk->setText(studioText("Private talkback")); talk->setCheckable(true);
+        talk->setToolTip(studioText("While enabled, microphone inputs go only to guests and are removed from Program. Add your microphone as a source first."));
         QObject::connect(talk, &QPushButton::toggled, q, [this](bool enabled) {
             privateTalkback = enabled;
             message(enabled ? "PRIVATE TALKBACK: microphone inputs are off air and sent only to guests. Click Private talkback again to return them to Program." : "Private talkback ended. Normal microphone routing restored.");
@@ -422,7 +441,7 @@ struct MixerWidget::Impl {
         auto *outputBar = new QHBoxLayout;
         startOutput = button("Start output", "studioStartOutput", outputBar, q);
         recordOutput = button("Record...", "studioRecord", outputBar, q);
-        outputStatus = new QLabel("Configure a destination in Output settings, or record to a file.", q);
+        outputStatus = new QLabel(studioText("Configure a destination in Output settings, or record to a file."), q);
         outputStatus->setObjectName("studioOutputStatus"); outputStatus->setWordWrap(true);
         outputBar->addWidget(outputStatus, 1); root->addLayout(outputBar);
         QObject::connect(startOutput, &QPushButton::clicked, q, [this] { emit q->toggleOutputRequested(); });
@@ -432,10 +451,10 @@ struct MixerWidget::Impl {
         for (const auto &format : {"1280x720 / 30 fps", "1920x1080 / 30 fps", "1920x1080 / 60 fps", "1280x720 / 60 fps", "1080x1920 / 30 fps"}) canvasFormat->addItem(format);
         outputBar->addWidget(canvasFormat);
         auto *localBar = new QHBoxLayout;
-        spoutOutput = new QCheckBox("Spout output", q); spoutOutput->setObjectName("spoutOutput"); localBar->addWidget(spoutOutput);
-        virtualCamera = new QCheckBox("Virtual camera", q); virtualCamera->setObjectName("virtualCamera"); localBar->addWidget(virtualCamera);
+        spoutOutput = new QCheckBox(studioText("Spout output"), q); spoutOutput->setObjectName("spoutOutput"); localBar->addWidget(spoutOutput);
+        virtualCamera = new QCheckBox(studioText("Virtual camera"), q); virtualCamera->setObjectName("virtualCamera"); localBar->addWidget(virtualCamera);
         auto *removeCamera = button("Unregister camera", "unregisterCamera", localBar, q);
-        guestReturnEnabled = new QCheckBox("Guest Program return", q); guestReturnEnabled->setObjectName("guestProgramReturn"); localBar->addWidget(guestReturnEnabled);
+        guestReturnEnabled = new QCheckBox(studioText("Guest Program return"), q); guestReturnEnabled->setObjectName("guestProgramReturn"); localBar->addWidget(guestReturnEnabled);
         QObject::connect(guestReturnEnabled, &QCheckBox::toggled, q, [this] { refreshGuestReturns(); });
         localBar->addStretch(); root->addLayout(localBar);
         QObject::connect(spoutOutput, &QCheckBox::toggled, q, [this] { localOutputs.configure(spoutOutput->isChecked(), virtualCamera->isChecked(), canvasFps); });
@@ -465,6 +484,8 @@ struct MixerWidget::Impl {
             auto *box = new QVBoxLayout(panel); box->setContentsMargins(0, 0, 0, 0);
             title = new QLabel(name, q); title->setStyleSheet("font-weight:700; color:#9ab5e8");
             box->addWidget(title); view = new Canvas(q); view->setObjectName(name.toLower()+"Canvas");
+            view->setAccessibleName(name+" canvas");
+            view->setAccessibleDescription("Rendered scene. Select a source in the Sources list and use the position, size, crop and opacity controls to edit it with the keyboard.");
             box->addWidget(view, 1); monitors->addWidget(panel, 1);
             return panel;
         };
@@ -472,9 +493,9 @@ struct MixerWidget::Impl {
         programPanel = monitor("Program", programView, programTitle);
         root->addLayout(monitors, 4);
         auto *transport = new QHBoxLayout;
-        auto *mode = new QCheckBox("Studio mode", q); mode->setObjectName("studioMode");
+        auto *mode = new QCheckBox(studioText("Studio mode"), q); mode->setObjectName("studioMode");
         mode->setChecked(studioMode);
-        mode->setToolTip("Stage scenes in Preview before taking them live. Turning Studio mode off takes Preview to output and enables direct editing.");
+        mode->setToolTip(studioText("Stage scenes in Preview before taking them live. Turning Studio mode off takes Preview to output and enables direct editing."));
         transport->addWidget(mode);
         undoButton = button("Undo", "undoEdit", transport, q); redoButton = button("Redo", "redoEdit", transport, q);
         undoButton->setEnabled(false); redoButton->setEnabled(false);
@@ -492,7 +513,8 @@ struct MixerWidget::Impl {
         });
         QObject::connect(mode, &QCheckBox::toggled, q, [this](bool enabled) {
             studioMode = enabled; draggingLayer = false;
-            QSettings("VDO.Ninja", "Video Mixer").setValue("mixer/studioMode", enabled);
+            if (qApp->property("studioShow").toString().isEmpty())
+                QSettings("VDO.Ninja", "Video Mixer").setValue("mixer/studioMode", enabled);
             changed(); updateModeUi(); rebuildSources();
             message(enabled ? "Studio mode: layout edits stay in Preview until you Take." : "Single canvas: the selected scene is on output. Edits apply immediately.");
         });
@@ -533,14 +555,14 @@ struct MixerWidget::Impl {
         root->addLayout(transport);
 
         panels = new QSplitter(Qt::Horizontal, q);
-        auto *sceneBox = new QGroupBox("Scenes", panels); auto *sceneLayout = new QVBoxLayout(sceneBox);
+        auto *sceneBox = new QGroupBox(studioText("Scenes"), panels); auto *sceneLayout = new QVBoxLayout(sceneBox);
         sceneList = new QListWidget(sceneBox); sceneList->setObjectName("sceneList"); sceneLayout->addWidget(sceneList);
         auto *sceneButtons = new QHBoxLayout;
         auto *newScene = button("+", "addScene", sceneButtons, q);
         auto *duplicate = button("Duplicate", "duplicateScene", sceneButtons, q);
         auto *rename = button("Rename", "renameScene", sceneButtons, q);
         auto *removeScene = button("-", "removeScene", sceneButtons, q); sceneLayout->addLayout(sceneButtons);
-        auto *background = new QPushButton("Background color", q); sceneLayout->addWidget(background);
+        auto *background = new QPushButton(studioText("Background color"), q); sceneLayout->addWidget(background);
         QObject::connect(sceneList, &QListWidget::itemSelectionChanged, q, [this] {
             const int row = sceneList->selectedItems().isEmpty() ? -1 : sceneList->row(sceneList->selectedItems().front());
             if (rebuilding || row < 0 || row >= static_cast<int>(scenes.size())) return;
@@ -570,7 +592,7 @@ struct MixerWidget::Impl {
             if (color.isValid()) { preview().background = color; changed(); }
         });
 
-        sourceBox = new QGroupBox("Sources", panels);
+        sourceBox = new QGroupBox(studioText("Sources"), panels);
         auto *sourceLayout = new QVBoxLayout(sourceBox);
         sourceList = new QListWidget(sourceBox); sourceList->setObjectName("mixerSources"); sourceLayout->addWidget(sourceList);
         auto *sourceButtons = new QHBoxLayout;
@@ -600,9 +622,9 @@ struct MixerWidget::Impl {
         QObject::connect(playback, &QPushButton::clicked, q, [this] {
             auto item = source(selectedSource); if (!item || !item->media) { message("Select a video or audio file source."); return; }
             QDialog dialog(q); dialog.setWindowTitle("Media playback"); auto *layout = new QVBoxLayout(&dialog);
-            auto *pause = new QCheckBox("Paused", &dialog); pause->setObjectName("mediaPaused"); pause->setChecked(item->mediaPaused || item->media->ended()); layout->addWidget(pause);
-            auto *loop = new QCheckBox("Loop", &dialog); loop->setObjectName("mediaLoop"); loop->setChecked(item->mediaLoop); layout->addWidget(loop);
-            auto *restart = new QPushButton("Restart from beginning", &dialog); restart->setObjectName("mediaRestart"); layout->addWidget(restart);
+            auto *pause = new QCheckBox(studioText("Paused"), &dialog); pause->setObjectName("mediaPaused"); pause->setChecked(item->mediaPaused || item->media->ended()); layout->addWidget(pause);
+            auto *loop = new QCheckBox(studioText("Loop"), &dialog); loop->setObjectName("mediaLoop"); loop->setChecked(item->mediaLoop); layout->addWidget(loop);
+            auto *restart = new QPushButton(studioText("Restart from beginning"), &dialog); restart->setObjectName("mediaRestart"); layout->addWidget(restart);
             QObject::connect(pause, &QCheckBox::toggled, &dialog, [this, item](bool value) { item->mediaPaused = value; if (item->media) item->media->setPaused(value); changed(); });
             QObject::connect(loop, &QCheckBox::toggled, &dialog, [this, item](bool value) { item->mediaLoop = value; if (item->media) item->media->setLoop(value); changed(); });
             QObject::connect(restart, &QPushButton::clicked, &dialog, [item, pause] { pause->setChecked(false); if (item->media) item->media->restart(); });
@@ -610,7 +632,7 @@ struct MixerWidget::Impl {
         });
         QObject::connect(cameraSettingsButton, &QPushButton::clicked, q, [this] { openCameraSettings(); });
         sourceLayout->addLayout(editButtons);
-        sourceHealth = new QLabel("Select a source to inspect its status.", q);
+        sourceHealth = new QLabel(studioText("Select a source to inspect its status."), q);
         sourceHealth->setObjectName("sourceHealth"); sourceHealth->setWordWrap(true); sourceLayout->addWidget(sourceHealth);
         QObject::connect(edit, &QPushButton::clicked, q, [this] { addSourceDialog(true); });
         QObject::connect(reconnect, &QPushButton::clicked, q, [this] {
@@ -675,10 +697,10 @@ struct MixerWidget::Impl {
         makeCoordinate("X", x); makeCoordinate("Y", y); makeCoordinate("W", w); makeCoordinate("H", h);
         sourceLayout->addLayout(geometry);
         auto *transform = new QHBoxLayout;
-        layerLock = new QCheckBox("Lock", q); layerLock->setObjectName("layerLock"); transform->addWidget(layerLock);
-        snap = new QCheckBox("Snap", q); snap->setObjectName("snapLayers"); snap->setChecked(true); transform->addWidget(snap);
+        layerLock = new QCheckBox(studioText("Lock"), q); layerLock->setObjectName("layerLock"); transform->addWidget(layerLock);
+        snap = new QCheckBox(studioText("Snap"), q); snap->setObjectName("snapLayers"); snap->setChecked(true); transform->addWidget(snap);
         fitMode = new QComboBox(q); fitMode->setObjectName("layerFit");
-        fitMode->addItem("Fit", "fit"); fitMode->addItem("Fill", "fill"); fitMode->addItem("Stretch", "stretch"); transform->addWidget(fitMode);
+        fitMode->addItem(studioText("Fit"), "fit"); fitMode->addItem(studioText("Fill"), "fill"); fitMode->addItem(studioText("Stretch"), "stretch"); transform->addWidget(fitMode);
         sourceLayout->addLayout(transform);
         QObject::connect(layerLock, &QCheckBox::toggled, q, [this](bool locked) { if (!rebuilding) if (auto *layer = selectedLayer()) { layer->locked = locked; syncInspector(); changed(); } });
         QObject::connect(fitMode, &QComboBox::currentIndexChanged, q, [this] { if (!rebuilding) if (auto *layer = selectedLayer(); layer && !layer->locked) { layer->fit = fitMode->currentData().toString(); changed(); } });
@@ -700,8 +722,8 @@ struct MixerWidget::Impl {
         auto *layerButtons = new QHBoxLayout;
         auto *front = button("Bring forward", "layerForward", layerButtons, q);
         auto *back = button("Send back", "layerBack", layerButtons, q);
-        layerButtons->addWidget(new QLabel("Opacity", q));
-        opacity = new QSlider(Qt::Horizontal, q); opacity->setRange(0, 100); opacity->setValue(100); layerButtons->addWidget(opacity);
+        layerButtons->addWidget(new QLabel(studioText("Opacity"), q));
+        opacity = new QSlider(Qt::Horizontal, q); opacity->setObjectName("layerOpacity"); opacity->setRange(0, 100); opacity->setValue(100); layerButtons->addWidget(opacity);
         sourceLayout->addLayout(layerButtons);
         QObject::connect(front, &QPushButton::clicked, q, [this] { moveLayer(1); });
         QObject::connect(back, &QPushButton::clicked, q, [this] { moveLayer(-1); });
@@ -756,7 +778,7 @@ struct MixerWidget::Impl {
         };
         previewView->released = [this] { draggingLayer = false; remember(); };
 
-        audioBox = new QGroupBox("Audio mixer", panels); auto *audioLayout = new QVBoxLayout(audioBox);
+        audioBox = new QGroupBox(studioText("Audio mixer"), panels); auto *audioLayout = new QVBoxLayout(audioBox);
         auto *scroll = new QScrollArea(audioBox); scroll->setObjectName("audioTracksScroll"); scroll->setWidgetResizable(true);
         scroll->setStyleSheet("QScrollArea { border:1px solid #50667b; background:#101b27; }");
         scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -765,23 +787,23 @@ struct MixerWidget::Impl {
         audioWidget->setStyleSheet("QWidget#studioAudioTracks { background:#080f17; }");
         audioRows = new QVBoxLayout(audioWidget); scroll->setWidget(audioWidget);
         audioLayout->addWidget(scroll);
-        auto *master = new QHBoxLayout; master->addWidget(new QLabel("Master", q));
+        auto *master = new QHBoxLayout; master->addWidget(new QLabel(studioText("Master"), q));
         auto *masterSlider = new QSlider(Qt::Horizontal, q); masterSlider->setRange(0, 150); masterSlider->setValue(100);
         masterSlider->setObjectName("masterGain"); master->addWidget(masterSlider);
         audioLayout->addLayout(master);
         masterMeter = new AudioLevelMeter(audioBox); masterMeter->setObjectName("masterAudioMeter");
-        masterMeter->setAccessibleName("Master audio level (dBFS)"); audioLayout->addWidget(masterMeter);
+        masterMeter->setAccessibleName(studioText("Master audio level (dBFS)")); audioLayout->addWidget(masterMeter);
         QObject::connect(masterSlider, &QSlider::valueChanged, q, [this](int value) { masterGain = value/100.0f; changed(); });
-        monitorEnable = new QCheckBox("Headphone monitor", q); monitorEnable->setObjectName("monitorEnable");
+        monitorEnable = new QCheckBox(studioText("Headphone monitor"), q); monitorEnable->setObjectName("monitorEnable");
         monitorDevice = new QComboBox(q); monitorDevice->setObjectName("monitorDevice");
         for (const auto &[id, name] : AudioMonitor::devices()) monitorDevice->addItem(name, id);
         audioLayout->addWidget(monitorEnable); audioLayout->addWidget(monitorDevice);
         auto *monitorVolume = new QSlider(Qt::Horizontal, q); monitorVolume->setRange(0, 100); monitorVolume->setValue(50);
-        monitorVolume->setAccessibleName("Headphone volume"); monitorVolume->setObjectName("monitorVolume"); audioLayout->addWidget(monitorVolume);
+        monitorVolume->setAccessibleName(studioText("Headphone volume")); monitorVolume->setObjectName("monitorVolume"); audioLayout->addWidget(monitorVolume);
         QObject::connect(monitorEnable, &QCheckBox::toggled, q, [this](bool value) { monitoring = value; });
         QObject::connect(monitorDevice, &QComboBox::currentIndexChanged, q, [this] { monitorDeviceId = monitorDevice->currentData().toInt(); });
         QObject::connect(monitorVolume, &QSlider::valueChanged, q, [this](int value) { monitorGain = value/100.0f; });
-        auto *monitorHelp = new QLabel("Scene follows Program. Listen also hears sources off air. Use headphones for monitoring and guest talkback. Mics start with Listen off.", q);
+        auto *monitorHelp = new QLabel(studioText("Scene follows Program. Listen also hears sources off air. Use headphones for monitoring and guest talkback. Mics start with Listen off."), q);
         monitorHelp->setWordWrap(true); audioLayout->addWidget(monitorHelp);
         // Each tool panel has its own bounded scroll surface. The canvas stays
         // in view on laptop displays while inspectors can scroll independently.
@@ -794,7 +816,7 @@ struct MixerWidget::Impl {
             scroll->setWidget(group); panels->addWidget(scroll);
         }
         panels->setSizes({220, 680, 380}); root->addWidget(panels, 4);
-        status = new QLabel("Add cameras, windows, audio, or browser sources to get started.", q);
+        status = new QLabel(studioText("Add cameras, windows, audio, or browser sources to get started."), q);
         status->setObjectName("mixerStatus"); status->setWordWrap(true); status->setTextInteractionFlags(Qt::TextSelectableByMouse);
         root->addWidget(status);
     }
@@ -850,16 +872,22 @@ struct MixerWidget::Impl {
             auto *controls = new QHBoxLayout;
             auto *gain = new QSlider(Qt::Horizontal, row); gain->setRange(0, 200); gain->setValue(qRound(item->gain*100));
             gain->setAccessibleName(item->name+" volume"); controls->addWidget(gain);
-            auto *mute = new QCheckBox("Mute", row); mute->setChecked(item->muted); controls->addWidget(mute);
-            auto *follow = new QCheckBox("Scene", row); follow->setChecked(item->followsScene); controls->addWidget(follow);
-            auto *listen = new QCheckBox("Listen", row); listen->setChecked(item->monitored); controls->addWidget(listen);
+            auto *mute = new QCheckBox(studioText("Mute"), row); mute->setChecked(item->muted); controls->addWidget(mute);
+            auto *follow = new QCheckBox(studioText("Scene"), row); follow->setChecked(item->followsScene); controls->addWidget(follow);
+            auto *listen = new QCheckBox(studioText("Listen"), row); listen->setChecked(item->monitored); controls->addWidget(listen);
             layout->addLayout(controls);
             auto *effects = new QHBoxLayout;
-            auto *noise = new QCheckBox("Noise suppression", row); noise->setChecked(item->noiseSuppression); effects->addWidget(noise);
-            auto *gate = new QCheckBox("Gate", row); gate->setChecked(item->noiseGate); effects->addWidget(gate);
-            auto *compress = new QCheckBox("Compress", row); compress->setChecked(item->compression); effects->addWidget(compress);
-            noise->setToolTip("RNNoise speech noise suppression. Leave off for music and game audio.");
-            gate->setToolTip("Soft noise gate at -45 dBFS."); compress->setToolTip("4:1 compression above -18 dBFS, without automatic makeup gain.");
+            auto *noise = new QCheckBox(studioText("Noise suppression"), row); noise->setChecked(item->noiseSuppression); effects->addWidget(noise);
+            auto *gate = new QCheckBox(studioText("Gate"), row); gate->setChecked(item->noiseGate); effects->addWidget(gate);
+            auto *compress = new QCheckBox(studioText("Compress"), row); compress->setChecked(item->compression); effects->addWidget(compress);
+            for (auto *check : {mute, follow, listen, noise, gate, compress}) {
+                check->setAccessibleName(item->name+" - "+check->text());
+                check->setObjectName(QString("audio_%1_%2").arg(check == mute ? "mute" : check == follow ? "follow" : check == listen ? "listen" : check == noise ? "noise" : check == gate ? "gate" : "compress", item->id));
+            }
+            follow->setToolTip(studioText("Mute this track when its source is absent from Program."));
+            listen->setToolTip(studioText("Include this track in headphone monitoring when monitoring is enabled."));
+            noise->setToolTip(studioText("RNNoise speech noise suppression. Leave off for music and game audio."));
+            gate->setToolTip(studioText("Soft noise gate at -45 dBFS.")); compress->setToolTip(studioText("4:1 compression above -18 dBFS, without automatic makeup gain."));
             QObject::connect(noise, &QCheckBox::toggled, q, [this, item](bool value) { item->noiseSuppression = value; changed(); });
             QObject::connect(gate, &QCheckBox::toggled, q, [this, item](bool value) { item->noiseGate = value; changed(); });
             QObject::connect(compress, &QCheckBox::toggled, q, [this, item](bool value) { item->compression = value; changed(); });
@@ -904,7 +932,7 @@ struct MixerWidget::Impl {
         QPointer<QDialog> guard(&dialog);
         auto *root = new QVBoxLayout(&dialog);
         auto *modeRow = new QHBoxLayout;
-        modeRow->addWidget(new QLabel("Capture mode", &dialog));
+        modeRow->addWidget(new QLabel(studioText("Capture mode"), &dialog));
         auto *mode = new QComboBox(&dialog); mode->setObjectName("cameraMode"); modeRow->addWidget(mode, 1);
         auto *applyMode = button("Apply capture mode", "cameraApplyMode", modeRow, &dialog);
         root->addLayout(modeRow);
@@ -921,7 +949,7 @@ struct MixerWidget::Impl {
         help->setWordWrap(true); help->setMaximumWidth(400); left->addWidget(help); left->addStretch(); body->addLayout(left);
         auto *scroll = new QScrollArea(&dialog); scroll->setObjectName("cameraControlsScroll"); scroll->setWidgetResizable(true); body->addWidget(scroll, 1); root->addLayout(body, 1);
         scroll->setStyleSheet("QScrollArea { border:1px solid #50667b; background:#101b27; }");
-        auto *feedback = new QLabel("Adjust a setting to see the result in the live preview.", &dialog);
+        auto *feedback = new QLabel(studioText("Adjust a setting to see the result in the live preview."), &dialog);
         feedback->setObjectName("cameraSettingsStatus"); feedback->setWordWrap(true); root->addWidget(feedback);
         QDialogButtonBox buttons(QDialogButtonBox::Close); root->addWidget(&buttons);
         QObject::connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -957,13 +985,13 @@ struct MixerWidget::Impl {
                 auto *number = new QSpinBox(panel); number->setObjectName("cameraValue_"+id);
                 number->setRange(control.minimum, control.maximum); number->setSingleStep(control.step);
                 number->setValue(control.value); number->setKeyboardTracking(false); number->setMinimumWidth(78); row->addWidget(number);
-                auto *automatic = new QCheckBox("Auto", panel); automatic->setObjectName("cameraAuto_"+id);
+                auto *automatic = new QCheckBox(studioText("Auto"), panel); automatic->setObjectName("cameraAuto_"+id);
                 automatic->setChecked(control.automatic); automatic->setEnabled(control.supportsAuto && control.supportsManual); row->addWidget(automatic);
                 auto *reset = button("Reset", "cameraReset_"+id, row, panel);
-                reset->setToolTip("Use the driver's default value, with automatic mode when supported.");
+                reset->setToolTip(studioText("Use the driver's default value, with automatic mode when supported."));
                 const auto range = QString("Range %1 to %2; step %3. Values are camera driver units.").arg(control.minimum).arg(control.maximum).arg(control.step);
                 number->setToolTip(range); slider->setToolTip(range); label->setToolTip(range);
-                if (id == "exposure") label->setToolTip("Exposure uses powers of two seconds: -7 is 1/128 second. Longer exposure can reduce frame rate.");
+                if (id == "exposure") label->setToolTip(studioText("Exposure uses powers of two seconds: -7 is 1/128 second. Longer exposure can reduce frame rate."));
                 number->setEnabled(control.supportsManual && !control.automatic); slider->setEnabled(number->isEnabled());
                 rows->addLayout(row);
                 auto submit = [&, control, id, panel, slider, number, automatic, guard](int value, bool autoMode) {
@@ -992,7 +1020,7 @@ struct MixerWidget::Impl {
                 QObject::connect(automatic, &QCheckBox::toggled, &dialog, [submit, number](bool on) { submit(number->value(), on); });
                 QObject::connect(reset, &QPushButton::clicked, &dialog, [submit, control] { submit(control.defaultValue, control.supportsAuto); });
             }
-            if (settings.controls.empty()) rows->addWidget(new QLabel("This camera's driver exposes no adjustable image controls.", panel));
+            if (settings.controls.empty()) rows->addWidget(new QLabel(studioText("This camera's driver exposes no adjustable image controls."), panel));
             rows->addStretch(); scroll->setWidget(panel);
         };
         bool wasStarting = false;
@@ -1001,7 +1029,7 @@ struct MixerWidget::Impl {
             const auto requested = formats[index];
             item->cameraWidth = requested.width; item->cameraHeight = requested.height; item->cameraFps = requested.fps;
             stopSource(item); startSource(item);
-            wasStarting = true; feedback->setText("Applying capture mode..."); applyMode->setEnabled(false); changed();
+            wasStarting = true; feedback->setText(studioText("Applying capture mode...")); applyMode->setEnabled(false); changed();
         });
         QTimer previewTimer;
         QObject::connect(&previewTimer, &QTimer::timeout, &dialog, [&] {
@@ -1031,13 +1059,13 @@ struct MixerWidget::Impl {
         QLabel help; help.setWordWrap(true);
         QCheckBox transparent("Transparent overlay background (up to 15 fps)"); transparent.setObjectName("browserTransparency");
         QCheckBox colorMetadata("Preserve original video color metadata"); colorMetadata.setObjectName("browserColorMetadata");
-        colorMetadata.setToolTip("Enable if a WebRTC source's colors look wrong. On affected WebView2 versions this may use software decoding and more CPU.");
+        colorMetadata.setToolTip(studioText("Enable if a WebRTC source's colors look wrong. On affected WebView2 versions this may use software decoding and more CPU."));
         QSpinBox audioDelay; audioDelay.setObjectName("sourceAudioDelay"); audioDelay.setRange(0, 500); audioDelay.setSuffix(" ms");
-        audioDelay.setToolTip("Delay this source's Program audio to match its picture. Headphone monitoring stays immediate.");
+        audioDelay.setToolTip(studioText("Delay this source's Program audio to match its picture. Headphone monitoring stays immediate."));
         form->addRow("Source type", &type); form->addRow("Name", &name); form->addRow("Device / window", &device);
         form->addRow("URL / file / text / color", &value); form->addRow(&browse); form->addRow(&transparent); form->addRow(&colorMetadata); form->addRow(&help);
         form->addRow("Audio delay", &audioDelay);
-        if (editing) form->addRow(new QLabel("Source changes apply to every scene, including Program.", &dialog));
+        if (editing) form->addRow(new QLabel(studioText("Source changes apply to every scene, including Program."), &dialog));
         auto populate = [&] {
             const auto kind = type.currentData().toString(); device.clear();
             transparent.setVisible(kind == "browser" || kind == "guest" || kind == "wireless" || kind == "chat");
@@ -1050,19 +1078,19 @@ struct MixerWidget::Impl {
                 const auto devices = kind == "camera" ? core->listCameras() : (kind == "spout" ? core->listSpoutSenders() : core->listWindows());
                 for (const auto &info : devices) device.addItem(QString::fromStdString(info.name), QString::fromStdString(info.id));
                 value.setVisible(false);
-                help.setText("Select a source. Window audio is captured when supported by Windows.");
+                help.setText(studioText("Select a source. Window audio is captured when supported by Windows."));
             } else if (kind == "microphone") {
-                device.addItem("Default microphone", "");
+                device.addItem(studioText("Default microphone"), "");
                 for (const auto &info : core->listAudioInputDevices()) device.addItem(QString::fromStdString(info.name), QString::fromStdString(info.id));
-                value.setVisible(false); help.setText("Microphones stay on across scenes by default. Use Mute or enable Scene in the audio mixer.");
+                value.setVisible(false); help.setText(studioText("Microphones stay on across scenes by default. Use Mute or enable Scene in the audio mixer."));
             } else {
                 device.setVisible(false);
-                if (kind == "desktop") { value.setVisible(false); help.setText("Captures other applications, excluding Desktop Studio, its browsers and monitoring. Avoid adding the same game's individual audio twice."); }
-                if (!transparent.isHidden()) { value.setPlaceholderText("https://..."); help.setText("Overlay mode clears the page background automatically, keeping message and card styling. Turn it off for smooth browser video at 30 fps. Open / Invite allows interaction; Escape parks the browser."); }
-                if (kind == "media") help.setText("Local video or audio file. Playback uses Windows media decoders; H.264/AAC MP4 is recommended. Use Playback controls after adding it.");
-                if (kind == "image") help.setText("PNG, JPEG and other Qt-supported images. Transparent PNGs remain transparent.");
-                if (kind == "title") { value.setText("Your title"); help.setText("A full-frame title card. Resize and position it on the canvas."); }
-                if (kind == "color") { value.setText("#24466f"); help.setText("A solid color layer."); }
+                if (kind == "desktop") { value.setVisible(false); help.setText(studioText("Captures other applications, excluding Desktop Studio, its browsers and monitoring. Avoid adding the same game's individual audio twice.")); }
+                if (!transparent.isHidden()) { value.setPlaceholderText("https://..."); help.setText(studioText("Overlay mode clears the page background automatically, keeping message and card styling. Turn it off for smooth browser video at 30 fps. Open / Invite allows interaction; Escape parks the browser.")); }
+                if (kind == "media") help.setText(studioText("Local video or audio file. Playback uses Windows media decoders; H.264/AAC MP4 is recommended. Use Playback controls after adding it."));
+                if (kind == "image") help.setText(studioText("PNG, JPEG and other Qt-supported images. Transparent PNGs remain transparent."));
+                if (kind == "title") { value.setText(studioText("Your title")); help.setText(studioText("A full-frame title card. Resize and position it on the canvas.")); }
+                if (kind == "color") { value.setText(studioText("#24466f")); help.setText(studioText("A solid color layer.")); }
             }
         };
         QObject::connect(&type, &QComboBox::currentIndexChanged, &dialog, populate);
@@ -1079,11 +1107,11 @@ struct MixerWidget::Impl {
         QObject::connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
         QObject::connect(&buttons, &QDialogButtonBox::accepted, &dialog, [&] {
             const auto kind = type.currentData().toString();
-            if (device.isVisible() && device.count() == 0) { help.setText("No source found. Connect a device or open a window first."); return; }
-            if (transparent.isVisible() && !webUrl(value.text().trimmed())) { help.setText("Enter a complete http:// or https:// source URL."); return; }
-            if (kind == "color" && !QColor(value.text()).isValid()) { help.setText("Enter a valid color, for example #24466f."); return; }
-            if (kind == "media" && !QFileInfo(value.text()).isFile()) { help.setText("Choose an existing local media file."); return; }
-            if (kind == "image" && !QImageReader(value.text()).canRead()) { help.setText("Choose a readable image file."); return; }
+            if (device.isVisible() && device.count() == 0) { help.setText(studioText("No source found. Connect a device or open a window first.")); return; }
+            if (transparent.isVisible() && !webUrl(value.text().trimmed())) { help.setText(studioText("Enter a complete http:// or https:// source URL.")); return; }
+            if (kind == "color" && !QColor(value.text()).isValid()) { help.setText(studioText("Enter a valid color, for example #24466f.")); return; }
+            if (kind == "media" && !QFileInfo(value.text()).isFile()) { help.setText(studioText("Choose an existing local media file.")); return; }
+            if (kind == "image" && !QImageReader(value.text()).canRead()) { help.setText(studioText("Choose a readable image file.")); return; }
             auto item = existing ? existing : std::make_shared<Source>();
             const auto locator = device.isVisible() ? device.currentData().toString() : value.text().trimmed();
             // Labels and audio delay do not change the capture session. Keeping it
@@ -1091,7 +1119,7 @@ struct MixerWidget::Impl {
             const bool restart = existing && (reconnect || kind != item->kind ||
                 locator != item->locator || transparent.isChecked() != item->transparent || colorMetadata.isChecked() != item->preserveColorMetadata);
             if (restart && device.isVisible() && device.currentData(Qt::UserRole+1).toBool()) {
-                help.setText("The saved device is unavailable. Select an available device to reconnect."); return;
+                help.setText(studioText("The saved device is unavailable. Select an available device to reconnect.")); return;
             }
             if (restart) { item->browserRestarts.clear(); stopSource(item); }
             item->kind = kind; item->transparent = transparent.isChecked();
@@ -1362,14 +1390,14 @@ struct MixerWidget::Impl {
     }
     void showInvite(const std::shared_ptr<Source> &item) {
         QDialog dialog(q); dialog.setWindowTitle(item->name+" - invite"); auto *layout = new QVBoxLayout(&dialog);
-        auto *help = new QLabel("Send this private link to the guest or open it on your phone.\nThey choose their camera and microphone, then join. Use headphones.\nPrivate talkback sends your microphone inputs only to guests.\nGuests join backstage. Select their source and choose Admit / Backstage when ready. Program return sends the show with their own audio removed.", &dialog); layout->addWidget(help);
+        auto *help = new QLabel(studioText("Send this private link to the guest or open it on your phone.\nThey choose their camera and microphone, then join. Use headphones.\nPrivate talkback sends your microphone inputs only to guests.\nGuests join backstage. Select their source and choose Admit / Backstage when ready. Program return sends the show with their own audio removed."), &dialog); layout->addWidget(help);
         auto *url = new QLineEdit(item->invite, &dialog); url->setReadOnly(true); url->setMinimumWidth(620); url->setObjectName("inviteUrl"); layout->addWidget(url);
         auto *buttons = new QHBoxLayout;
         auto *copy = button("Copy invite link", "copyInvite", buttons, &dialog);
         auto *open = button("Open invite", "openInvite", buttons, &dialog);
         auto *inspect = button("Interact with receiver", "inspectReceiver", buttons, &dialog);
         auto *close = button("Done", "closeInvite", buttons, &dialog); layout->addLayout(buttons);
-        QObject::connect(copy, &QPushButton::clicked, &dialog, [url, copy] { QApplication::clipboard()->setText(url->text()); copy->setText("Copied"); });
+        QObject::connect(copy, &QPushButton::clicked, &dialog, [url, copy] { QApplication::clipboard()->setText(url->text()); copy->setText(studioText("Copied")); });
         QObject::connect(open, &QPushButton::clicked, &dialog, [item] { QDesktopServices::openUrl(QUrl(item->invite)); });
         QObject::connect(inspect, &QPushButton::clicked, &dialog, [item] { if (item->browser) item->browser->interact(); });
         QObject::connect(close, &QPushButton::clicked, &dialog, &QDialog::accept); dialog.exec();
@@ -1497,7 +1525,7 @@ struct MixerWidget::Impl {
         if (!nextRender || tick-nextRender > period*2) nextRender = tick;
         nextRender += period;
         videoTimer.setInterval(std::max(1, int((nextRender-tick+9999)/10000)));
-        recordOutput->setText(recorder.active() ? "Stop recording" : "Record...");
+        recordOutput->setText(recorder.active() ? studioText("Stop recording") : studioText("Record..."));
         recordOutput->setAccessibleName(recordOutput->text());
         recordingStatus->setText(recorder.status()); recordingStatus->setVisible(!recorder.status().isEmpty());
         canvasFormat->setEnabled(!core->isLive() && !recorder.busy() && !guestReturnEnabled->isChecked() && !virtualCamera->isChecked() && !spoutOutput->isChecked());
@@ -1513,6 +1541,7 @@ struct MixerWidget::Impl {
             QImage old = compose(previous, 2); QPainter painter(&old); painter.setOpacity(fraction); painter.drawImage(0, 0, frame); painter.end(); frame = old;
             if (fraction >= 1) fading = false;
         }
+        lastProgram = frame; // Implicitly shared; screenshots never capture the desktop.
         if (studioMode) programView->present(frame);
         else if (previewView->isVisible()) {
             const auto item = source(selectedSource);
@@ -1572,7 +1601,7 @@ struct MixerWidget::Impl {
                 if (auto output = item->guestReturn.load()) text += " / "+output->status();
                 if (!item->admitted) text += " / BACKSTAGE";
                 sourceHealth->setText(item->name+": "+text);
-            } else sourceHealth->setText("Select a source to inspect its status.");
+            } else sourceHealth->setText(studioText("Select a source to inspect its status."));
         }
     }
     void mixAudio() {
@@ -1759,11 +1788,206 @@ struct MixerWidget::Impl {
     }
 };
 
-MixerWidget::MixerWidget(app::VersusApp *core, QWidget *parent) : QWidget(parent), impl_(std::make_unique<Impl>(this, core)) {}
+MixerWidget::MixerWidget(app::VersusApp *core, QWidget *parent) : QWidget(parent), impl_(std::make_unique<Impl>(this, core)) {
+    setWorkspaceLayout(QSettings("VDO.Ninja", "Video Mixer").value("ui/workspaceLayout", "balanced").toString());
+}
 MixerWidget::~MixerWidget() = default;
 void MixerWidget::shutdown() { impl_->shutdown(); }
 QSize MixerWidget::canvasSize() const { return {impl_->Width, impl_->Height}; }
 int MixerWidget::canvasFrameRate() const { return impl_->canvasFps; }
+QImage MixerWidget::captureCanvas(const QString &target) {
+    auto &i = *impl_;
+    if (target == "preview") return i.compose(i.preview(), 0);
+    if (i.lastProgram.isNull()) i.render();
+    if (target == "window") {
+        // Hidden canvases skip normal repaint work. Populate them on demand so
+        // a windowless app screenshot still shows current Program/Preview.
+        i.previewView->present(i.studioMode ? i.compose(i.preview(), 0) : i.lastProgram);
+        i.programView->present(i.lastProgram);
+    }
+    return i.lastProgram;
+}
+void MixerWidget::setWorkspaceLayout(const QString &layout) {
+    auto &i = *impl_;
+    if (layout == "podcast") i.panels->setSizes({180, 420, 700});
+    else if (layout == "production") i.panels->setSizes({240, 740, 360});
+    else if (layout == "simple") i.panels->setSizes({180, 580, 340});
+    else i.panels->setSizes({220, 680, 380});
+    auto *root = qobject_cast<QVBoxLayout*>(this->layout());
+    root->setStretch(root->indexOf(i.panels), layout == "simple" ? 2 : 4);
+    setProperty("workspaceLayout", layout);
+    if (qApp->property("studioShow").toString().isEmpty())
+        QSettings("VDO.Ninja", "Video Mixer").setValue("ui/workspaceLayout", layout);
+}
+QJsonObject MixerWidget::controlState() const {
+    auto &i = *impl_; QJsonArray scenes, sources;
+    auto layers = [](const Scene &scene) {
+        QJsonArray result;
+        for (const auto &l : scene.layers) result.append(QJsonObject{{"source", l.source},
+            {"x", l.rect.x()}, {"y", l.rect.y()}, {"w", l.rect.width()}, {"h", l.rect.height()},
+            {"visible", l.visible}, {"opacity", l.opacity}, {"locked", l.locked}, {"fit", l.fit},
+            {"cropX", l.crop.x()}, {"cropY", l.crop.y()}, {"cropW", l.crop.width()}, {"cropH", l.crop.height()}});
+        return result;
+    };
+    for (const auto &s : i.scenes) scenes.append(QJsonObject{{"id", s.id}, {"name", s.name},
+        {"background", s.background.name(QColor::HexArgb)}, {"layers", layers(s)}});
+    for (const auto &s : i.sources) sources.append(QJsonObject{{"id", s->id}, {"name", s->name}, {"kind", s->kind},
+        {"has_audio", s->hasAudio()}, {"gain", s->gain.load()}, {"muted", s->muted.load()},
+        {"followsScene", s->followsScene.load()}, {"monitored", s->monitored.load()},
+        {"noiseSuppression", s->noiseSuppression.load()}, {"noiseGate", s->noiseGate.load()}, {"compression", s->compression.load()},
+        {"audioDelayMs", s->audioDelayMs.load()}, {"peak", s->peak.load()}, {"on_program", s->onProgram.load()},
+        {"frames", int(s->frames.load())}, {"starting", s->starting},
+        {"error", s->media && !s->media->error().isEmpty() ? s->media->error() : s->error},
+        {"ended", s->media && s->media->ended()},
+        {"transparent", s->transparent}, {"preserveColorMetadata", s->preserveColorMetadata},
+        {"paused", s->mediaPaused}, {"loop", s->mediaLoop}});
+    return {{"scenes", scenes}, {"sources", sources}, {"preview", i.preview().id}, {"program", i.program.id},
+        {"program_layers", layers(i.program)}, {"transitioning", i.fading},
+        {"mode", i.studioMode ? "studio" : "single"}, {"layout", property("workspaceLayout").toString()},
+        {"canvas", QJsonObject{{"width", i.Width}, {"height", i.Height}, {"fps", i.canvasFps},
+            {"format", i.canvasFormat->currentIndex()}, {"renderer", i.renderer->currentIndex() == 0 ? "gpu" : "cpu"}}},
+        {"recording", QJsonObject{{"active", i.recorder.active()}, {"busy", i.recorder.busy()},
+            {"status", i.recorder.status()}, {"dropped_frames", qint64(i.recorder.dropped())}}},
+        {"master_gain", i.masterGain.load()}, {"master_peak", i.masterPeak.load()}};
+}
+QJsonObject MixerWidget::controlCommand(const QJsonObject &c) {
+    auto &i = *impl_;
+    const auto command = c["command"].toString();
+    const auto fail = [](const QString &why) { return QJsonObject{{"error", why}}; };
+    if (!i.running) return fail("Mixer is shutting down");
+    const auto sceneIndex = [&](const QString &id) {
+        for (int n = 0; n < int(i.scenes.size()); ++n) if (i.scenes[n].id == id) return n;
+        return -1;
+    };
+    const auto outputsBusy = [&] { return i.core->isLive() || i.recorder.busy() || i.spoutOutput->isChecked() ||
+        i.virtualCamera->isChecked() || i.guestReturnEnabled->isChecked(); };
+    QJsonObject result{{"ok", true}, {"command", command}};
+    if (command == "scene.add") {
+        if (i.scenes.size() >= 64) return fail("A show supports at most 64 scenes");
+        Scene s; s.name = c["name"].toString().trimmed();
+        if (c.contains("background")) { s.background = QColor(c["background"].toString()); if (!s.background.isValid()) return fail("Invalid color"); }
+        result["id"] = s.id; i.scenes.push_back(s); i.selectedScene = int(i.scenes.size())-1;
+        i.rebuild(); i.changed();
+    } else if (command == "scene.take") {
+        i.takeScene(c["transition"] == "fade");
+    } else if (command.startsWith("scene.")) {
+        const int n = sceneIndex(c["id"].toString()); if (n < 0) return fail("Scene not found");
+        if (command == "scene.select") { i.selectedScene = n; }
+        else if (command == "scene.rename") i.scenes[n].name = c["name"].toString().trimmed();
+        else if (command == "scene.background") {
+            QColor color(c["color"].toString()); if (!color.isValid()) return fail("Invalid color"); i.scenes[n].background = color;
+        } else if (command == "scene.remove") {
+            if (i.scenes.size() == 1) return fail("Keep at least one scene");
+            i.scenes.erase(i.scenes.begin()+n); i.selectedScene = std::min(i.selectedScene, int(i.scenes.size())-1);
+        } else return fail("Unknown scene command");
+        i.rebuild(); i.changed();
+    } else if (command == "source.add" || command == "source.update") {
+        const bool add = command == "source.add";
+        auto s = add ? std::make_shared<Source>() : i.source(c["id"].toString());
+        if (!s) return fail("Source not found");
+        if (add && i.sources.size() >= 32) return fail("A show supports at most 32 sources");
+        const auto kind = add ? c["kind"].toString() : s->kind;
+        const auto locator = c.contains("locator") ? c["locator"].toString() : s->locator;
+        if ((kind == "browser" || kind == "chat" || kind == "guest" || kind == "wireless") && !webUrl(locator)) return fail("Browser sources require an HTTP or HTTPS URL");
+        if ((kind == "image" || kind == "media") && (!QFileInfo(locator).isAbsolute() || !QFileInfo(locator).isFile())) return fail("Select an existing absolute file path");
+        if (kind == "color" && !QColor(locator).isValid()) return fail("Invalid color");
+        if ((kind == "camera" || kind == "window" || kind == "spout") && locator.isEmpty()) return fail("Select a device ID from /sources");
+        const bool transparent = c.contains("transparent") ? c["transparent"].toBool() : add ? (kind == "browser" || kind == "chat") : s->transparent;
+        const bool metadata = c.contains("preserveColorMetadata") ? c["preserveColorMetadata"].toBool() : s->preserveColorMetadata;
+        const bool restart = !add && (locator != s->locator || transparent != s->transparent || metadata != s->preserveColorMetadata);
+        if (restart) { s->browserRestarts.clear(); i.stopSource(s); }
+        if (add) s->kind = kind;
+        if (locator != s->locator && kind == "window") { s->windowTitle.clear(); s->windowExecutable.clear(); }
+        if (locator != s->locator && kind == "camera") s->cameraControls = {};
+        s->locator = locator; s->transparent = transparent; s->preserveColorMetadata = metadata;
+        if (c.contains("name")) s->name = c["name"].toString().trimmed();
+        if (kind == "color") s->color = QColor(locator);
+        if (add) {
+            if (kind == "browser") s->audioDelayMs = 60;
+            if (kind == "microphone" || kind == "desktop") s->followsScene = false;
+            if (kind == "microphone") s->monitored = false;
+            i.appendSource(s);
+        } else { if (restart) i.startSource(s); i.rebuild(); i.changed(); }
+        result["id"] = s->id;
+    } else if (command == "source.remove" || command == "source.reconnect") {
+        auto s = i.source(c["id"].toString()); if (!s) return fail("Source not found");
+        if (command == "source.remove") {
+            i.selectedSource = s->id; i.removeSource();
+            if (i.source(s->id)) return fail("Take the source off Program before removing it");
+        } else { s->browserRestarts.clear(); i.stopSource(s); i.startSource(s); }
+    } else if (command.startsWith("layer.")) {
+        auto s = i.source(c["source"].toString()); if (!s) return fail("Source not found");
+        const int n = c.contains("scene") ? sceneIndex(c["scene"].toString()) : i.selectedScene;
+        if (n < 0) return fail("Scene not found");
+        auto &layers = i.scenes[n].layers;
+        auto found = std::find_if(layers.begin(), layers.end(), [&](const auto &l) { return l.source == s->id; });
+        if (command == "layer.order") {
+            if (found == layers.end() || c["index"].toInt() >= int(layers.size())) return fail("Layer or index not found");
+            if (found->locked) return fail("Unlock the layer before moving it");
+            const auto copy = *found; layers.erase(found); layers.insert(layers.begin()+c["index"].toInt(), copy);
+        } else {
+            Layer l = found == layers.end() ? Layer{s->id} : *found;
+            if (l.locked && (!c.contains("locked") || c["locked"].toBool())) return fail("Unlock the layer before editing it");
+            auto number = [&](const char *key, double old) { return c.contains(key) ? c[key].toDouble() : old; };
+            l.rect = {number("x",l.rect.x()), number("y",l.rect.y()), number("w",l.rect.width()), number("h",l.rect.height())};
+            l.crop = {number("cropX",l.crop.x()), number("cropY",l.crop.y()), number("cropW",l.crop.width()), number("cropH",l.crop.height())};
+            if (l.crop.right() > 1.00001 || l.crop.bottom() > 1.00001) return fail("Crop extends beyond the source");
+            l.opacity = number("opacity", l.opacity);
+            if (c.contains("visible")) l.visible = c["visible"].toBool();
+            if (c.contains("locked")) l.locked = c["locked"].toBool();
+            if (c.contains("fit")) l.fit = c["fit"].toString();
+            if (found == layers.end()) layers.push_back(l); else *found = l;
+        }
+        i.rebuildSources(); i.syncInspector(); i.changed();
+    } else if (command == "audio.set") {
+        if (c["source"] == "master") {
+            if (c.size() != 3 || !c.contains("gain") || c["gain"].toDouble() > 1.5) return fail("Master accepts only gain from 0 to 1.5");
+            findChild<QSlider*>("masterGain")->setValue(qRound(c["gain"].toDouble()*100));
+        } else {
+            auto s = i.source(c["source"].toString()); if (!s || !s->hasAudio()) return fail("Audio source not found");
+            if (c.contains("gain")) s->gain = float(c["gain"].toDouble());
+            if (c.contains("muted")) s->muted = c["muted"].toBool();
+            if (c.contains("followsScene")) s->followsScene = c["followsScene"].toBool();
+            if (c.contains("monitored")) s->monitored = c["monitored"].toBool();
+            if (c.contains("noiseSuppression")) s->noiseSuppression = c["noiseSuppression"].toBool();
+            if (c.contains("noiseGate")) s->noiseGate = c["noiseGate"].toBool();
+            if (c.contains("compression")) s->compression = c["compression"].toBool();
+            if (c.contains("audioDelayMs")) s->audioDelayMs = c["audioDelayMs"].toInt();
+            i.rebuildAudio(); i.changed();
+        }
+    } else if (command == "media.set") {
+        auto s = i.source(c["id"].toString()); if (!s || !s->media) return fail("Active media source not found");
+        if (c.contains("paused")) { s->mediaPaused = c["paused"].toBool(); s->media->setPaused(s->mediaPaused); }
+        if (c.contains("loop")) { s->mediaLoop = c["loop"].toBool(); s->media->setLoop(s->mediaLoop); }
+        if (c["restart"].toBool()) s->media->restart();
+        i.changed();
+    } else if (command == "record.start") {
+        const QString path = c["path"].toString();
+        if (i.recorder.busy()) return fail("Recording is already active or finalizing");
+        if (!QFileInfo(path).isAbsolute() || !path.endsWith(".mkv", Qt::CaseInsensitive) || QFileInfo::exists(path)) return fail("Use a new absolute .mkv path");
+        if (!i.recorder.start(path, i.Width, i.Height, i.canvasFps)) return fail(i.recorder.status());
+    } else if (command == "record.stop") {
+        i.recorder.requestStop();
+    } else if (command == "show.save" || command == "show.open") {
+        const QString path = c["path"].toString();
+        if (!QFileInfo(path).isAbsolute() || !path.endsWith(".mixer.json", Qt::CaseInsensitive)) return fail("Use an absolute .mixer.json path");
+        if (command == "show.save") { if (!i.save(path)) return fail(i.status->text()); }
+        else {
+            if (outputsBusy()) return fail("Stop all outputs before opening a show");
+            if (!i.load(path)) return fail("Could not load show");
+            i.selectedScene = 0; i.selectedSource.clear(); i.program = i.scenes[0]; i.fading = false;
+            i.history.clear(); i.historyIndex = 0; i.rebuild(); i.updateAudioRouting(); i.changed();
+        }
+    } else if (command == "workspace.set") {
+        if (c.contains("mode")) findChild<QCheckBox*>("studioMode")->setChecked(c["mode"] == "studio");
+        if (c.contains("layout")) setWorkspaceLayout(c["layout"].toString());
+    } else if (command == "canvas.set") {
+        if (outputsBusy()) return fail("Stop all outputs before changing the canvas");
+        if (c.contains("format")) i.canvasFormat->setCurrentIndex(c["format"].toInt());
+        if (c.contains("renderer")) i.renderer->setCurrentIndex(c["renderer"] == "gpu" ? 0 : 1);
+    } else return fail("Unknown mixer command");
+    return result;
+}
 void MixerWidget::setOutputState(const QString &label, const QString &status, bool enabled, bool active) {
     impl_->startOutput->setText(label); impl_->startOutput->setAccessibleName(label);
     impl_->startOutput->setEnabled(enabled); impl_->recordOutput->setEnabled(!impl_->recorder.busy() || impl_->recorder.active());

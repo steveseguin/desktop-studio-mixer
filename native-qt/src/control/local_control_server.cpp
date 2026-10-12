@@ -436,6 +436,27 @@ void LocalControlServer::routeRequest(QTcpSocket *socket, const HttpRequest &req
         return;
     }
 
+    // Browser pages never need access to the native automation surface, even
+    // if a token was accidentally pasted into a page. No CORS opt-in.
+    if (request.headers.contains("origin") || request.headers.contains("sec-fetch-site")) {
+        sendError(socket, 403, "Browser-originated control requests are not permitted");
+        return;
+    }
+    if (path.startsWith("/studio/")) {
+        const QString operation = path.mid(8);
+        const bool read = operation == "state" || operation == "schema";
+        if ((read && request.method != "GET") || (!read && request.method != "POST") ||
+            (!read && operation != "command" && operation != "screenshot")) {
+            sendError(socket, 400, "Unsupported studio operation or method"); return;
+        }
+        if (!studioProvider_) { sendError(socket, 409, "Mixer workspace is not running"); return; }
+        const auto doc = QJsonDocument::fromJson(request.body);
+        if (!read && !doc.isObject()) { sendError(socket, 400, "Expected a JSON object"); return; }
+        const auto result = studioProvider_(operation, doc.object());
+        sendJson(socket, result.contains("error") ? 400 : 200, QJsonDocument(result).toJson(QJsonDocument::Compact));
+        return;
+    }
+
     if (request.method == "GET" && path == "/diagnostics") {
         if (!diagnosticsProvider_) {
             sendError(socket, 500, "Diagnostics provider unavailable");
@@ -601,6 +622,8 @@ QByteArray LocalControlServer::schemaJson() const {
     QJsonObject root;
     root["ok"] = true;
     root["schema"] = "video-mixer-local-control-v1";
+    root["studio"] = QJsonObject{{"version", 1}, {"schema", "/studio/schema"},
+        {"state", "/studio/state"}, {"command", "/studio/command"}, {"screenshot", "/studio/screenshot"}};
     root["transport"] = "http-json-loopback";
     root["auth"] = "Authorization: Bearer <token>";
     root["notes"] = "Local control is opt-in, bound to 127.0.0.1, and intended for same-user automation.";

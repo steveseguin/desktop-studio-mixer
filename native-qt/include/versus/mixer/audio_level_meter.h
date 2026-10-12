@@ -31,6 +31,7 @@ public:
         if (std::isfinite(amplitude) && amplitude >= 1.0f) clipUntil_ = now+2000;
         const bool clipped = now < clipUntil_;
         const bool changed = qRound(db*10) != qRound(db_*10) || qRound(previousHeld*10) != qRound(heldDb_*10) || clipped != clipped_;
+        if (clipped != clipped_) setAccessibleDescription(clipped ? "Clipping. Reduce this track's volume." : "Peak audio level in dBFS, from -60 to 0.");
         db_ = db; clipped_ = clipped;
         setValue(qRound(db));
         if (changed) update();
