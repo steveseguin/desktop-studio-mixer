@@ -8,6 +8,7 @@
 
 #include "versus/video/window_capture.h"
 
+namespace versus::mixer { class IsolatedSource; }
 namespace versus::video {
 
 struct CameraFormat {
@@ -56,6 +57,7 @@ class CameraCapture {
   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    std::unique_ptr<mixer::IsolatedSource> worker_;
     FrameCallback frameCallback_;
 };
 

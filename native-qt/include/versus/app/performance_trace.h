@@ -15,7 +15,7 @@ namespace versus::app::detail {
 class PerformanceTrace {
 public:
     enum Stage { Compose, CanvasPaint, MixerSubmit, EncoderPrepare, EncoderSubmit,
-                 BrowserDecode, BrowserMute, Count };
+                 BrowserDecode, BrowserMute, BrowserMessage, BrowserDelivery, CaptureReadback, IpcCopy, Count };
     static PerformanceTrace &instance() { static PerformanceTrace trace; return trace; }
     bool enabled() const { return enabled_; }
     class Scope {
@@ -58,7 +58,7 @@ public:
         lastFlush_ = now;
         const double seconds = std::chrono::duration<double>(now-start_).count();
         constexpr const char *names[] = {"compose", "canvas_paint", "mixer_submit", "encoder_prepare",
-                                        "encoder_submit", "browser_png_decode", "browser_mute"};
+                                        "encoder_submit", "browser_png_decode", "browser_mute", "browser_message", "browser_delivery", "capture_readback", "ipc_copy"};
         for (int i = 0; i < Count; ++i) {
             auto &entry = entries_[i];
             file_ << seconds << ',' << names[i] << ',' << entry.calls.load(std::memory_order_relaxed)

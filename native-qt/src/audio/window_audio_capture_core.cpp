@@ -1,4 +1,5 @@
 #include "versus/audio/window_audio_capture_core.h"
+#include "versus/mixer/isolated_source.h"
 
 #include "versus/audio/audio_format_converter.h"
 
@@ -484,6 +485,7 @@ std::vector<AudioSessionInfo> WindowAudioCaptureCore::GetAudioSessions() {
 }
 
 std::vector<AudioDeviceInfo> WindowAudioCaptureCore::GetInputDevices() {
+    if (!mixer::ProcessWorker::inWorker()) return mixer::IsolatedSource::inputs();
     ScopedAudioRuntime apartment;
     return EnumerateInputDevices();
 }

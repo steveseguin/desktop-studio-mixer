@@ -30,6 +30,7 @@
 #include "versus/diagnostics/crash_reporter.h"
 #include "versus/ui/main_window.h"
 #include "versus/video/window_capture.h"
+#include "versus/mixer/process_worker.h"
 
 namespace {
 
@@ -182,6 +183,8 @@ QJsonArray audioInputListToJson(const std::vector<versus::audio::AudioDeviceInfo
 }  // namespace
 
 int main(int argc, char *argv[]) {
+    if (argc > 1 && std::string(argv[1]) == "--studio-worker")
+        return versus::mixer::ProcessWorker::run(argc, argv);
     // Check for --headless mode
     bool headless = false;
     versus::output::Config outputConfig;

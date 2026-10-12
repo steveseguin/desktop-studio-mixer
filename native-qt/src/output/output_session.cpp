@@ -1,5 +1,6 @@
 #include "versus/output/output_session.h"
 #include "matroska_stream.h"
+#include "versus/mixer/process_worker.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -12,6 +13,7 @@
 #include <QRegularExpression>
 #include <QTimer>
 #include <QUrl>
+#include <QJsonArray>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -96,6 +98,7 @@ struct Session::Impl {
     std::condition_variable ready;
     std::deque<Packet> queue;
     size_t queuedBytes = 0;
+    std::string queueFailure = "Output stalled; reconnecting with fresh media.";
     Status current;
     std::vector<webrtc::IceServerConfig> cachedIceServers;
 
@@ -116,6 +119,8 @@ struct Session::Impl {
         if (current.state == State::Error) return false;
         if (queuedBytes + size_t(packet.data.size()) > kMaximumQueueBytes ||
             (!queue.empty() && packet.pts - queue.front().pts > kMaximumQueueAge100ns)) {
+            queueFailure = "Output queue exceeded its bound (" + std::to_string(queuedBytes/1024) + " KiB, " +
+                std::to_string(queue.size()) + " packets, " + std::to_string(queue.empty() ? 0 : (packet.pts-queue.front().pts)/10000) + " ms).";
             queue.clear(); queuedBytes = 0;
             restartRequested.store(true);
             ready.notify_one();
@@ -131,7 +136,7 @@ struct Session::Impl {
             return stopping.load() || restartRequested.load() || !queue.empty();
         });
         if (stopping.load()) return false;
-        if (restartRequested.load()) throw OutputError("Output stalled; reconnecting with fresh media.");
+        if (restartRequested.load()) throw OutputError(queueFailure.c_str());
         if (queue.empty()) return false;
         packet = std::move(queue.front()); queue.pop_front(); queuedBytes -= size_t(packet.data.size());
         return true;
@@ -289,8 +294,9 @@ struct Session::Impl {
             clearQueue(); restartRequested.store(false); requestKeyframe();
             if (!stopping.load()) setState(State::Live, "Publishing to " + destinationLabel(config));
             bool haveKeyframe = false;
-            auto lastFeedbackCheck = Clock::now(), lastMediaSent = Clock::now();
+            auto lastFeedbackCheck = Clock::now(), lastMediaSent = Clock::now(), lastVideoSent = Clock::now();
             while (!stopping.load()) {
+                if (Clock::now()-lastVideoSent > std::chrono::seconds(10)) throw OutputError("Video encoder stopped producing frames.");
                 const auto state = client.connectionState();
                 if (state == webrtc::ConnectionState::Failed || state == webrtc::ConnectionState::Closed || state == webrtc::ConnectionState::Disconnected)
                     throw OutputError("WHIP connection was lost.");
@@ -315,6 +321,7 @@ struct Session::Impl {
                 if (packet.kind == Packet::Kind::Video) {
                     if (!haveKeyframe && !packet.keyframe) continue;
                     sent = client.sendVideo({data, packet.pts, packet.keyframe});
+                    if (sent) lastVideoSent = Clock::now();
                     if (sent && packet.keyframe) haveKeyframe = true;
                 } else if (packet.kind == Packet::Kind::Opus) {
                     size_t bytes = 0;
@@ -331,6 +338,7 @@ struct Session::Impl {
 
     void runMux() {
         QProcess process;
+        bool launched = false;
 #ifdef _WIN32
         process.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) {
             args->flags |= CREATE_NO_WINDOW;
@@ -343,6 +351,9 @@ struct Session::Impl {
                     process.kill(); process.waitForFinished(1000);
                 }
             }
+            if (launched && config.protocol == Protocol::Recording &&
+                (process.exitStatus() == QProcess::CrashExit || process.exitCode() != 0))
+                setState(State::Error, "Recording muxer exited unexpectedly. The existing file was preserved.");
             std::lock_guard lock(mutex); current.processId = 0;
         };
         try {
@@ -384,6 +395,7 @@ struct Session::Impl {
             args << QString::fromStdString(destinationUrl(config));
             process.start(QString::fromStdString(media.ffmpegPath), args, QIODevice::ReadWrite);
             if (!process.waitForStarted(2000)) throw OutputError("Output FFmpeg could not start. Check the FFmpeg path.", true);
+            launched = true;
             { std::lock_guard lock(mutex); current.processId = process.processId(); }
             detail::MatroskaStream mux;
             auto write = [&](const QByteArray &data) {
@@ -398,7 +410,7 @@ struct Session::Impl {
             write(mux.header(codec, first.width, first.height, media.fps, media.audioChannels, media.audioEnabled));
             for (const auto &audio : initialAudio) { write(mux.audio(audio.data, audio.pts - epoch)); count(audio); }
             write(mux.video(units, first.pts - epoch, true)); count(first);
-            auto lastProgress = Clock::now();
+            auto lastProgress = Clock::now(), lastVideoInput = Clock::now();
             qint64 lastFrame = 0, lastOutputTime = -1;
             QByteArray progress;
             while (!stopping.load()) {
@@ -425,6 +437,7 @@ struct Session::Impl {
                     }
                 }
                 if (Clock::now() - lastProgress > std::chrono::seconds(10)) throw OutputError("Output stopped making progress.");
+                if (Clock::now() - lastVideoInput > std::chrono::seconds(10)) throw OutputError("Video encoder stopped producing frames.");
                 process.readAllStandardError();
                 if (process.state() == QProcess::NotRunning) throw OutputError("Output connection closed. Check server availability and credentials.");
                 Packet packet;
@@ -435,6 +448,7 @@ struct Session::Impl {
                     const auto nextCodec = detail::MatroskaStream::codecPrivate(units);
                     if (!nextCodec.isEmpty() && nextCodec != codec) throw OutputError("Video configuration changed; reconnecting output.");
                     write(mux.video(units, packet.pts - epoch, packet.keyframe));
+                    lastVideoInput = Clock::now();
                 } else if (packet.kind == Packet::Kind::Pcm) write(mux.audio(packet.data, packet.pts - epoch));
                 else continue;
                 count(packet);
@@ -444,6 +458,7 @@ struct Session::Impl {
     }
 
     void run() {
+        if (!mixer::ProcessWorker::inWorker()) { runIsolated(); return; }
         int attempt = 0;
         while (!stopping.load()) {
             clearQueue(); restartRequested.store(false);
@@ -453,7 +468,14 @@ struct Session::Impl {
                 if (config.protocol == Protocol::Whip) runWhip(); else runMux();
             } catch (const OutputError &error) {
                 if (stopping.load()) break;
-                if (error.permanent || config.protocol == Protocol::Recording) { setState(State::Error, error.what()); clearQueue(); return; }
+                if (error.permanent || config.protocol == Protocol::Recording) {
+                    bool alreadyFailed = false;
+                    { std::lock_guard lock(mutex); alreadyFailed = current.state == State::Error; }
+                    // Preserve a specific muxer/finalization error from cleanup.
+                    if (!alreadyFailed) setState(State::Error, config.protocol == Protocol::Recording
+                        ? std::string("Recording stopped: ")+error.what() : error.what());
+                    clearQueue(); return;
+                }
                 setState(State::Reconnecting, error.what());
             } catch (...) {
                 if (stopping.load()) break;
@@ -466,7 +488,76 @@ struct Session::Impl {
             ++attempt; clearQueue();
             if (!pause(std::min(attempt, 5) * 1000)) break;
         }
-        clearQueue(); setState(State::Stopped, "Output stopped");
+        clearQueue();
+        { std::lock_guard lock(mutex); if (current.state != State::Error) { current.state = State::Stopped; current.message = "Output stopped"; } }
+    }
+
+    void runIsolated() {
+        uint64_t crashes = 0;
+        while (!stopping.load()) {
+            mixer::ProcessWorker process;
+            clearQueue(); restartRequested = false;
+            QJsonObject command{{"op", "start"}, {"protocol", int(config.protocol)}, {"url", QString::fromStdString(config.url)},
+                {"bearer", QString::fromStdString(config.bearerToken)}, {"key", QString::fromStdString(config.streamKey)},
+                {"streamId", QString::fromStdString(config.streamId)}, {"passphrase", QString::fromStdString(config.passphrase)},
+                {"latency", config.latencyMs}, {"aac", config.aacBitrateKbps}, {"width", media.width}, {"height", media.height},
+                {"fps", media.fps}, {"channels", media.audioChannels}, {"audio", media.audioEnabled},
+                {"ice", int(media.iceMode)}, {"ffmpeg", QString::fromStdString(media.ffmpegPath)}};
+            bool started = process.start("output") && process.call(command)["ok"].toBool();
+            if (started) { clearQueue(); restartRequested = false; requestKeyframe(); }
+            qint64 keyframes = -1;
+            auto seen = Clock::now(); qint64 heartbeat = -1;
+            bool permanentError = false;
+            try {
+                while (started && !stopping.load() && process.alive()) {
+                    const auto state = process.status();
+                    if (state.contains("state")) {
+                        const auto beat = state["heartbeat"].toInteger();
+                        if (beat != heartbeat) { heartbeat = beat; seen = Clock::now(); }
+                        if (Clock::now()-seen > std::chrono::seconds(10)) break;
+                        if (keyframes != state["keyframes"].toInteger()) { keyframes = state["keyframes"].toInteger(); requestKeyframe(); }
+                        std::lock_guard lock(mutex);
+                        current.state = State(state["state"].toInt()); current.message = state["message"].toString().toStdString();
+                        current.reconnects = crashes+state["reconnects"].toInteger(); current.videoPackets = state["videoPackets"].toInteger();
+                        current.audioPackets = state["audioPackets"].toInteger(); current.videoBytes = state["videoBytes"].toInteger();
+                        current.audioBytes = state["audioBytes"].toInteger(); current.processId = state["processId"].toInteger();
+                        current.receiverReportAgeMs = state["rrAge"].toInteger(); current.receiverReportTimeoutMs = state["rrTimeout"].toInteger();
+                        current.receiverReports = state["rrCount"].toInteger(); current.icePath = state["icePath"].toString().toStdString();
+                        if (current.state == State::Error) { permanentError = true; break; }
+                    }
+                    Packet packet; if (!pop(packet, 10)) continue;
+                    QJsonArray packets; QByteArray bytes;
+                    do {
+                        packets.append(QJsonObject{{"kind", int(packet.kind)}, {"pts", qint64(packet.pts)}, {"width", packet.width},
+                            {"height", packet.height}, {"keyframe", packet.keyframe}, {"offset", bytes.size()}, {"size", packet.data.size()}});
+                        bytes.append(packet.data);
+                    } while (packets.size() < 64 && bytes.size() < 512*1024 && pop(packet, 0));
+                    const auto result = process.call({{"op", "packets"}, {"packets", packets}}, bytes.constData(), bytes.size());
+                    if (!result["ok"].toBool() && !process.alive()) break;
+                }
+            } catch (...) { /* A full queue restarts this destination only. */ }
+            const auto final = process.stop();
+            if (final.contains("state") && final["state"].toInt() == int(State::Error)) {
+                setState(State::Error, final["message"].toString().toStdString()); permanentError = true;
+            }
+            if (permanentError) { clearQueue(); return; }
+            if (stopping.load()) {
+                if (config.protocol == Protocol::Recording && !final["ok"].toBool())
+                    setState(State::Error, "Recording could not finish. The existing file was preserved.");
+                else setState(State::Stopped, "Output stopped");
+                break;
+            }
+            if (config.protocol == Protocol::Recording) {
+                // Never reopen/truncate the same recording after an unexpected exit.
+                { std::lock_guard lock(mutex); if (current.state != State::Error) {
+                    current.state = State::Error; current.message = "Recording worker stopped. The existing file was preserved; start a new recording.";
+                } }
+                clearQueue(); return;
+            }
+            ++crashes; setState(State::Reconnecting, "Output worker stopped; reconnecting with fresh media.");
+            if (!pause(int(std::min<uint64_t>(crashes, 5))*1000)) break;
+        }
+        clearQueue();
     }
 };
 
@@ -506,7 +597,7 @@ bool Session::sendOpus(const webrtc::EncodedAudioPacket &packet) {
 bool Session::sendPcm(const std::vector<float> &stereo48k, int64_t pts) {
     if (!usesPcmInput() || !impl_->media.audioEnabled) return false;
     QByteArray bytes;
-    if (impl_->media.audioChannels == 1) {
+    if (impl_->media.audioChannels == 1 && mixer::ProcessWorker::inWorker()) {
         std::vector<float> mono(stereo48k.size() / 2);
         for (size_t i = 0; i < mono.size(); ++i) mono[i] = (stereo48k[i * 2] + stereo48k[i * 2 + 1]) * 0.5f;
         bytes = QByteArray(reinterpret_cast<const char *>(mono.data()), mono.size() * sizeof(float));

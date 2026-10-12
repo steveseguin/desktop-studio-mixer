@@ -8,7 +8,9 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <span>
 
+namespace versus::mixer { class EncoderWorker; }
 namespace versus::video {
 
 struct CapturedFrame;
@@ -193,6 +195,9 @@ class VideoEncoder {
     uint64_t configurationRevision() const { return configurationRevision_; }
 
     bool encode(const CapturedFrame &frame, EncodedPacket &packet);
+    // Synchronous borrowed pixels avoid an intermediate full-frame allocation
+    // when a QImage already owns immutable Program pixels. No pointer is retained.
+    bool encodeView(const CapturedFrame &metadata, std::span<const uint8_t> pixels, EncodedPacket &packet);
     // Encodes using the frame's normal timing while attaching an explicit,
     // caller-owned source identity to the eventual delayed output packet.
     bool encodeWithSourceTimestamp(const CapturedFrame &frame,
@@ -222,6 +227,7 @@ class VideoEncoder {
   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    std::unique_ptr<mixer::EncoderWorker> worker_;
     EncoderConfig config_;
     EncoderConfig requestedConfig_;
     PacketCallback packetCallback_;

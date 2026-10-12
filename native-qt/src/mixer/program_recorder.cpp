@@ -65,10 +65,9 @@ bool ProgramRecorder::start(const QString &path, int width, int height, int fps)
                     if (image.isNull()) continue;
                     video::CapturedFrame frame; frame.width = image.width(); frame.height = image.height();
                     frame.stride = image.bytesPerLine(); frame.timestamp = timestamp; frame.opaque = !image.hasAlphaChannel();
-                    frame.data.assign(image.constBits(), image.constBits()+image.sizeInBytes());
                     if (keyframe.exchange(false)) encoder.requestKeyframe();
                     video::EncodedPacket packet;
-                    if (encoder.encode(frame, packet)) {
+                    if (encoder.encodeView(frame, {image.constBits(), size_t(image.sizeInBytes())}, packet)) {
                         lastEncoded = std::chrono::steady_clock::now(); wroteVideo = true;
                         webrtc::EncodedVideoPacket out; out.data = std::move(packet.data);
                         out.pts = packet.sourceTimestamp; out.isKeyframe = packet.isKeyframe;

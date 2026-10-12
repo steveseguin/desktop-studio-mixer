@@ -1,4 +1,5 @@
 #include "versus/video/camera_capture.h"
+#include "versus/mixer/isolated_source.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1176,27 +1177,36 @@ CameraCapture::~CameraCapture() {
 }
 
 std::vector<WindowInfo> CameraCapture::getCameras() {
+    if (!mixer::ProcessWorker::inWorker()) return mixer::IsolatedSource::cameras();
     return impl_->enumerateCameras();
 }
 
 bool CameraCapture::startCapture(const std::string &deviceId, int width, int height, double fps) {
+    if (!mixer::ProcessWorker::inWorker()) {
+        worker_ = std::make_unique<mixer::IsolatedSource>("camera"); worker_->setFrameCallback(frameCallback_);
+        return worker_->startCapture(deviceId, width, height, fps);
+    }
     return impl_->startCapture(deviceId, width, height, fps, frameCallback_);
 }
 
 void CameraCapture::stopCapture() {
+    if (worker_) worker_->stopCapture();
     impl_->stopCapture();
 }
 
 bool CameraCapture::isCapturing() const {
+    if (worker_) return worker_->isCapturing();
     return impl_->isCapturing();
 }
 
 std::string CameraCapture::lastError() const {
+    if (worker_) return worker_->lastError();
     return impl_->lastError();
 }
 
-CameraSettings CameraCapture::settings() const { return impl_->settings(); }
+CameraSettings CameraCapture::settings() const { return worker_ ? worker_->settings() : impl_->settings(); }
 std::future<CameraControlResult> CameraCapture::setControl(const std::string &id, int value, bool automatic) {
+    if (worker_) return worker_->setControl(id, value, automatic);
     return impl_->setControl(id, value, automatic);
 }
 

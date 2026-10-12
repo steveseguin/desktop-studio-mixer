@@ -2,7 +2,7 @@
 
 A native Windows production studio for scenes, sources, audio mixing and live output. **Desktop Studio** complements Web Studio and Web Mixer. It is based on [Game Capture](https://github.com/steveseguin/game-capture), with its own executable, settings, installer identity, browser profiles, logs, and update feed.
 
-Development version: **0.5.0**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
+Development version: **0.6.0**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
 
 Previously named **Video Mixer**. Setup upgrades the existing installation and replaces its Start menu shortcuts. Existing shows, output profiles, camera settings, browser profiles and the layout preference carry over. The repository/build target, `%LOCALAPPDATA%/VideoMixer` data folder and `VDO.Ninja/Video Mixer` settings identity remain stable for compatibility. Older validation documents use the name of the version they measured.
 
@@ -14,7 +14,7 @@ Previously named **Video Mixer**. Setup upgrades the existing installation and r
 4. Enable **Studio mode** when you want separate Preview and Program panels. **Take / Cut** or **Fade** copies the staged layout to Program. Turning Studio mode off takes the selected Preview scene to output and resumes direct editing. The layout preference survives restarts.
 5. Adjust source gain/mute in **Audio mixer**. Each track and the master have a visual dBFS level meter with colored segments, peak hold and a clip indicator. **Scene** makes audio follow Program; microphones default to always on. A master fader and peak limiter control the final mix. Optional track effects include RNNoise speech noise suppression, a -45 dBFS gate, and 4:1 compression above -18 dBFS. Effects start off; leave speech suppression off for music.
 6. Choose **Output settings**, leave **Mixer program** selected, and choose a destination. **Record to file (MKV)** writes H.264/AAC to a new file. Stop output to finalize it. Existing recordings are never overwritten.
-7. Studio's **Record...** starts an independent H.264/AAC MKV recording of Program. Streaming and recording can run together and stop independently. Recording uses its own hardware encoder when available and stops with an error on encoder failure or low disk space. **GO LIVE / STOP** controls the selected streaming destination.
+7. Studio's **Record...** starts an independent H.264/AAC MKV recording of Program. Streaming and recording can run together and stop independently. Recording uses its own hardware encoder when available. A crashed encoder can restart with the same settings; persistent failure or low disk space stops recording with an error. **GO LIVE / STOP** controls the selected streaming destination.
 
 Select a source and use **Edit source** to rename it, change its URL/file/device, or change browser capture mode. **Reconnect** restarts a source; windows prompt you to select a current window. These source changes apply to every scene, including Program. The source status shows errors and received frame rate.
 
@@ -57,7 +57,11 @@ The original controls remain in **Capture & output**: standalone window/camera/S
 
 Uses **Microsoft Edge WebView2 Evergreen**. No Chromium engine is bundled. Microsoft's runtime updates separately; users install it if missing. The SDK/loader is a build dependency, not the browser engine. [Microsoft distribution guidance](https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution).
 
-Profiles live under `%LOCALAPPDATA%/VideoMixer/browser/`. Receiving/overlay pages cannot access local cameras or microphones. Browser downloads and non-HTTP(S) top-level navigations are blocked. Guests grant camera permissions in their own browser. Press Escape to park an interactive browser source.
+Profiles live under `%LOCALAPPDATA%/VideoMixer/browser/`. Receiving/overlay pages cannot access local cameras, microphones, screen capture or clipboard. Downloads, popups, external application handlers and non-HTTP(S) top-level navigations are blocked. The audio bridge validates the sending page, message size, type and rate; it exposes no native command or file API. Guests grant camera permissions in their own browser. Press Escape to park an interactive browser source.
+
+Studio cameras, window/Spout inputs, microphones/desktop capture, media decoders, browser hosts, video encoders and each publishing/recording destination run in separate helper processes. Bounded frame/audio buffers prevent a slow consumer from building an unlimited backlog. A failed source reconnects; a failed publisher reconnects independently. A failed recording destination preserves its existing file and requires a new recording. Closing the app closes its helper process trees.
+
+These boundaries contain user-mode failures in those components; they are not a guarantee against browser vulnerabilities, an OS/GPU-driver failure, or bugs in the main compositor. Headphone playback, local Program outputs and inherited non-Studio paths still include native code in the main process. Keep Windows, graphics drivers and Evergreen WebView2 updated.
 
 ## Build
 
@@ -76,11 +80,13 @@ powershell -ExecutionPolicy Bypass -File native-qt/build-mixer.ps1 -Installer
 
 Portable executable: `native-qt/dist/desktop-studio-portable/desktop-studio.exe`.
 
-Archives and setup: `native-qt/dist/desktop-studio-0.5.0-windows-x64.zip` and `desktop-studio-0.5.0-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
+Archives and setup: `native-qt/dist/desktop-studio-0.6.0-windows-x64.zip` and `desktop-studio-0.6.0-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
 
 The pinned SDK is fetched from NuGet; other native dependencies use CMake FetchContent. Downloaded dependencies, build outputs, local shows, and QA artifacts are excluded from Git.
 
 ## Validation and provenance
+
+[0.6.0 isolation, browser security and performance validation](docs/mixer-0.6.0-validation.md) records real publishing, recording, hardware, failure-injection and sustained workflows.
 
 [0.5.0 production validation](docs/mixer-0.5.0-validation.md) covers the native canvas, independent recording, media playback, editing, audio effects, guest returns, local outputs, recovery and performance measurements.
 

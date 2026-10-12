@@ -21,9 +21,13 @@ def source_row(name):
     return next(c for c in control('mixerSources').descendants(control_type='ListItem') if c.window_text().startswith(name+'  ['))
 
 def choose_dialog(dialog, name, text):
+    # Window-capture fixtures can take foreground focus. Focus the actual
+    # dialog before using pointer input on its popup.
+    dialog.set_focus()
     combo = control(name, dialog); combo.expand(); time.sleep(.2)
     next(c for top in app.windows() for c in top.descendants(control_type='ListItem')
          if c.is_visible() and text in c.window_text()).click_input()
+    time.sleep(.15)
 
 def add_source(kind, name, value='', device=None):
     press('addSource'); dialog = window.child_window(title='Add source', control_type='Window'); dialog.wait('visible')
@@ -112,8 +116,13 @@ try:
     speaker=sc.default_speaker(); loop=sc.get_microphone(id=speaker.id,include_loopback=True)
     def tone_level(frequency=731):
         audio=loop.record(samplerate=48000,numframes=48000)
-        mono=audio.mean(axis=1); t=np.arange(len(mono))/48000
-        return float(abs(np.sum(mono*np.exp(-2j*np.pi*frequency*t)))*2/len(mono))
+        mono=audio.mean(axis=1)
+        # Device and browser clocks can shift phase across a long window.
+        # RMS of short-window amplitudes detects the tone and intermittent leaks
+        # without cancellation from unrelated phases.
+        chunks=mono[:len(mono)//4800*4800].reshape(-1,4800)
+        amplitudes=abs(np.sum(chunks*np.exp(-2j*np.pi*frequency*np.arange(4800)/48000),axis=1))*2/4800
+        return float(np.sqrt(np.mean(amplitudes*amplitudes)))
     enabled(control('monitorEnable'),False); time.sleep(1); off=tone_level()
     enabled(control('monitorEnable'),True); time.sleep(1); on=tone_level()
     enabled(channel('QA browser','Mute'),True); time.sleep(1); muted=tone_level()

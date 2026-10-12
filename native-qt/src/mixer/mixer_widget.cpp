@@ -2,7 +2,7 @@
 #include "versus/mixer/browser_source.h"
 #include "versus/mixer/audio_monitor.h"
 #include "versus/mixer/program_recorder.h"
-#include "versus/mixer/media_source.h"
+#include "versus/mixer/isolated_source.h"
 #include "versus/mixer/gpu_compositor.h"
 #include "versus/mixer/local_outputs.h"
 #include "versus/mixer/audio_processor.h"
@@ -113,17 +113,17 @@ struct Source {
     std::atomic<std::shared_ptr<GuestReturn>> guestReturn;
     std::shared_ptr<std::atomic<bool>> captureValid = std::make_shared<std::atomic<bool>>(true);
     std::shared_future<void> cleanup;
-    std::unique_ptr<MediaSource> media;
+    std::unique_ptr<IsolatedSource> media;
     int cameraWidth = Width, cameraHeight = Height;
     double cameraFps = 30;
     QJsonObject cameraControls;
     unsigned cameraGeneration = 0;
     std::atomic<int64_t> lastFrame{0};
     std::atomic<unsigned> frames{0};
-    std::unique_ptr<video::WindowCapture> window;
-    std::unique_ptr<video::CameraCapture> camera;
-    std::unique_ptr<video::SpoutCapture> spout;
-    std::unique_ptr<audio::WindowAudioCaptureCore> audio;
+    std::unique_ptr<IsolatedSource> window;
+    std::unique_ptr<IsolatedSource> camera;
+    std::unique_ptr<IsolatedSource> spout;
+    std::unique_ptr<IsolatedSource> audio;
     QPointer<BrowserSource> browser;
     ~Source() {
         if (window) window->stopCapture();
@@ -1143,6 +1143,11 @@ struct MixerWidget::Impl {
             std::lock_guard lock(item->imageMutex); item->image = std::move(image); item->imageStraightAlpha = true;
             item->lastFrame = now100ns(); ++item->frames;
         };
+        auto imageFrame = [weak, valid](QImage image) {
+            const auto item = weak.lock(); if (!item || !*valid || image.isNull()) return;
+            std::lock_guard lock(item->imageMutex); item->image = std::move(image); item->imageStraightAlpha = true;
+            item->lastFrame = now100ns(); ++item->frames;
+        };
         auto audioChunk = [weak, valid](audio::StreamChunk &&chunk) {
             const auto item = weak.lock(); if (!item || !*valid) return;
             std::lock_guard lock(item->audioMutex);
@@ -1153,10 +1158,10 @@ struct MixerWidget::Impl {
         };
         if (item->kind == "window" || item->kind == "camera" || item->kind == "spout" || item->kind == "microphone" || item->kind == "desktop") {
             struct Captures {
-                std::unique_ptr<video::WindowCapture> window;
-                std::unique_ptr<video::CameraCapture> camera;
-                std::unique_ptr<video::SpoutCapture> spout;
-                std::unique_ptr<audio::WindowAudioCaptureCore> audio;
+                std::unique_ptr<IsolatedSource> window;
+                std::unique_ptr<IsolatedSource> camera;
+                std::unique_ptr<IsolatedSource> spout;
+                std::unique_ptr<IsolatedSource> audio;
                 QString error, locator, title, executable;
             };
             auto result = std::make_shared<Captures>();
@@ -1166,15 +1171,15 @@ struct MixerWidget::Impl {
             const int width = Width, height = Height, fps = canvasFps;
             const int cameraWidth = item->cameraWidth, cameraHeight = item->cameraHeight; const double cameraFps = item->cameraFps;
             item->starting = true; const auto guard = QPointer<MixerWidget>(q);
-            QThreadPool::globalInstance()->start([this, guard, weak, valid, result, kind, locator, title, executable, cleanup, width, height, fps, cameraWidth, cameraHeight, cameraFps, frame, audioChunk, completion]() mutable {
+            QThreadPool::globalInstance()->start([this, guard, weak, valid, result, kind, locator, title, executable, cleanup, width, height, fps, cameraWidth, cameraHeight, cameraFps, imageFrame, audioChunk, completion]() mutable {
                 if (cleanup.valid()) cleanup.wait();
                 if (!*valid) { completion->set_value(); return; }
                 auto audioResult = [&](const audio::CaptureResult &value) { if (!value.success) result->error = "Audio unavailable: "+QString::fromStdString(value.error); };
                 if (kind == "camera") {
-                    result->camera = std::make_unique<video::CameraCapture>(); result->camera->setFrameCallback(frame);
+                    result->camera = std::make_unique<IsolatedSource>("camera"); result->camera->setImageCallback(imageFrame);
                     if (!result->camera->startCapture(locator.toStdString(), cameraWidth, cameraHeight, cameraFps)) result->error = QString::fromStdString(result->camera->lastError());
                 } else if (kind == "window") {
-                    result->window = std::make_unique<video::WindowCapture>(); result->window->setFrameCallback(frame);
+                    result->window = std::make_unique<IsolatedSource>("window"); result->window->setImageCallback(imageFrame);
                     const auto windows = result->window->getWindows(); const video::WindowInfo *match = nullptr;
                     for (const auto &info : windows) if (QString::fromStdString(info.id) == locator &&
                         (executable.isEmpty() || QString::fromStdString(info.executableName) == executable) &&
@@ -1187,13 +1192,13 @@ struct MixerWidget::Impl {
                     if (!match || !result->window->startCapture(match->id, width, height, fps, true)) result->error = "Window unavailable. Waiting for the saved window; use Reconnect to select another.";
                     else {
                         result->locator = QString::fromStdString(match->id); result->title = QString::fromStdString(match->name); result->executable = QString::fromStdString(match->executableName);
-                        result->audio = std::make_unique<audio::WindowAudioCaptureCore>(); audioResult(result->audio->StartStreamCapture(match->processId, audioChunk));
+                        result->audio = std::make_unique<IsolatedSource>("audio"); audioResult(result->audio->StartStreamCapture(match->processId, audioChunk));
                     }
                 } else if (kind == "spout") {
-                    result->spout = std::make_unique<video::SpoutCapture>(); result->spout->setFrameCallback(frame);
+                    result->spout = std::make_unique<IsolatedSource>("spout"); result->spout->setImageCallback(imageFrame);
                     if (!result->spout->startCapture(locator.toStdString(), width, height, fps)) result->error = "Spout sender unavailable. Waiting for it to return.";
                 } else {
-                    result->audio = std::make_unique<audio::WindowAudioCaptureCore>();
+                    result->audio = std::make_unique<IsolatedSource>("audio");
                     if (kind == "desktop") audioResult(result->audio->StartStreamCapture(static_cast<uint32_t>(QCoreApplication::applicationPid()), audioChunk, true));
                     else audioResult(result->audio->StartInputDeviceStreamCapture(locator.toStdString(), audioChunk));
                 }
@@ -1215,7 +1220,8 @@ struct MixerWidget::Impl {
                 }, Qt::QueuedConnection);
             });
         } else if (item->kind == "media") {
-            item->media = std::make_unique<MediaSource>(); item->media->setLoop(item->mediaLoop);
+            item->media = std::make_unique<IsolatedSource>("media"); item->media->setLoop(item->mediaLoop);
+            item->media->setImageCallback(imageFrame);
             item->media->setPaused(item->mediaPaused); item->media->start(item->locator, frame, audioChunk);
         } else if (item->kind == "browser" || item->kind == "guest" || item->kind == "wireless" || item->kind == "chat") {
             if (!webUrl(item->locator)) { item->error = "Invalid browser URL."; return; }
@@ -1240,7 +1246,7 @@ struct MixerWidget::Impl {
                 chunk.samples.resize(pcm.size()/2);
                 for (qsizetype i = 0; i < pcm.size()/2; ++i) chunk.samples[i] = qFromLittleEndian<qint16>(pcm.constData()+i*2)/32768.0f;
                 audioChunk(std::move(chunk));
-            });
+            }, Qt::DirectConnection); // audioChunk owns its lock and checks capture validity.
         } else {
             QImage image;
             if (item->kind == "image") {
@@ -1265,11 +1271,11 @@ struct MixerWidget::Impl {
         ++item->cameraGeneration;
         *item->captureValid = false; item->starting = false;
         struct Retired {
-            std::unique_ptr<video::WindowCapture> window;
-            std::unique_ptr<video::CameraCapture> camera;
-            std::unique_ptr<video::SpoutCapture> spout;
-            std::unique_ptr<audio::WindowAudioCaptureCore> audio;
-            std::unique_ptr<MediaSource> media;
+            std::unique_ptr<IsolatedSource> window;
+            std::unique_ptr<IsolatedSource> camera;
+            std::unique_ptr<IsolatedSource> spout;
+            std::unique_ptr<IsolatedSource> audio;
+            std::unique_ptr<IsolatedSource> media;
         };
         auto retired = std::make_shared<Retired>();
         retired->window = std::move(item->window); retired->camera = std::move(item->camera);
@@ -1523,7 +1529,8 @@ struct MixerWidget::Impl {
                 const bool failed = (candidate->camera && !candidate->camera->isCapturing()) ||
                     (candidate->audio && !candidate->audio->IsCapturing()) ||
                     (candidate->window && !candidate->window->isCapturing()) ||
-                    (candidate->spout && !candidate->spout->isCapturing());
+                    (candidate->spout && !candidate->spout->isCapturing()) ||
+                    (candidate->media && candidate->media->workerFailed());
                 if (failed) { stopSource(candidate); startSource(candidate); }
             }
             if (auto item = source(selectedSource)) {

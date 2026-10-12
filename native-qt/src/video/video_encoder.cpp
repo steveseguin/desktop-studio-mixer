@@ -1,3 +1,4 @@
+#include "versus/mixer/encoder_worker.h"
 #include "versus/app/performance_trace.h"
 #include "versus/video/video_encoder.h"
 #include "versus/video/h264_color_metadata.h"
@@ -4816,6 +4817,13 @@ VideoEncoder::VideoEncoder() : impl_(std::make_unique<Impl>()) {}
 VideoEncoder::~VideoEncoder() { shutdown(); }
 
 bool VideoEncoder::initialize(const EncoderConfig &config, const CapturedFrame *handoverFrame) {
+    if (!mixer::ProcessWorker::inWorker()) {
+        shutdown(); ++configurationRevision_; config_ = requestedConfig_ = config;
+        worker_ = std::make_unique<mixer::EncoderWorker>();
+        initialized_ = worker_->initialize(config, handoverFrame);
+        return initialized_;
+    }
+
     const bool prepareHandover = handoverFrame != nullptr;
     ++configurationRevision_;
     config_ = config;
@@ -4950,6 +4958,7 @@ bool VideoEncoder::initialize(const EncoderConfig &config, const CapturedFrame *
 }
 
 void VideoEncoder::shutdown() {
+    worker_.reset();
     ++configurationRevision_;
     impl_->shutdown();
     initialized_ = false;
@@ -4959,6 +4968,18 @@ void VideoEncoder::shutdown() {
 
 bool VideoEncoder::encode(const CapturedFrame &frame, EncodedPacket &packet) {
     return encodeWithSourceTimestamp(frame, packet, frame.timestamp);
+}
+bool VideoEncoder::encodeView(const CapturedFrame &metadata, std::span<const uint8_t> pixels, EncodedPacket &packet) {
+    if (!initialized_ || pixels.empty()) return false;
+    if (worker_) {
+        const bool ok = worker_->encode(metadata, packet, metadata.timestamp, pixels);
+        if (ok && config_.requireEveryFrameKeyframe)
+            protectedPacketContractHealthy_.store(packet.codec == VideoCodec::VP9 && packet.isKeyframe, std::memory_order_relaxed);
+        if (ok && packetCallback_) packetCallback_(packet);
+        return ok;
+    }
+    CapturedFrame frame = metadata; frame.data.assign(pixels.begin(), pixels.end());
+    return encode(frame, packet);
 }
 
 bool VideoEncoder::encodeWithSourceTimestamp(const CapturedFrame &frame,
@@ -4970,7 +4991,7 @@ bool VideoEncoder::encodeWithSourceTimestamp(const CapturedFrame &frame,
     if (sourceTimestamp == std::numeric_limits<int64_t>::min()) {
         return false;
     }
-    bool ok = impl_->encode(frame, packet, sourceTimestamp);
+    bool ok = worker_ ? worker_->encode(frame, packet, sourceTimestamp) : impl_->encode(frame, packet, sourceTimestamp);
     if (ok && config_.requireEveryFrameKeyframe) {
         protectedPacketContractHealthy_.store(
             packet.codec == VideoCodec::VP9 && packet.isKeyframe,
@@ -4984,13 +5005,14 @@ bool VideoEncoder::encodeWithSourceTimestamp(const CapturedFrame &frame,
 
 void VideoEncoder::setBitrate(int kbps) {
     ++configurationRevision_;
-    impl_->setBitrate(kbps);
+    if (worker_) worker_->bitrate(kbps); else impl_->setBitrate(kbps);
     config_.bitrate = kbps;
 }
 
 void VideoEncoder::swapPipeline(VideoEncoder &other) {
     using std::swap;
     swap(impl_, other.impl_);
+    swap(worker_, other.worker_);
     swap(config_, other.config_);
     swap(requestedConfig_, other.requestedConfig_);
     swap(initialized_, other.initialized_);
@@ -5005,10 +5027,11 @@ void VideoEncoder::swapPipeline(VideoEncoder &other) {
 }
 
 void VideoEncoder::requestKeyframe() {
-    impl_->requestKeyframe();
+    if (worker_) worker_->keyframe(); else impl_->requestKeyframe();
 }
 
 bool VideoEncoder::guaranteesEveryFrameKeyframe() const {
+    if (worker_) return worker_->info["everyKeyframe"].toBool();
     return detail::protectedVp9RuntimeContractHealthy(
         initialized_,
         config_.requireEveryFrameKeyframe,
@@ -5018,14 +5041,17 @@ bool VideoEncoder::guaranteesEveryFrameKeyframe() const {
 }
 
 VideoCodec VideoEncoder::activeCodec() const {
+    if (worker_) return VideoCodec(worker_->info["activeCodec"].toInt());
     return impl_->activeCodec();
 }
 
 std::string VideoEncoder::activeCodecName() const {
+    if (worker_) return worker_->info["codecName"].toString().toStdString();
     return impl_->activeCodecName();
 }
 
 std::string VideoEncoder::activeEncoderName() const {
+    if (worker_) return worker_->info["encoder"].toString().toStdString();
     return impl_->activeEncoderName();
 }
 
@@ -5034,22 +5060,27 @@ std::string VideoEncoder::requestedEncoderMode() const {
 }
 
 std::string VideoEncoder::activeEncoderCategory() const {
+    if (worker_) return worker_->info["category"].toString().toStdString();
     return encoderCategoryName(impl_->activeEncoderName(), impl_->isHardwareEncoder());
 }
 
 std::string VideoEncoder::encoderFallbackReason() const {
+    if (worker_) return worker_->info["fallback"].toString().toStdString();
     return fallbackReason_;
 }
 
 std::string VideoEncoder::activeInputFormatName() const {
+    if (worker_) return worker_->info["inputFormat"].toString().toStdString();
     return impl_->activeInputFormatName();
 }
 
 bool VideoEncoder::isHardwareEncoderActive() const {
+    if (worker_) return worker_->info["hardware"].toBool();
     return impl_->isHardwareEncoder();
 }
 
 EncodeFailureKind VideoEncoder::lastEncodeFailureKind() const {
+    if (worker_) return worker_->process.alive() ? EncodeFailureKind(worker_->info["failure"].toInt()) : EncodeFailureKind::ProcessExited;
     return impl_->lastEncodeFailureKind();
 }
 

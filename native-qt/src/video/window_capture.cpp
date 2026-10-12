@@ -1,6 +1,7 @@
 #include "versus/video/window_capture.h"
 #include "versus/video/aspect_fit.h"
 #include "versus/app/frame_trace.h"
+#include "versus/app/performance_trace.h"
 
 #include <algorithm>
 #include <atomic>
@@ -528,6 +529,7 @@ class WindowCapture::Impl {
     }
 
     bool startCapture(HWND hwnd, int width, int height, int fps, bool preserveAlpha) {
+        if (!device_ && !initialize()) return false;
         spdlog::info("[Capture::Impl] startCapture hwnd={} {}x{} @{}fps preserveAlpha={}",
                      (void*)hwnd,
                      width,
@@ -1249,6 +1251,7 @@ class WindowCapture::Impl {
             framesSkippedBeforeReadback_.fetch_add(1, std::memory_order_relaxed);
             if (!consumerReady || !app::detail::FrameTrace::instance().captureRejectedFrames()) return;
         }
+        app::detail::PerformanceTrace::Scope profile(app::detail::PerformanceTrace::CaptureReadback);
         D3D11_TEXTURE2D_DESC desc;
         texture->GetDesc(&desc);
         if (desc.Width == 0 || desc.Height == 0) {
@@ -1398,11 +1401,9 @@ class WindowCapture::Impl {
 
 #endif
 
-WindowCapture::WindowCapture() : impl_(std::make_unique<Impl>()) {
-#ifdef _WIN32
-    impl_->initialize();
-#endif
-}
+// Listing windows does not need a D3D device. Create it only inside an actual
+// capture, so the Studio UI and device picker don't load a capture driver.
+WindowCapture::WindowCapture() : impl_(std::make_unique<Impl>()) {}
 
 WindowCapture::~WindowCapture() { stopCapture(); }
 

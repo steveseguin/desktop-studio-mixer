@@ -21,7 +21,7 @@ const s=c.createMediaStreamSource(new MediaStream([e.track]));s.connect(a);a.smo
 stats_script='''async () => {const out=[];for(const pc of qaPeers){for(const s of (await pc.getStats()).values())
 if(s.type==='inbound-rtp'||s.type==='outbound-rtp')out.push({type:s.type,kind:s.kind,frames:s.framesDecoded||s.framesEncoded||0,bytes:s.bytesReceived||s.bytesSent||0,energy:s.totalAudioEnergy||0});}return out;}'''
 levels_script='''() => qaAnalysers.filter(x=>x.track.readyState==='live').map(({a,c})=>{const f=new Float32Array(a.frequencyBinCount);a.getFloatFrequencyData(f);const out={};
-for(const hz of [440,660,731]){const bin=Math.round(hz/c.sampleRate*a.fftSize);out[hz]=10*Math.log10(f.slice(bin-8,bin+9).reduce((s,x)=>s+Math.pow(10,x/10),0));}const t=new Float32Array(a.fftSize);a.getFloatTimeDomainData(t);out.rms=Math.sqrt(t.reduce((s,x)=>s+x*x,0)/t.length);return out;})'''
+for(const hz of [440,1660,731]){const bin=Math.round(hz/c.sampleRate*a.fftSize);out[hz]=10*Math.log10(f.slice(bin-8,bin+9).reduce((s,x)=>s+Math.pow(10,x/10),0));}const t=new Float32Array(a.fftSize);a.getFloatTimeDomainData(t);out.rms=Math.sqrt(t.reduce((s,x)=>s+x*x,0)/t.length);return out;})'''
 
 def wait_media(page,direction,timeout=60):
     deadline=time.time()+timeout;stats=[]
@@ -42,8 +42,12 @@ def admit(name):
     source_row(name).select();press('admitGuest');time.sleep(.5)
 
 window.set_focus();window.child_window(title='Studio',control_type='TabItem').click_input();studio_mode(True)
-scene('Break');press('takeScene');remove_sources(('QA guest','QA phone','QA host'))
-scene('Main');invites=[]
+scene('Break');press('takeScene');remove_sources(('QA ',))
+scene('Main');enabled(control('guestProgramReturn'),True);enabled(control('monitorEnable'),False)
+add_source('Video / audio file','QA media',str(media_fixture()))
+# Space fixture tones apart so the 731 Hz Program codec skirts cannot be
+# mistaken for the phone's tone; rejection still uses the same -55 dB limit.
+invites=[]
 for command,title,label in [('inviteGuest','Invite guest','QA guest'),('inviteCamera','Wireless camera','QA phone')]:
     press(command);prompt=window.child_window(title=title,control_type='Window');prompt.child_window(control_type='Edit').set_edit_text(label)
     prompt.child_window(title='OK',control_type='Button').invoke()
@@ -55,7 +59,7 @@ try:
     with sync_playwright() as pw:
         sender=pw.chromium.launch(channel='msedge',headless=True,args=['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--autoplay-policy=no-user-gesture-required','--mute-audio'])
         pages=[]
-        for (name,url),hz in zip(invites,(440,660)):
+        for (name,url),hz in zip(invites,(440,1660)):
             receiver=receiver_page(pw,ids[name]);page=sender.new_page();page.add_init_script(instrument)
             page.add_init_script('''(() => {const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
                 navigator.mediaDevices.getUserMedia=async constraints=>{const stream=await original(constraints);if(constraints.audio){stream.getAudioTracks().forEach(t=>{stream.removeTrack(t);t.stop();});
@@ -69,15 +73,15 @@ try:
         results['backstage_levels']=[p.evaluate(levels_script) for p in pages]
         for levels in results['backstage_levels']:
             assert levels and max(v['731'] for v in levels)>-45,levels
-            assert all(max(v['440'],v['660']) < -55 for v in levels),levels
+            assert all(max(v['440'],v['1660']) < -55 for v in levels),levels
         for name,_ in invites:admit(name)
         time.sleep(2)
         # Admitting to Preview must not expose the guest in Program before Take.
-        before=[p.evaluate(levels_script) for p in pages]
-        assert all(all(max(v['440'],v['660']) < -55 for v in levels) for levels in before),before
+        before=[p.evaluate(levels_script) for p in pages];results['previewOnlyLevels']=before
+        assert all(all(max(v['440'],v['1660']) < -55 for v in levels) for levels in before),before
         press('takeScene');time.sleep(4)
         levels=[p.evaluate(levels_script) for p in pages];results['mix_minus_levels']=levels
-        for incoming,own,other in zip(levels,('440','660'),('660','440')):
+        for incoming,own,other in zip(levels,('440','1660'),('1660','440')):
             assert max(v[other] for v in incoming)>-40,incoming
             assert max(v[own] for v in incoming)<-55,incoming
         print('Backstage, Take and guest mix-minus passed',flush=True)

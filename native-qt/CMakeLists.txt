@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(video-mixer-native-qt VERSION 0.5.0 LANGUAGES C CXX)
+project(video-mixer-native-qt VERSION 0.6.0 LANGUAGES C CXX)
 
 # CMake 4 removed compatibility modes older than 3.5. Opus 1.4 still
 # declares a 3.1 minimum, so give bundled dependencies the modern floor
@@ -155,6 +155,9 @@ endif()
 
 set(VERSUS_SOURCES
     src/main.cpp
+    src/mixer/process_worker.cpp
+    src/mixer/isolated_source.cpp
+    src/mixer/encoder_worker.cpp
     src/mixer/guest_return.cpp
     src/mixer/local_outputs.cpp
     src/mixer/gpu_compositor.cpp
@@ -403,6 +406,9 @@ if(VERSUS_BUILD_TESTS)
 
     # Library target for testable code (without main.cpp)
     set(VERSUS_LIB_SOURCES
+        src/mixer/process_worker.cpp
+        src/mixer/isolated_source.cpp
+        src/mixer/encoder_worker.cpp
         src/mixer/guest_return.cpp
         src/mixer/local_outputs.cpp
         src/mixer/gpu_compositor.cpp
@@ -436,6 +442,7 @@ if(VERSUS_BUILD_TESTS)
     )
 
     add_library(versus-lib STATIC ${VERSUS_LIB_SOURCES} ${VERSUS_HEADERS} ${VERSUS_RESOURCES})
+    add_dependencies(versus-lib video-mixer)
     set_target_properties(versus-lib PROPERTIES AUTOMOC ON)
     target_compile_definitions(versus-lib PUBLIC
         APP_VERSION="${PROJECT_VERSION}"

@@ -66,8 +66,16 @@ def choose_mode(text):
     send_keys('{HOME}');send_keys(text,with_spaces=True);send_keys('{ENTER}')
     time.sleep(.3)
     assert combo.selected_text()==text,combo.selected_text()
-    press('cameraApplyMode',dialog);time.sleep(2)
-    actual=control('cameraActiveMode',dialog).window_text()
+    # The controls panel is replaced during mode changes; avoid enumerating
+    # that transient UIA subtree while polling the persistent labels/buttons.
+    active_label=control('cameraActiveMode',dialog).wrapper_object()
+    apply_button=control('cameraApplyMode',dialog).wrapper_object()
+    press('cameraApplyMode',dialog)
+    deadline=time.time()+15
+    while time.time()<deadline:
+        actual=active_label.window_text()
+        if text in actual and apply_button.is_enabled():break
+        time.sleep(.2)
     assert text in actual,(text,actual,control('cameraSettingsStatus',dialog).window_text())
     print(actual,flush=True)
     return actual
@@ -105,7 +113,7 @@ try:
     set_auto('focus',False);set_value('focus',25);set_auto('focus',True)
     set_auto('white_balance',False);set_value('white_balance',4500);set_auto('white_balance',True)
     results['manualAndAuto']=['exposure','focus','white balance']
-    results['captureModes']=[choose_mode('1920x1080 @ 30 fps'),choose_mode('1280x720 @ 30 fps'),choose_mode('640x480 @ 15 fps')]
+    results['captureModes']=[choose_mode(mode) for _ in range(2) for mode in ('1920x1080 @ 30 fps','1280x720 @ 30 fps','640x480 @ 15 fps')]
     set_value('brightness',176);set_value('zoom',150)
     dialog.capture_as_image().save(str(report/'camera-settings.png'))
     close_settings();press('studioStartOutput');wait_output(False)
