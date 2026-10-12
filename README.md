@@ -2,7 +2,7 @@
 
 A native Windows production studio for scenes, sources, audio mixing and live output. **Desktop Studio** complements Web Studio and Web Mixer. It is based on [Game Capture](https://github.com/steveseguin/game-capture), with its own executable, settings, installer identity, browser profiles, logs, and update feed.
 
-Development version: **0.7.4**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
+Development version: **0.8.0**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
 
 Previously named **Video Mixer**. Setup upgrades the existing installation and replaces its Start menu shortcuts. Existing shows, output profiles, camera settings, browser profiles and the layout preference carry over. The repository/build target, `%LOCALAPPDATA%/VideoMixer` data folder and `VDO.Ninja/Video Mixer` settings identity remain stable for compatibility. Older validation documents use the name of the version they measured.
 
@@ -40,6 +40,16 @@ Camera changes apply immediately, including to Program. **Apply capture mode** b
 
 ## Guests, phones, and chat
 
+**Private break** replaces Program with a Be right back slate and silences its audio while recording/streaming continue. Admitted guests keep their mix-minus conversation, including unmuted local microphones. Click **Resume show** to return to Program. Per-track **On air** controls let admitted guests rehearse privately without changing their conversation or headphone Listen. **Mute mics** silences local microphone tracks in Program, returns and monitoring without changing their individual mute settings.
+
+**Hotkeys...** offers opt-in, configurable global shortcuts for private break, microphone mute, Take, held private talkback and scenes 1–9. Scene shortcuts stage Preview in Studio mode. Conflicts disable the global set and identify the unavailable combination. Defaults are Ctrl+Alt+B/M/Enter/T and Ctrl+Alt+1–9. The original in-window shortcuts remain available. Hotkeys require an interactive Windows session.
+
+Each audio track offers **Stereo**, **Mono (L + R)**, **Left to both** and **Right to both**. This maps the track's stereo input before its effects, recording, guest return and monitoring; it is not a selector for arbitrary channels on a multichannel interface.
+
+**Recordings** opens the recording folder or exports a completed MKV as MP4 without re-encoding. The original stays intact; existing MP4 files are never overwritten. The recording status estimates remaining disk time from free space and configured bitrate. This is an estimate, not a storage reservation. Playback adds elapsed/remaining time and optional restart when a clip changes from off-screen to visible in Program. A clip shared by consecutive scenes keeps playing.
+
+Browser source settings now include viewport width/height (160–3840 by 120–3840), allowing the web page itself to use a portrait layout. Existing shows keep 1280x720; new browser sources added through the interface use the current canvas size. The **Safe area** checkbox displays a generic 10% editing guide that never enters Program output.
+
 - **Invite guest** creates a private VDO.Ninja room invitation and a receiving source. Guests choose and start their camera/microphone, then join **backstage**. Select the source and choose **Admit / Backstage**. Newly invited guests stay audible on Program and in the guest conversation when off-screen; Mute or Backstage silences them. Enable **Scene** to make their Program audio follow their picture instead. Existing shows retain their saved routing. The picture follows the selected scene in single-canvas mode and requires Take in Studio mode. Studio Preview can show backstage video. The room and invitations are retained in the saved show.
 - **Wireless camera** creates a similar invitation with the rear-camera preference and no incoming return by default. The phone still sends its camera/microphone to Studio.
 - **Social chat** accepts a Social Stream Ninja session ID or overlay URL. A session ID adds its featured-message overlay. Select it and choose **Open / Invite** to open its chat dock and feature messages. Connect social platforms in Social Stream Ninja first.
@@ -51,7 +61,7 @@ Camera changes apply immediately, including to Program. **Apply capture mode** b
 
 ## Engine and current limits
 
-The original controls remain in **Capture & output**: standalone window/camera/Spout capture, hardware encoders, codecs, transparency workflows, audio encoding settings, and VDO.Ninja, WHIP, SRT, and RTMP/RTMPS outputs. Studio supplies frames and audio to that same output engine. Use the Studio faders when Mixer program is selected.
+The original controls remain in **Capture & output**: standalone window/camera/Spout capture, hardware encoders, codecs, transparency workflows, audio encoding settings, and VDO.Ninja, WHIP, SRT caller, and RTMP/RTMPS outputs. SRT listener and rendezvous modes are not supported. Studio supplies frames and audio to that same output engine. Use the Studio faders when Mixer program is selected.
 
 - The canvas supports native **720p30/60, 1080p30/60, portrait 720x1280/30/60 and 1080x1920/30/60**. Mixer streaming and independent recording follow that format. Stop outputs before changing it. Existing window/Spout sources reconnect to negotiate the new size and rate; webcams retain their separately selected capture mode. **Stacked** places interview pictures above one another; lock backgrounds/overlays before applying layout presets to preserve their placement. **CPU composition** is the default, based on lower measured cost for the common 720p mix. Optional **GPU composition** uses Direct2D/D3D11 with CPU fallback. Source/output frames still pass through CPU memory, so this is not a zero-copy GPU pipeline.
 - New browser sources and Social chat default to **Transparent overlay background**, using snapshots at up to **15 fps**. Overlay mode overrides the top-level HTML/body background to transparent on each navigation; message cards, embedded pages and other element styling remain intact. Social Stream Ninja can still supply its own custom CSS. Turn overlay mode off for opaque browser video using **Windows Graphics Capture targeting 30 fps**, avoiding PNG encoding/decoding. Existing saved capture modes are preserved. Actual cadence depends on hardware and page activity. The compositor still reads back to CPU memory.
@@ -94,11 +104,13 @@ powershell -ExecutionPolicy Bypass -File native-qt/build-mixer.ps1 -Installer
 
 Portable executable: `native-qt/dist/desktop-studio-portable/desktop-studio.exe`.
 
-Archives and setup: `native-qt/dist/desktop-studio-0.7.4-windows-x64.zip` and `desktop-studio-0.7.4-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
+Archives and setup: `native-qt/dist/desktop-studio-0.8.0-windows-x64.zip` and `desktop-studio-0.8.0-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
 
 The pinned SDK is fetched from NuGet; other native dependencies use CMake FetchContent. Downloaded dependencies, build outputs, local shows, and QA artifacts are excluded from Git.
 
 ## Validation and provenance
+
+[0.8.0 production controls and validation](docs/mixer-0.8.0-validation.md) covers private breaks, configurable global hotkeys, audio channel routing, guest automation, browser viewports, MP4 export, guest panels, accessibility, failure recovery, and the remaining equipment/account checks.
 
 [0.7.4 workflow and timing review](docs/mixer-0.7.4-validation.md) maps the main show formats and P0/P1 flows, measures loop synchronization, and records portrait support and remaining production gaps.
 

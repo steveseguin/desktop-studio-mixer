@@ -430,11 +430,12 @@ int ProcessWorker::run(int argc, char **argv) {
                     frameBytes(f, f.data.data(), f.data.size());
                 }, audio); result["ok"] = true; state["active"] = true;
             } else if (op == "media" && media) {
+                if (c["restart"].toBool()) media->restart();
                 if (c.contains("paused")) media->setPaused(c["paused"].toBool());
                 if (c.contains("loop")) media->setLoop(c["loop"].toBool());
-                if (c["restart"].toBool()) media->restart(); result["ok"] = true;
+                result["ok"] = true;
             } else if (op == "start" && kind == "browser") {
-                browser = std::make_unique<BrowserSource>(c["id"].toString(), QUrl(c["locator"].toString()), c["render"].toBool(), c["transparent"].toBool(), c["talkback"].toBool(), c["preserveColorMetadata"].toBool());
+                browser = std::make_unique<BrowserSource>(c["id"].toString(), QUrl(c["locator"].toString()), c["render"].toBool(), c["transparent"].toBool(), c["talkback"].toBool(), c["preserveColorMetadata"].toBool(), QSize(c["width"].toInt(1280), c["height"].toInt(720)));
                 QObject::connect(browser.get(), &BrowserSource::frameReady, &application, [&](const QImage &image) {
                     app::detail::PerformanceTrace::Scope profile(app::detail::PerformanceTrace::BrowserDelivery);
                     // A static PNG overlay keeps its identity through IPC. Do
@@ -554,7 +555,7 @@ int ProcessWorker::run(int argc, char **argv) {
         if (window) state["active"] = window->isCapturing();
         if (spout) state["active"] = spout->isCapturing();
         if (captureAudio) state["active"] = captureAudio->IsCapturing();
-        if (media) { state["error"] = media->error(); state["ended"] = media->ended(); state["hasVideo"] = media->hasVideo(); }
+        if (media) { state["error"] = media->error(); state["ended"] = media->ended(); state["hasVideo"] = media->hasVideo(); state["positionMs"] = qint64(media->positionMs()); state["durationMs"] = qint64(media->durationMs()); }
         if (browser) {
             if (browserCpuAt.isValid() && browserCpuAt.elapsed() >= 1000) {
                 JOBOBJECT_BASIC_ACCOUNTING_INFORMATION usage{};

@@ -21,9 +21,12 @@ public:
     QString error() const { std::lock_guard lock(mutex_); return error_; }
     bool ended() const { return ended_; }
     bool hasVideo() const { return hasVideo_; }
+    int64_t positionMs() const { return positionMs_; }
+    int64_t durationMs() const { return durationMs_; }
 private:
     std::atomic<bool> running_{false}, paused_{false}, loop_{true}, seek_{false}, ended_{false};
     std::atomic<bool> hasVideo_{false};
+    std::atomic<int64_t> positionMs_{0}, durationMs_{0};
     mutable std::mutex mutex_;
     std::condition_variable wake_;
     QString error_;

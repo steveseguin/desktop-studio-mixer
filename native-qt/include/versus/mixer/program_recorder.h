@@ -21,16 +21,20 @@ public:
     void audio(const std::vector<float> &samples, int64_t timestamp);
     bool active() const { return running_; }
     QString status() const;
+    QString path() const { std::lock_guard lock(mutex_); return path_; }
+    int64_t remainingSeconds() const { return remainingSeconds_; }
     uint64_t dropped() const { return dropped_; }
 private:
     std::atomic<bool> running_{false}, busy_{false};
     std::atomic<uint64_t> dropped_{0};
+    std::atomic<int64_t> remainingSeconds_{-1};
     std::atomic<std::shared_ptr<output::Session>> session_;
     mutable std::mutex mutex_;
     std::condition_variable wake_;
     QImage pending_;
     int64_t timestamp_ = 0;
     QString status_;
+    QString path_;
     std::thread worker_;
 };
 }

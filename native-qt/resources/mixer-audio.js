@@ -9,6 +9,7 @@
   const elements = new WeakMap();
   const streams = new WeakMap();
   const watchedStreams = new WeakSet();
+  const warnedElements = new WeakMap();
   let mixer, input, processor;
   const send = data => {
     if (window === window.top) window.chrome?.webview?.postMessage(data);
@@ -75,6 +76,16 @@
   };
   function captureElement(element) {
     try {
+      // A normally playable cross-origin element can become silent when Web
+      // Audio reads it. Tell the operator instead of silently accepting it.
+      if (!element.srcObject) {
+        const url = new URL(element.currentSrc || element.src || location.href, location.href);
+        if (/^https?:$/.test(url.protocol) && url.origin !== location.origin &&
+            !element.crossOrigin && warnedElements.get(element) !== url.href) {
+          warnedElements.set(element, url.href);
+          send({type:'mixer-audio-error', reason:'cross-origin'});
+        }
+      }
       // Chromium's MediaElementAudioSource does not reliably expose remote
       // WebRTC audio. Tap its MediaStream and retain the element's mute/volume.
       if (element.srcObject instanceof MediaStream) {

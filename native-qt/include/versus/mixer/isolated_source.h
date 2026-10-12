@@ -33,6 +33,8 @@ public:
     void restart();
     bool ended() const;
     bool hasVideo() const;
+    int64_t positionMs() const;
+    int64_t durationMs() const;
     bool workerFailed() const { return failed_; }
 private:
     bool begin(const QJsonObject &command);

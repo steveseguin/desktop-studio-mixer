@@ -22,7 +22,8 @@ bool ProgramRecorder::start(const QString &path, int width, int height, int fps)
     const auto error = output::validateConfig(config);
     { std::lock_guard lock(mutex_);
       if (!error.empty()) { status_ = QString::fromStdString(error); return false; }
-      status_ = "Starting recording..."; pending_ = {}; }
+      status_ = "Starting recording..."; path_ = path; pending_ = {}; }
+    remainingSeconds_ = -1;
     running_ = true; busy_ = true; dropped_ = 0;
     worker_ = std::thread([this, config, width, height, fps, path] {
         const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -64,6 +65,7 @@ bool ProgramRecorder::start(const QString &path, int width, int height, int fps)
                         if (!directory.endsWith('\\')) directory += '\\';
                         ULARGE_INTEGER available{};
                         const bool haveSpace = GetDiskFreeSpaceExW(directory.toStdWString().c_str(), &available, nullptr, nullptr);
+                        remainingSeconds_ = haveSpace ? int64_t(available.QuadPart > 128*1024*1024 ? (available.QuadPart-128*1024*1024)*8/(uint64_t(settings.bitrate+256)*1000) : 0) : -1;
                         if (haveSpace && available.QuadPart < 128*1024*1024) {
                             setStatus("Recording stopped: less than 128 MB disk space remains."); running_ = false; break;
                         }

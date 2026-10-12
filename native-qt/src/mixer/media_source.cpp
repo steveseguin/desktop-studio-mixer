@@ -16,6 +16,7 @@ void MediaSource::stop() { running_ = false; wake_.notify_all(); if (worker_.joi
 void MediaSource::start(const QString &path, std::function<void(const video::CapturedFrame &)> frame,
                         std::function<void(audio::StreamChunk&&)> audio) {
     stop(); running_ = true; ended_ = false; hasVideo_ = false; seek_ = false;
+    positionMs_ = 0; durationMs_ = 0;
     { std::lock_guard lock(mutex_); error_.clear(); }
     worker_ = std::thread([this, path, frame, audio] {
         const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -29,6 +30,10 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
             if (SUCCEEDED(hr)) hr = MFCreateSourceReaderFromURL(path.toStdWString().c_str(), attributes.Get(), &reader);
             if (FAILED(hr)) fail("Cannot open this media file. Use a Windows-supported format such as H.264/AAC MP4.");
             else {
+                PROPVARIANT duration{};
+                if (SUCCEEDED(reader->GetPresentationAttribute(MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &duration)) && duration.vt == VT_UI8)
+                    durationMs_ = int64_t(duration.uhVal.QuadPart/10000);
+                PropVariantClear(&duration);
                 reader->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
                 DWORD videoStream = DWORD(-1), audioStream = DWORD(-1); UINT32 width = 0, height = 0;
                 LONG stride = 0;
@@ -79,6 +84,7 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                             hr = reader->SetCurrentPosition(GUID_NULL, position); PropVariantClear(&position);
                             if (FAILED(hr)) { fail("This file cannot seek or loop."); break; }
                             origin = Clock::now(); finished.clear(); ended_ = false; lastSampleEnd = 0; cycleAudioFrames = 0;
+                            positionMs_ = 0;
                         }
                         DWORD stream = 0, flags = 0; LONGLONG pts = 0; ComPtr<IMFSample> sample;
                         // Keep decoder streams selected for their whole lifetime.
@@ -110,7 +116,7 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                                     if (!running_) break;
                                     if (!paused_) seek_ = true;
                                 }
-                                else { ended_ = true; paused_ = true; }
+                                else { ended_ = true; paused_ = true; if (durationMs_ > 0) positionMs_ = durationMs_.load(); }
                             }
                             continue;
                         }
@@ -129,6 +135,7 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                             if (!running_) break; if (seek_) continue;
                         }
                         const auto timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count()/100;
+                        positionMs_ = std::max<int64_t>(0,pts/10000);
                         ComPtr<IMFMediaBuffer> buffer; if (FAILED(sample->ConvertToContiguousBuffer(&buffer))) continue;
                         BYTE *bytes = nullptr; DWORD length = 0;
                         if (FAILED(buffer->Lock(&bytes, nullptr, &length))) continue;

@@ -7,9 +7,9 @@ window available for investigation. Private media and screenshots stay in report
 import argparse,json,os,pathlib,subprocess,sys,time
 import psutil
 from pywinauto import Application
-p=argparse.ArgumentParser();p.add_argument('--report',required=True);p.add_argument('--mediamtx',default=os.environ.get('MEDIAMTX_PATH',''));p.add_argument('workflows',nargs='+');a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--report',required=True);p.add_argument('--mediamtx',default=os.environ.get('MEDIAMTX_PATH',''));p.add_argument('--package',default='dist/desktop-studio-portable');p.add_argument('workflows',nargs='+');a=p.parse_args()
 base=pathlib.Path(a.report).resolve();base.mkdir(parents=True,exist_ok=True)
-executable=pathlib.Path('dist/desktop-studio-portable/desktop-studio.exe').resolve();results=[]
+executable=(pathlib.Path(a.package)/'desktop-studio.exe').resolve();results=[]
 for name in a.workflows:
     script=pathlib.Path('e2e')/('mixer-'+name+'-e2e.py');assert script.is_file(),script
     report=base/name;report.mkdir(exist_ok=False);show=report/'show.mixer.json'

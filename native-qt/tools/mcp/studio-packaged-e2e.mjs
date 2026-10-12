@@ -18,6 +18,19 @@ try {
  const state=(await call('status')).structuredContent;assert(state.headless);
  assert(!JSON.stringify(state).includes('Bearer '));
  assert(listed.tools.some(t=>t.name==='desktop_studio_monitor_set'));
+ for(const name of ['production_set','guest_invite','guest_set','record_export'])assert(listed.tools.some(t=>t.name==='desktop_studio_'+name));
+ await call('production_set',{privateBreak:true,microphonesMuted:true,privateTalkback:true});
+ let production=(await call('status')).structuredContent;
+ assert(production.private_break&&production.microphones_muted&&production.private_talkback);
+ await call('production_set',{privateBreak:false,microphonesMuted:false,privateTalkback:false});
+ const guest=(await call('guest_invite',{kind:'guest',name:'MCP private guest',returnMode:'none',programAudio:false})).structuredContent;
+ assert(new URL(guest.invite).hostname==='vdo.ninja');
+ await call('guest_set',{id:guest.id,admitted:true});
+ await call('audio_set',{source:guest.id,programAudio:false,channelMode:2});
+ production=(await call('status')).structuredContent;
+ const caller=production.sources.find(s=>s.id===guest.id);assert(caller.admitted&&!caller.programAudio&&caller.channelMode===2);
+ assert(!JSON.stringify(production).includes(guest.invite));
+ await call('guest_set',{id:guest.id,admitted:false});await call('source_remove',{id:guest.id});
  await call('monitor_set',{refresh:true});
  let monitoring;
  for(let attempt=0;attempt<50;attempt++){
@@ -51,5 +64,5 @@ try {
  const resource=await client.readResource({uri:'studio://state'});assert(JSON.parse(resource.contents[0].text).scenes.some(s=>s.id===added.id));
  await call('scene_select',{id:state.preview});await call('scene_remove',{id:added.id});
  const invalid=await client.callTool({name:'desktop_studio_audio_set',arguments:{source:'missing',gain:100}});assert(invalid.isError);
- await writeFile(path.join(report,'mcp.json'),JSON.stringify({tools:listed.tools.length,imageBytes:pixels.length,resource:true,invalidRejected:true,monitorDeviceAndGain:true,monitorRefresh:true,missingMonitorRejected:true,portraitPresetsAndScreenshot:true,invalidFormatRejected:true},null,2));
+ await writeFile(path.join(report,'mcp.json'),JSON.stringify({tools:listed.tools.length,imageBytes:pixels.length,resource:true,invalidRejected:true,monitorDeviceAndGain:true,monitorRefresh:true,missingMonitorRejected:true,portraitPresetsAndScreenshot:true,invalidFormatRejected:true,guestAndProductionControls:true,audioChannelRouting:true},null,2));
 } finally { await client.close(); }

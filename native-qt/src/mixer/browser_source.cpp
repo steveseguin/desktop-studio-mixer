@@ -64,6 +64,7 @@ struct BrowserSource::Impl {
     bool deliveryPending = false;
     int failures = 0;
     QString captureMode = "Starting browser";
+    QString audioWarning;
     std::unique_ptr<video::WindowCapture> capture;
     std::mutex frameMutex;
     QImage latest;
@@ -75,11 +76,17 @@ struct BrowserSource::Impl {
 #endif
 };
 
-BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFrames, bool transparent, bool allowTalkback, bool preserveColorMetadata)
+BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFrames, bool transparent, bool allowTalkback, bool preserveColorMetadata, QSize viewport)
     : QWidget(nullptr, renderFrames && !transparent ? Qt::Tool | Qt::FramelessWindowHint : Qt::Tool), impl_(std::make_unique<Impl>()) {
     setWindowTitle("Desktop Studio - Browser source");
     setAttribute(Qt::WA_QuitOnClose, false);
-    resize(1280, 720);
+    viewport = QSize(std::clamp(viewport.width(), 160, 3840), std::clamp(viewport.height(), 120, 3840));
+    resize(viewport);
+    // A capture viewport is source content, independent of the operator's
+    // monitor. Windows otherwise clamps tall top-level windows to the work
+    // area when they are first shown, changing the page and capture aspect.
+    // Interactive chat/talkback panels may still be resized normally.
+    if (renderFrames) setFixedSize(viewport);
     if (!ProcessWorker::inWorker()) {
         auto proxy = impl_->proxy = std::make_shared<Impl::Proxy>();
         static std::mutex profilesMutex;
@@ -94,10 +101,10 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
             }
             profiles[profileKey] = proxy->finished.promise.get_future().share();
         }
-        impl_->startWorker = [proxy, id, url, renderFrames, transparent, allowTalkback, preserveColorMetadata] {
+        impl_->startWorker = [proxy, id, url, renderFrames, transparent, allowTalkback, preserveColorMetadata, viewport] {
             if (!proxy->worker.start("browser")) { proxy->error = proxy->worker.error(); proxy->failed = true; return; }
             const auto result = proxy->worker.call({{"op", "start"}, {"id", id}, {"locator", url.toString(QUrl::FullyEncoded)},
-                {"render", renderFrames}, {"transparent", transparent}, {"talkback", allowTalkback}, {"preserveColorMetadata", preserveColorMetadata}});
+                {"render", renderFrames}, {"transparent", transparent}, {"talkback", allowTalkback}, {"preserveColorMetadata", preserveColorMetadata}, {"width", viewport.width()}, {"height", viewport.height()}});
             if (proxy->cancelled) { proxy->worker.stop(); return; }
             if (!result["ok"].toBool()) { proxy->error = result["error"].toString(); proxy->failed = true; return; }
             proxy->ready = true;
@@ -248,12 +255,13 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                                         return S_OK;
                                     }).Get(), &token))) return S_OK;
                                 if (!secure(web->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>(
-                                    [](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
+                                    [self](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
                                         LPWSTR raw = nullptr;
                                         args->get_Uri(&raw);
                                         const QUrl target(QString::fromWCharArray(raw ? raw : L""));
                                         CoTaskMemFree(raw);
                                         if (target.scheme() != "https" && target.scheme() != "http") args->put_Cancel(TRUE);
+                                        else if (self) self->impl_->audioWarning.clear();
                                         return S_OK;
                                     }).Get(), &token))) return S_OK;
                                 if (!secure(web->add_NewWindowRequested(Callback<ICoreWebView2NewWindowRequestedEventHandler>(
@@ -287,7 +295,11 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                                             emit self->errorOccurred("Browser source could not load. Retrying automatically...");
                                             const int retry = std::min(30000, 1000 << std::min(5, self->impl_->failures++));
                                             QTimer::singleShot(retry, self, [self] { if (self && self->impl_->web) self->impl_->web->Reload(); });
-                                        } else { self->impl_->failures = 0; emit self->recovered(); }
+                                        } else {
+                                            self->impl_->failures = 0;
+                                            if (self->impl_->audioWarning.isEmpty()) emit self->recovered();
+                                            else emit self->errorOccurred(self->impl_->audioWarning);
+                                        }
                                         return S_OK;
                                     }).Get(), &token);
                                 UINT32 pid = 0;
@@ -316,7 +328,13 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                                             const QString json = QString::fromWCharArray(raw, int(length)); CoTaskMemFree(raw);
                                             const auto obj = QJsonDocument::fromJson(json.toUtf8()).object();
                                             if (obj["type"].toString() == "mixer-audio-error") {
-                                                if (state.messageCount == 1) emit self->errorOccurred("Browser audio could not be routed. Check its audio meter or use another source URL.");
+                                                // The bridge may already have sent PCM this second;
+                                                // warnings must not depend on being its first message.
+                                                if (!state.audioWarning.isEmpty()) return S_OK;
+                                                state.audioWarning = obj["reason"].toString() == "cross-origin"
+                                                    ? "Cross-origin browser media needs CORS-enabled playback for audio capture. Check the meter or use another source URL."
+                                                    : "Browser audio could not be routed. Check its audio meter or use another source URL.";
+                                                emit self->errorOccurred(state.audioWarning);
                                                 return S_OK;
                                             }
                                             if (obj["type"].toString() != "mixer-audio") return S_OK;
@@ -370,7 +388,7 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                                             QMetaObject::invokeMethod(self, [self] { if (self) self->capture(); }, Qt::QueuedConnection);
                                         }
                                     });
-                                    if (state->capture->startCapture(std::to_string(self->winId()), 1280, 720, 30)) {
+                                    if (state->capture->startCapture(std::to_string(self->winId()), self->width(), self->height(), 30)) {
                                         state->captureMode = "Windows capture / 30 fps";
                                         // Delivery follows capture, coalescing under load instead of sampling through a second timer.
                                     } else state->capture.reset();
@@ -429,7 +447,7 @@ BrowserSource::~BrowserSource() {
     if (impl_->controller) impl_->controller->Close();
 #endif
 }
-QString BrowserSource::captureDescription() const { return impl_->captureMode; }
+QString BrowserSource::captureDescription() const { return impl_->captureMode + (impl_->audioWarning.isEmpty() ? QString() : " / "+impl_->audioWarning); }
 
 void BrowserSource::park() {
     if (auto proxy = impl_->proxy) { impl_->interactionPending = false; if (proxy->ready) QThreadPool::globalInstance()->start([proxy] { proxy->worker.call({{"op", "park"}}); }); return; }

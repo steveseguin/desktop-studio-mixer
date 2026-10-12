@@ -103,7 +103,9 @@ void IsolatedSource::mediaCommand(const QJsonObject &command) {
 }
 void IsolatedSource::setPaused(bool paused) { paused_ = paused; mediaCommand({{"paused", paused}}); }
 void IsolatedSource::setLoop(bool loop) { loop_ = loop; mediaCommand({{"loop", loop}}); }
-void IsolatedSource::restart() { mediaCommand({{"restart", true}}); }
+void IsolatedSource::restart() { paused_ = false; mediaCommand({{"restart", true}, {"paused", false}}); }
 bool IsolatedSource::ended() const { return snapshot()["ended"].toBool(); }
 bool IsolatedSource::hasVideo() const { return snapshot()["hasVideo"].toBool(true); }
+int64_t IsolatedSource::positionMs() const { return snapshot()["positionMs"].toInteger(); }
+int64_t IsolatedSource::durationMs() const { return snapshot()["durationMs"].toInteger(); }
 }

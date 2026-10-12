@@ -49,6 +49,21 @@ uses Windows, Qt and the GPU drivers: windowless operation in a Windows user
 session, not a Windows service or a promise of capture on locked/logged-out
 desktops. The inherited `--headless` capture mode is separate; don't combine them.
 
+Version 0.8 adds `guest.invite` and `guest.set` for creating private invitations,
+admission/backstage and return selection. These commands return a private invite
+URL; keep it out of public logs. Normal state continues to omit credentials.
+`production.set` explicitly sets private break, all-microphone mute, private
+talkback and the master guest-return switch. A private break produces a silent
+slate on Program while admitted guests retain their conversation.
+
+`audio.set` adds `programAudio` and `channelMode` (0 stereo, 1 averaged mono,
+2 left to both, 3 right to both). `source.add`/`source.update` add `browserWidth`
+and `browserHeight`. `media.set` adds `restartOnTake`; source state includes
+`positionMs`/`durationMs`. `record.export` accepts an existing absolute MKV
+`input` and a new absolute MP4 `path`; poll `recording.exporting` and
+`recording.export_status`. Export is isolated, preserves the original and does
+not re-encode. The packaged CLI/MCP tools discover these additions from schema.
+
 To automate a visible app, launch it with `--local-control-port=0`. Its default
 discovery file is `%LOCALAPPDATA%\VideoMixer\control.json`. CLI/MCP launches return
 a unique discovery path. Select it using `--discovery`, `DESKTOP_STUDIO_DISCOVERY`,
@@ -102,11 +117,14 @@ credentials in command history. The live schema describes exact fields and limit
 | `scene.add/select/rename/remove/background/take` | Scenes and cut/fade transitions |
 | `source.add/update/remove/reconnect` | Capture, browser, media, image, title and color sources |
 | `layer.set/order` | Normalized geometry, crop, visibility, opacity, lock, fit and order |
-| `audio.set` | Gain, mute, routing, monitoring, delay, effects and master gain |
-| `media.set` | Pause, loop, restart |
+| `audio.set` | Gain, mute, on-air and channel routing, monitoring, delay, effects and master gain |
+| `guest.invite/set` | Private invitations, admission/backstage and guest returns |
+| `production.set` | Private break, all-microphone mute, talkback and guest-return switch |
+| `media.set` | Pause, loop, restart and restart when entering Program |
 | `canvas.set` | Resolution/frame-rate preset and CPU/GPU compositor |
 | `record.start/stop` | Independent Program recording to a new absolute MKV path |
-| `output.configure/start/stop` | VDO.Ninja, RTMP, SRT, WHIP, or file output |
+| `record.export` | Remux a completed MKV to a new MP4 |
+| `output.configure/start/stop` | VDO.Ninja, RTMP/RTMPS, SRT caller, WHIP, or file output; SRT listener/rendezvous are rejected |
 | `show.save/open` | Explicit absolute `.mixer.json` paths |
 | `workspace.set` | Single/Studio mode and workspace layout |
 | `preferences.set` | Theme and next-launch language |

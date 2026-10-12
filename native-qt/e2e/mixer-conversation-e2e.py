@@ -83,6 +83,17 @@ try:
         tones={hz:float(np.median(abs(blocks@np.exp(-2j*np.pi*hz*np.arange(4800)/48000))*2/4800)) for hz in (440,1660)}
         assert all(v>.02 for v in tones.values()),tones
         results['offscreenProgramGuestsAudible']=tones
+        # Keep the conversation private without having to remove admitted callers.
+        for name in ('QA Alice','QA Bob'):enabled(channel(name,'On air'),False)
+        results['offAirConversation']=returns_match(guests,True)
+        private=report/'private-rehearsal.mkv';press('studioRecord');dialog=window.child_window(title='Record Program',control_type='Window');dialog.wait('visible')
+        dialog.child_window(title='File name:',control_type='Edit').set_edit_text(str(private));dialog.child_window(title='Save',control_type='Button').click_input();wait_recording(True)
+        time.sleep(4);press('studioRecord');wait_recording(False)
+        pcm=np.frombuffer(subprocess.check_output([str(ffmpeg),'-v','error','-i',str(private),'-vn','-f','f32le','-ac','1','-']),np.float32)
+        assert float(np.max(abs(pcm[48000:-24000])))<.001
+        for name in ('QA Alice','QA Bob'):enabled(channel(name,'On air'),True)
+        press('privateBreak');results['privateBreakConversation']=returns_match(guests,True)
+        window.capture_as_image().save(str(report/'private-break-guests.png'));press('privateBreak')
         for name in ('QA Alice','QA Bob'):enabled(channel(name,'Scene'),True)
         silent=report/'offscreen-scene-follow.mkv';press('studioRecord');dialog=window.child_window(title='Record Program',control_type='Window');dialog.wait('visible')
         dialog.child_window(title='File name:',control_type='Edit').set_edit_text(str(silent));dialog.child_window(title='Save',control_type='Button').click_input();wait_recording(True)

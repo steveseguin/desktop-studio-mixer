@@ -172,6 +172,16 @@
         },
         "preserveColorMetadata": {
           "type": "boolean"
+        },
+        "browserWidth": {
+          "type": "integer",
+          "minimum": 160,
+          "maximum": 3840
+        },
+        "browserHeight": {
+          "type": "integer",
+          "minimum": 120,
+          "maximum": 3840
         }
       },
       "required": [
@@ -207,6 +217,16 @@
         },
         "preserveColorMetadata": {
           "type": "boolean"
+        },
+        "browserWidth": {
+          "type": "integer",
+          "minimum": 160,
+          "maximum": 3840
+        },
+        "browserHeight": {
+          "type": "integer",
+          "minimum": 120,
+          "maximum": 3840
         }
       },
       "required": [
@@ -405,6 +425,14 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 500
+        },
+        "programAudio": {
+          "type": "boolean"
+        },
+        "channelMode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
         }
       },
       "required": [
@@ -432,6 +460,9 @@
           "type": "boolean"
         },
         "restart": {
+          "type": "boolean"
+        },
+        "restartOnTake": {
           "type": "boolean"
         }
       },
@@ -712,6 +743,124 @@
       },
       "required": [
         "command"
+      ]
+    },
+    "production.set": {
+      "description": "Set private break (silent Program slate, guest conversation continues), all-microphone mute, private talkback or guest returns.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "production.set"
+        },
+        "privateBreak": {
+          "type": "boolean"
+        },
+        "microphonesMuted": {
+          "type": "boolean"
+        },
+        "privateTalkback": {
+          "type": "boolean"
+        },
+        "guestReturns": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "guest.invite": {
+      "description": "Create a backstage guest/wireless invitation. Returns a private invite URL: do not publish or log it. programAudio=false permits private rehearsal after admission.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "guest.invite"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "guest",
+            "wireless"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "returnMode": {
+          "type": "string",
+          "enum": [
+            "none",
+            "audio",
+            "video"
+          ]
+        },
+        "programAudio": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "command",
+        "kind",
+        "name"
+      ]
+    },
+    "guest.set": {
+      "description": "Admit/backstage an invited source or change its return. Returns the private invitation; reopen it on the sender after changing return mode. Admission can make Program audio live before Take.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "guest.set"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "admitted": {
+          "type": "boolean"
+        },
+        "returnMode": {
+          "type": "string",
+          "enum": [
+            "none",
+            "audio",
+            "video"
+          ]
+        }
+      },
+      "required": [
+        "command",
+        "id"
+      ]
+    },
+    "record.export": {
+      "description": "Export a completed MKV recording to a new MP4 without re-encoding or changing the original. Poll recording.exporting and export_status.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "record.export"
+        },
+        "input": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "command",
+        "input",
+        "path"
       ]
     }
   },

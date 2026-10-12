@@ -2,7 +2,7 @@
 import argparse,json,subprocess,sys,time,uuid,psutil
 from pathlib import Path
 from pywinauto import Application
-p=argparse.ArgumentParser();p.add_argument('--report',required=True);p.add_argument('--nvda',required=True);a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--report',required=True);p.add_argument('--nvda',required=True);p.add_argument('--package',default='dist/desktop-studio-portable');a=p.parse_args()
 report=Path(a.report).resolve();report.mkdir(parents=True,exist_ok=False)
 assert not any(p.name().lower() in ('nvda.exe','nvda_noUIAccess.exe','nvda_uiAccess.exe') for p in psutil.process_iter()), 'An NVDA instance is already running'
 show=report/'show.mixer.json';show.write_text(json.dumps({'version':1,'sources':[],'scenes':[{'id':str(uuid.uuid4()),'name':name,'background':'#183657','layers':[]} for name in ('Opening','Main')]}))
@@ -23,7 +23,7 @@ allowUsageStats = False
 [mouse]
 enableMouseTracking = False
 ''')
-package=Path('dist/desktop-studio-portable').resolve();fixture=report/'tone.mp4'
+package=Path(a.package).resolve();fixture=report/'tone.mp4'
 subprocess.run([str(package/'ffmpeg/bin/ffmpeg.exe'),'-v','error','-y','-f','lavfi','-i','testsrc2=size=640x360:rate=30','-f','lavfi','-i','sine=frequency=731:sample_rate=48000','-t','3','-c:v','libopenh264','-c:a','aac',str(fixture)],check=True,timeout=30)
 cli=package/'tools/mcp/studio-cli.mjs';target=None;nvda=None
 try:
@@ -33,7 +33,7 @@ try:
     deadline=time.monotonic()+20
     while not (report/'nvda.log').exists() and time.monotonic()<deadline:time.sleep(.2)
     time.sleep(3)
-    result=subprocess.run([sys.executable,'-B','e2e/mixer-nvda-e2e.py','--session',str(report/'session.json'),'--report',str(report),'--nvda-log',str(report/'nvda.log'),'--fixture',str(fixture)])
+    result=subprocess.run([sys.executable,'-B','e2e/mixer-nvda-e2e.py','--session',str(report/'session.json'),'--report',str(report),'--nvda-log',str(report/'nvda.log'),'--fixture',str(fixture),'--package',str(package)])
     assert result.returncode==0,'Keyboard/NVDA workflow failed; see report'
 finally:
     if target:

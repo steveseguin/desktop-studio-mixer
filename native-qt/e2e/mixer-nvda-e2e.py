@@ -4,7 +4,7 @@ Requires NVDA debug speech logging and a fresh two-scene show (Opening, Main).
 Pass the JSON returned by studio-cli launch as --session; private media/logs stay
 in --report. The caller owns application and NVDA startup/shutdown.
 """
-import json,time,urllib.request,subprocess,argparse
+import json,time,urllib.request,subprocess,argparse,os
 from pathlib import Path
 from pywinauto import Application
 from pywinauto.keyboard import send_keys
@@ -57,6 +57,11 @@ focus('audio_gain_'+source);key('{HOME}{RIGHT 50}');assert abs(next(s for s in s
 key('{RIGHT 50}');results['keyboardTrackVolume']=True
 focus('masterGain');key('{HOME}{RIGHT 80}');assert abs(state()['master_gain']-.8)<.02
 results['keyboardMasterVolume']=True
+focus('privateBreak');key('{SPACE}');assert state()['private_break']
+assert IUIA().iuia.GetFocusedElement().CurrentName=='Resume show';key('{SPACE}');assert not state()['private_break']
+focus('muteMicrophones');key('{SPACE}');assert state()['microphones_muted']
+assert IUIA().iuia.GetFocusedElement().CurrentName=='Unmute mics';key('{SPACE}');assert not state()['microphones_muted']
+results['productionToggleAccessibleNames']=True
 focus('studioMode');key('{SPACE}');assert state()['mode']=='studio';program=state()['program'];key('^1');assert state()['program']==program
 key('^{ENTER}');assert state()['program']==state()['preview'];key('^2');key('^{ENTER}')
 results['keyboardPreviewAndTake']=True
@@ -69,7 +74,12 @@ for _ in range(50):
  key('{TAB}')
 else:raise AssertionError('Save filename is not keyboard reachable')
 key('^a');recording=root/('nvda-recording-'+str(time.time_ns())+'.mkv');text(str(recording));key('{ENTER}')
-until(lambda:state()['recording']['active']);time.sleep(4)
+until(lambda:state()['recording']['active']);time.sleep(3)
+focus('masterGain');recording_quiet_start=log.stat().st_size
+time.sleep(float(os.environ.get('STUDIO_NVDA_RECORD_QUIET_SECONDS','4')))
+recording_quiet=log.read_bytes()[recording_quiet_start:].decode('utf-8',errors='replace')
+results['recordingUnsolicitedSpeechLines']=[l for l in recording_quiet.splitlines() if l.startswith('Speaking ')]
+assert not results['recordingUnsolicitedSpeechLines'],results['recordingUnsolicitedSpeechLines']
 focus('studioRecord');key('{SPACE}');until(lambda:not state()['recording']['busy'])
 assert 'saved' in state()['recording']['status'].lower(),state()['recording']
 results['keyboardRecording']=True
@@ -85,7 +95,7 @@ assert r.returncode==0 and not r.stderr,r.stderr
 results['recordingDecoded']=True
 speech=log.read_bytes()[start_log:].decode('utf-8',errors='replace')
 (root/'nvda-studio-transcript.txt').write_text(speech,encoding='utf-8')
-results['missingSpokenLabels']=[label for label in ('Add source','Source type','Name','NVDA media','Mute','Master volume','Studio mode','Record Program','Recording saved','dBFS','Choose an existing local media file') if label.lower() not in speech.lower()]
+results['missingSpokenLabels']=[label for label in ('Add source','Source type','Name','NVDA media','Mute','Master volume','Studio mode','Record Program','Recording saved','dBFS','Choose an existing local media file','Resume show','Unmute mics') if label.lower() not in speech.lower()]
 results['nvdaSpokeWorkflowLabels']=not results['missingSpokenLabels']
 (root/'nvda-results.json').write_text(json.dumps(results,indent=2));print(json.dumps(results,indent=2))
 assert not results['missingSpokenLabels'] and not results['unfocusedMeterBeeps'] and not results['unfocusedMeterSpeechLines'],results
