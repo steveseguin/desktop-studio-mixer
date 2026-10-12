@@ -2,7 +2,7 @@
 
 A native Windows production studio for scenes, sources, audio mixing and live output. **Desktop Studio** complements Web Studio and Web Mixer. It is based on [Game Capture](https://github.com/steveseguin/game-capture), with its own executable, settings, installer identity, browser profiles, logs, and update feed.
 
-Development version: **0.6.0**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
+Development version: **0.6.1**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
 
 Previously named **Video Mixer**. Setup upgrades the existing installation and replaces its Start menu shortcuts. Existing shows, output profiles, camera settings, browser profiles and the layout preference carry over. The repository/build target, `%LOCALAPPDATA%/VideoMixer` data folder and `VDO.Ninja/Video Mixer` settings identity remain stable for compatibility. Older validation documents use the name of the version they measured.
 
@@ -46,7 +46,7 @@ Camera changes apply immediately, including to Program. **Apply capture mode** b
 The original controls remain in **Capture & output**: standalone window/camera/Spout capture, hardware encoders, codecs, transparency workflows, audio encoding settings, and VDO.Ninja, WHIP, SRT, and RTMP/RTMPS outputs. Studio supplies frames and audio to that same output engine. Use the Studio faders when Mixer program is selected.
 
 - The canvas supports native **720p30/60, 1080p30/60 and portrait 1080x1920/30**. Mixer streaming and independent recording follow that format. Stop outputs before changing it. **CPU composition** is the default, based on lower measured cost for the common 720p mix. Optional **GPU composition** uses Direct2D/D3D11 with CPU fallback. Source/output frames still pass through CPU memory, so this is not a zero-copy GPU pipeline.
-- Opaque browser sources use **Windows Graphics Capture targeting 30 fps**, avoiding PNG encoding/decoding. Actual cadence depends on hardware and page activity. **Preserve browser transparency** uses snapshots at up to **15 fps**; Social chat defaults to that mode. The compositor still reads back to CPU memory.
+- New browser sources and Social chat default to **Transparent overlay background**, using snapshots at up to **15 fps**. Overlay mode overrides the top-level HTML/body background to transparent on each navigation; message cards, embedded pages and other element styling remain intact. Social Stream Ninja can still supply its own custom CSS. Turn overlay mode off for opaque browser video using **Windows Graphics Capture targeting 30 fps**, avoiding PNG encoding/decoding. Existing saved capture modes are preserved. Actual cadence depends on hardware and page activity. The compositor still reads back to CPU memory.
 - One streaming destination, plus independent recording, Spout output and virtual-camera output. **Spout output** publishes `Desktop Studio Program`. **Virtual camera** registers `Desktop Studio Virtual Camera` for the current Windows account without administrator access. It supplies video; select an audio device in the receiving app separately. This is a 64-bit DirectShow camera, verified in FFmpeg and Edge; applications requiring other camera interfaces may not support it. **Unregister camera** removes its registration. Local outputs start off each launch.
 - **Video / audio file** uses Windows Media Foundation codecs, including H.264/AAC MP4 and WAV. **Playback** offers pause, restart and looping. Unsupported codecs report an error. Audio-only files contribute audio without occupying a video layout position.
 - Cameras and native sources start asynchronously. Failed native captures retry with backoff; browser navigation failures and browser process crashes recover automatically. Windows restore by a unique executable/title match, including when their window reopens. Ambiguous or renamed windows require selecting the intended window through Reconnect. Missing devices/images/runtime report errors. Physical USB unplug recovery still needs a dedicated hardware run.
@@ -80,13 +80,13 @@ powershell -ExecutionPolicy Bypass -File native-qt/build-mixer.ps1 -Installer
 
 Portable executable: `native-qt/dist/desktop-studio-portable/desktop-studio.exe`.
 
-Archives and setup: `native-qt/dist/desktop-studio-0.6.0-windows-x64.zip` and `desktop-studio-0.6.0-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
+Archives and setup: `native-qt/dist/desktop-studio-0.6.1-windows-x64.zip` and `desktop-studio-0.6.1-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
 
 The pinned SDK is fetched from NuGet; other native dependencies use CMake FetchContent. Downloaded dependencies, build outputs, local shows, and QA artifacts are excluded from Git.
 
 ## Validation and provenance
 
-[0.6.0 isolation, browser security and performance validation](docs/mixer-0.6.0-validation.md) records real publishing, recording, hardware, failure-injection and sustained workflows.
+[0.6.1 overlay background validation](docs/mixer-0.6.1-validation.md) covers default transparency, page security policies, reloads, source modes, composed recording and the real Social Stream Ninja workflow. [0.6.0 isolation, browser security and performance validation](docs/mixer-0.6.0-validation.md) records real publishing, recording, hardware, failure-injection and sustained workflows.
 
 [0.5.0 production validation](docs/mixer-0.5.0-validation.md) covers the native canvas, independent recording, media playback, editing, audio effects, guest returns, local outputs, recovery and performance measurements.
 

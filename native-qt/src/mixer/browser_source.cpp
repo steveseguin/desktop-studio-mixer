@@ -326,16 +326,25 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                                             return S_OK;
                                         }).Get(), &token);
                                     QFile script(":/mixer/mixer-audio.js");
-                                    if (script.open(QIODevice::ReadOnly)) {
-                                        const auto javascript = QString::fromUtf8(script.readAll()).toStdWString();
-                                        web->AddScriptToExecuteOnDocumentCreated(javascript.c_str(),
+                                    QFile overlay(":/mixer/mixer-overlay.js");
+                                    if (!script.open(QIODevice::ReadOnly) || (transparent && !overlay.open(QIODevice::ReadOnly))) {
+                                        emit self->errorOccurred("Browser source initialization is missing. Reinstall Desktop Studio.");
+                                        return S_OK;
+                                    }
+                                    {
+                                        const auto javascript = (QString::fromUtf8(script.readAll()) + "\n" +
+                                            (transparent ? QString::fromUtf8(overlay.readAll()) : QString{})).toStdWString();
+                                        if (!secure(web->AddScriptToExecuteOnDocumentCreated(javascript.c_str(),
                                             Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
                                                 [self, url](HRESULT result, LPCWSTR) -> HRESULT {
-                                                    if (!self) return S_OK;
-                                                    if (FAILED(result)) emit self->errorOccurred("Browser audio initialization failed. Reconnect this source.");
+                                                    if (!self || !self->impl_->web) return S_OK;
+                                                    if (FAILED(result)) {
+                                                        emit self->errorOccurred("Browser source initialization failed. Reconnect this source.");
+                                                        return S_OK;
+                                                    }
                                                     self->impl_->web->Navigate(url.toString(QUrl::FullyEncoded).toStdWString().c_str());
                                                     return S_OK;
-                                                }).Get());
+                                                }).Get()))) return S_OK;
                                     }
                                 } else {
                                     web->Navigate(url.toString(QUrl::FullyEncoded).toStdWString().c_str());

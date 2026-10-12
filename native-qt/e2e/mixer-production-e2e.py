@@ -29,12 +29,15 @@ def choose_dialog(dialog, name, text):
          if c.is_visible() and text in c.window_text()).click_input()
     time.sleep(.15)
 
-def add_source(kind, name, value='', device=None):
+def add_source(kind, name, value='', device=None, transparent=False):
     press('addSource'); dialog = window.child_window(title='Add source', control_type='Window'); dialog.wait('visible')
     choose_dialog(dialog, 'sourceKind', kind)
     control('sourceName', dialog).set_edit_text(name)
     if value: control('sourceValue', dialog).set_edit_text(value)
     if device: choose_dialog(dialog, 'sourceDevice', device)
+    # Production video fixtures explicitly request the 30 fps capture path.
+    if kind.startswith('Browser'):
+        enabled(control('browserTransparency', dialog), transparent)
     dialog.child_window(title='OK', control_type='Button').invoke(); time.sleep(2)
 
 def remove(name):

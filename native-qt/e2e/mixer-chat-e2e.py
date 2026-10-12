@@ -5,7 +5,7 @@ to a social platform or send a chat message to anyone else.
 """
 from pathlib import Path
 exec(Path(__file__).with_name('mixer-desktop-e2e.py').read_text().split('class Fixture')[0])
-import os,sys,uuid
+import hashlib,os,sys,uuid
 sys.path.insert(0,str(Path('.cache/mixer-qa').resolve()))
 from playwright.sync_api import sync_playwright
 profile=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/browser'
@@ -14,14 +14,16 @@ session='mixerqa'+uuid.uuid4().hex[:20]
 window.child_window(title='Studio',control_type='TabItem').click_input()
 studio_mode()
 scene('Break');press('takeScene')
-remove_sources(('Social chat ',))
+remove_sources(('Social chat',))
 scene('Opening'); press('takeScene')
 press('socialChat'); prompt=window.child_window(title='Social Stream Ninja',control_type='Window')
 prompt.child_window(control_type='Edit').set_edit_text(session); prompt.child_window(title='OK',control_type='Button').invoke()
 time.sleep(3); press('interactSource'); time.sleep(3)
 data=json.loads(show.read_text()); source=next(s for s in data['sources'] if s['name']=='Social chat')
 def page_for(pw,id,part):
-    port=int((profile/id/'EBWebView/DevToolsActivePort').read_text().splitlines()[0])
+    try: safe_id=str(uuid.UUID(id))
+    except ValueError: safe_id=hashlib.sha256(id.encode()).hexdigest()
+    port=int((profile/safe_id/'EBWebView/DevToolsActivePort').read_text().splitlines()[0])
     browser=pw.chromium.connect_over_cdp(f'http://127.0.0.1:{port}')
     return next(p for c in browser.contexts for p in c.pages if part in p.url)
 results={}
@@ -41,6 +43,10 @@ try:
         cdp.send('Runtime.evaluate',{'expression':'processInput('+json.dumps({'action':'content','value':json.dumps(event)})+')','returnByValue':True})
         message=dock.locator('[data-mid="424242"]'); message.wait_for(state='visible'); message.click()
         overlay.get_by_text('Private mixer integration check').wait_for(state='visible',timeout=30000)
+        colors=overlay.evaluate('''() => [document.documentElement, document.body].map(e => getComputedStyle(e).backgroundColor)''')
+        assert colors==['rgba(0, 0, 0, 0)']*2,colors
+        assert source['transparent'], 'Social chat must use overlay capture by default'
+        results['overlay_backgrounds']=colors
         # Park the dock, then take the actual featured browser source into Program.
         dock.keyboard.press('Escape')
         window.set_focus(); before=control('programCanvas').capture_as_image()

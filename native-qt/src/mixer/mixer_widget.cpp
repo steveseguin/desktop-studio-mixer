@@ -1027,7 +1027,7 @@ struct MixerWidget::Impl {
         QLineEdit value; value.setObjectName("sourceValue");
         QPushButton browse("Choose file / color");
         QLabel help; help.setWordWrap(true);
-        QCheckBox transparent("Preserve browser transparency (15 fps snapshots)"); transparent.setObjectName("browserTransparency");
+        QCheckBox transparent("Transparent overlay background (up to 15 fps)"); transparent.setObjectName("browserTransparency");
         QSpinBox audioDelay; audioDelay.setObjectName("sourceAudioDelay"); audioDelay.setRange(0, 500); audioDelay.setSuffix(" ms");
         audioDelay.setToolTip("Delay this source's Program audio to match its picture. Headphone monitoring stays immediate.");
         form->addRow("Source type", &type); form->addRow("Name", &name); form->addRow("Device / window", &device);
@@ -1037,6 +1037,7 @@ struct MixerWidget::Impl {
         auto populate = [&] {
             const auto kind = type.currentData().toString(); device.clear();
             transparent.setVisible(kind == "browser" || kind == "guest" || kind == "wireless" || kind == "chat");
+            if (!existing) transparent.setChecked(kind == "browser" || kind == "chat");
             audioDelay.setEnabled(kind == "browser" || kind == "guest" || kind == "wireless" || kind == "window" || kind == "microphone" || kind == "desktop" || kind == "media");
             audioDelay.setValue(kind == "browser" || kind == "guest" || kind == "wireless" ? 60 : 0);
             value.clear(); value.setVisible(true); device.setVisible(true); browse.setVisible(kind == "image" || kind == "color" || kind == "media");
@@ -1052,7 +1053,7 @@ struct MixerWidget::Impl {
             } else {
                 device.setVisible(false);
                 if (kind == "desktop") { value.setVisible(false); help.setText("Captures other applications, excluding Desktop Studio, its browsers and monitoring. Avoid adding the same game's individual audio twice."); }
-                if (transparent.isVisible()) { value.setPlaceholderText("https://..."); help.setText("Smooth browser video uses Windows capture at 30 fps. Enable transparency for overlays. Open / Invite allows interaction; Escape parks the browser."); }
+                if (transparent.isVisible()) { value.setPlaceholderText("https://..."); help.setText("Overlay mode clears the page background automatically, keeping message and card styling. Turn it off for smooth browser video at 30 fps. Open / Invite allows interaction; Escape parks the browser."); }
                 if (kind == "media") help.setText("Local video or audio file. Playback uses Windows media decoders; H.264/AAC MP4 is recommended. Use Playback controls after adding it.");
                 if (kind == "image") help.setText("PNG, JPEG and other Qt-supported images. Transparent PNGs remain transparent.");
                 if (kind == "title") { value.setText("Your title"); help.setText("A full-frame title card. Resize and position it on the canvas."); }

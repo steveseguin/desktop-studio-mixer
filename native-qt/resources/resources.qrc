@@ -2,6 +2,7 @@
 <RCC version="1.0">
   <qresource prefix="/mixer">
     <file>mixer-audio.js</file>
+    <file>mixer-overlay.js</file>
   </qresource>
   <qresource prefix="/icons">
     <file>vdoninja.ico</file>

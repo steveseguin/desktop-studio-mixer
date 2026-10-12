@@ -123,6 +123,9 @@ def add(kind, name, value=None):
     combo.click_input()
     combo.type_keys('{HOME}{DOWN 5}{ENTER}')
     control('sourceName', dialog).set_edit_text(name)
+    # This workflow exercises opaque, smooth video capture.
+    if control('browserTransparency', dialog).get_toggle_state():
+        control('browserTransparency', dialog).toggle()
     if value is not None:
         control('sourceValue', dialog).set_edit_text(value)
     dialog.child_window(title='OK', control_type='Button').invoke()
