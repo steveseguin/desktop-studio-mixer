@@ -36,12 +36,20 @@ try {
  const added=(await call('scene_add',{name:'MCP blue',background:'#1234d0'})).structuredContent;
  assert(added.id);
  await call('scene_select',{id:added.id});
+ for(const [format,width,height,fps] of [[4,1080,1920,30],[5,720,1280,30],[6,720,1280,60],[7,1080,1920,60]]){
+  await call('canvas_set',{format});
+  const canvas=(await call('status')).structuredContent.canvas;
+  assert.deepEqual([canvas.width,canvas.height,canvas.fps],[width,height,fps]);
+ }
+ const invalidFormat=await client.callTool({name:'desktop_studio_canvas_set',arguments:{format:8}});assert(invalidFormat.isError);
+ await call('canvas_set',{format:5});
  const image=await call('screenshot',{target:'program',max_width:640});
  assert.equal(image.content[0].type,'image');assert.equal(image.content[0].mimeType,'image/png');
  const pixels=Buffer.from(image.content[0].data,'base64');assert.equal(pixels.subarray(1,4).toString(),'PNG');
+ assert(pixels.readUInt32BE(20)>pixels.readUInt32BE(16),'Headless Program screenshot must be portrait');
  await writeFile(path.join(report,'mcp-program.png'),pixels);
  const resource=await client.readResource({uri:'studio://state'});assert(JSON.parse(resource.contents[0].text).scenes.some(s=>s.id===added.id));
  await call('scene_select',{id:state.preview});await call('scene_remove',{id:added.id});
  const invalid=await client.callTool({name:'desktop_studio_audio_set',arguments:{source:'missing',gain:100}});assert(invalid.isError);
- await writeFile(path.join(report,'mcp.json'),JSON.stringify({tools:listed.tools.length,imageBytes:pixels.length,resource:true,invalidRejected:true,monitorDeviceAndGain:true,monitorRefresh:true,missingMonitorRejected:true},null,2));
+ await writeFile(path.join(report,'mcp.json'),JSON.stringify({tools:listed.tools.length,imageBytes:pixels.length,resource:true,invalidRejected:true,monitorDeviceAndGain:true,monitorRefresh:true,missingMonitorRejected:true,portraitPresetsAndScreenshot:true,invalidFormatRejected:true},null,2));
 } finally { await client.close(); }

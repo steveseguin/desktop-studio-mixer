@@ -27,10 +27,12 @@ def decode(path):
     result=subprocess.run([str(ffmpeg),'-hide_banner','-i',str(path),'-f','null','-'],capture_output=True,text=True,timeout=45)
     assert result.returncode==0,result.stderr
     assert 'Video: h264' in result.stderr and 'Audio: aac' in result.stderr,result.stderr
+    expected=os.environ.get('STUDIO_OUTPUT_FORMAT','1280x720 / 30 fps').split(' / ')[0]
+    assert expected in result.stderr,result.stderr
     raw=subprocess.check_output([str(ffmpeg),'-v','error','-i',str(path),'-vn','-f','f32le','-ac','1','-ar','48000','pipe:1'])
     samples=np.frombuffer(raw,dtype=np.float32)[48000:96000];t=np.arange(len(samples))/48000
     tone=float(abs(np.sum(samples*np.exp(-2j*np.pi*731*t)))*2/len(samples));assert tone>.02,tone
-    return {'path':str(path),'tone731Hz':tone}
+    return {'path':str(path),'tone731Hz':tone,'dimensions':expected}
 
 try:
     scene('Main')
@@ -45,6 +47,7 @@ try:
     assert len(frames)==45 and len({line.split(',')[-1] for line in frames})>20
     results['virtual_camera']={'decodedFrames':len(frames),'distinctFrames':len({line.split(',')[-1] for line in frames})}
     enabled(control('virtualCamera'),False);press('unregisterCamera')
+    choose_dialog(window,'canvasFormat',os.environ.get('STUDIO_OUTPUT_FORMAT','1280x720 / 30 fps'))
     with socket.socket() as reservation:reservation.bind(('127.0.0.1',0));port=reservation.getsockname()[1]
     received=report/'srt.mkv';log=(report/'srt.log').open('w')
     receiver=subprocess.Popen([str(ffmpeg),'-hide_banner','-y','-i',f'srt://127.0.0.1:{port}?mode=listener&latency=120000','-t','22','-map','0','-c','copy',str(received)],stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)

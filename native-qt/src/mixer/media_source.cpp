@@ -60,6 +60,8 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                     hasVideo_ = videoStream != DWORD(-1);
                     using Clock = std::chrono::steady_clock;
                     auto origin = Clock::now(); std::set<DWORD> finished;
+                    LONGLONG lastSampleEnd = 0;
+                    uint64_t cycleAudioFrames = 0;
                     video::CapturedFrame captured;
                     while (running_) {
                         if (paused_) {
@@ -76,7 +78,7 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                             PROPVARIANT position{}; InitPropVariantFromInt64(0, &position);
                             hr = reader->SetCurrentPosition(GUID_NULL, position); PropVariantClear(&position);
                             if (FAILED(hr)) { fail("This file cannot seek or loop."); break; }
-                            origin = Clock::now(); finished.clear(); ended_ = false;
+                            origin = Clock::now(); finished.clear(); ended_ = false; lastSampleEnd = 0; cycleAudioFrames = 0;
                         }
                         DWORD stream = 0, flags = 0; LONGLONG pts = 0; ComPtr<IMFSample> sample;
                         // Keep decoder streams selected for their whole lifetime.
@@ -97,12 +99,24 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                         if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
                             finished.insert(stream);
                             if ((videoStream == DWORD(-1) || finished.contains(videoStream)) && (audioStream == DWORD(-1) || finished.contains(audioStream))) {
-                                if (loop_) seek_ = true;
+                                if (loop_) {
+                                    // A decoded audio sample represents an interval, not
+                                    // just its leading timestamp. Restarting at the last
+                                    // sample's start makes each loop queue another block
+                                    // of audio ahead of the next picture cycle.
+                                    const auto end = origin + std::chrono::nanoseconds(lastSampleEnd*100);
+                                    std::unique_lock lock(mutex_);
+                                    wake_.wait_until(lock, end, [this] { return !running_ || paused_ || seek_; });
+                                    if (!running_) break;
+                                    if (!paused_) seek_ = true;
+                                }
                                 else { ended_ = true; paused_ = true; }
                             }
                             continue;
                         }
                         if (!sample) continue;
+                        LONGLONG duration = 0; sample->GetSampleDuration(&duration);
+                        lastSampleEnd = std::max(lastSampleEnd, std::max<LONGLONG>(0, pts)+std::max<LONGLONG>(0, duration));
                         const auto deadline = origin + std::chrono::nanoseconds(std::max<LONGLONG>(0, pts)*100);
                         { std::unique_lock lock(mutex_); wake_.wait_until(lock, deadline, [this] { return !running_ || paused_ || seek_; }); }
                         if (!running_) break;
@@ -139,6 +153,11 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                             }
                             frame(captured);
                         } else if (stream == audioStream && length%8 == 0) {
+                            // Some readers omit duration. PCM length still gives the
+                            // complete interval at our negotiated 48 kHz stereo rate.
+                            lastSampleEnd = std::max(lastSampleEnd, std::max<LONGLONG>(0, pts)+LONGLONG(length/8)*10000000/48000);
+                            cycleAudioFrames += length/8;
+                            lastSampleEnd = std::max(lastSampleEnd, LONGLONG(cycleAudioFrames*10000000/48000));
                             audio::StreamChunk chunk; chunk.sampleRate = 48000; chunk.channels = 2; chunk.captureTime100ns = timestamp;
                             chunk.samples.resize(length/sizeof(float)); std::memcpy(chunk.samples.data(), bytes, length); audio(std::move(chunk));
                         }

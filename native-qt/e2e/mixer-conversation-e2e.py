@@ -52,7 +52,8 @@ for command,title,name in [('inviteGuest','Invite guest','QA Alice'),('inviteGue
     url,mode=create_invite(command,title,name);invites.append((name,url));results[name+' default']=mode
 assert 'No return' in results['QA wireless default']
 assert all('Program video' in results[name+' default'] for name in ('QA Alice','QA Bob'))
-time.sleep(1);ids={s['name']:s['id'] for s in json.loads(show.read_text())['sources']}
+time.sleep(1);saved=json.loads(show.read_text());ids={s['name']:s['id'] for s in saved['sources']}
+assert all(not s['followsScene'] for s in saved['sources'] if s['kind']=='guest')
 try:
     with sync_playwright() as pw:
         sender=pw.chromium.launch(channel='msedge',headless=False,args=['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--autoplay-policy=no-user-gesture-required','--mute-audio','--window-position=850,40','--window-size=1000,850'])
@@ -78,7 +79,18 @@ try:
         dialog.child_window(title='File name:',control_type='Edit').set_edit_text(str(silent));dialog.child_window(title='Save',control_type='Button').click_input();wait_recording(True)
         time.sleep(5);press('studioRecord');wait_recording(False)
         raw=subprocess.check_output([str(ffmpeg),'-v','error','-i',str(silent),'-vn','-f','f32le','-ac','1','-']);pcm=np.frombuffer(raw,np.float32)
-        assert np.sqrt(np.mean(pcm**2))<1e-6;results['offscreenProgramSilent']=True
+        blocks=pcm[:len(pcm)//4800*4800].reshape(-1,4800)
+        tones={hz:float(np.median(abs(blocks@np.exp(-2j*np.pi*hz*np.arange(4800)/48000))*2/4800)) for hz in (440,1660)}
+        assert all(v>.02 for v in tones.values()),tones
+        results['offscreenProgramGuestsAudible']=tones
+        for name in ('QA Alice','QA Bob'):enabled(channel(name,'Scene'),True)
+        silent=report/'offscreen-scene-follow.mkv';press('studioRecord');dialog=window.child_window(title='Record Program',control_type='Window');dialog.wait('visible')
+        dialog.child_window(title='File name:',control_type='Edit').set_edit_text(str(silent));dialog.child_window(title='Save',control_type='Button').click_input();wait_recording(True)
+        time.sleep(4);press('studioRecord');wait_recording(False)
+        raw=subprocess.check_output([str(ffmpeg),'-v','error','-i',str(silent),'-vn','-f','f32le','-ac','1','-']);pcm=np.frombuffer(raw,np.float32)
+        assert np.sqrt(np.mean(pcm**2))<1e-6;results['offscreenSceneFollowSilent']=True
+        results['sceneFollowStillPrivateConversation']=returns_match(guests,True)
+        for name in ('QA Alice','QA Bob'):enabled(channel(name,'Scene'),False)
         scene('Main');press('takeScene');time.sleep(2)
         enabled(channel('QA Alice','Mute'),True);time.sleep(2);assert signal(guests[1],440)<-55
         enabled(channel('QA Alice','Mute'),False);admit('QA Alice');time.sleep(2);assert signal(guests[1],440)<-55

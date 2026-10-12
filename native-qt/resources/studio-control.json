@@ -540,7 +540,7 @@
       ]
     },
     "canvas.set": {
-      "description": "Set canvas format or compositor while outputs are stopped.",
+      "description": "Set canvas while outputs are stopped. Formats: 0=720p30, 1=1080p30, 2=1080p60, 3=720p60, 4=1080x1920p30, 5=720x1280p30, 6=720x1280p60, 7=1080x1920p60.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -550,7 +550,7 @@
         "format": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 4
+          "maximum": 7
         },
         "renderer": {
           "type": "string",

@@ -7,9 +7,9 @@ import socket,os,numpy as np
 results={};children=[]
 ffmpeg=Path('dist/desktop-studio-portable/ffmpeg/bin/ffmpeg.exe').resolve()
 server_exe=Path(os.environ.get('MEDIAMTX_PATH','.cache/mediamtx/mediamtx.exe')).resolve()
-def port():
-    with socket.socket() as s:s.bind(('127.0.0.1',0));return s.getsockname()[1]
-rtsp,rtmp,whip,udp=port(),port(),port(),port()
+def port(kind=socket.SOCK_STREAM):
+    with socket.socket(type=kind) as s:s.bind(('127.0.0.1',0));return s.getsockname()[1]
+rtsp,rtmp,whip,udp=port(),port(),port(),port(socket.SOCK_DGRAM)
 config=report/'mediamtx.yml';config.write_text(f'''logLevel: info
 rtspAddress: 127.0.0.1:{rtsp}
 rtspTransports: [tcp]

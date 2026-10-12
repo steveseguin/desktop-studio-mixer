@@ -117,6 +117,13 @@ In Studio mode, take sources off Program before deleting them. Scene selection
 goes live immediately in single-canvas mode and stages Preview in Studio mode.
 Theme/layout changes don't take scenes live.
 
+`canvas.set` keeps its original preset IDs: 0=1280x720/30, 1=1920x1080/30,
+2=1920x1080/60, 3=1280x720/60, 4=1080x1920/30. Version 0.7.4 adds
+5=720x1280/30, 6=720x1280/60 and 7=1080x1920/60. Recording and streaming
+use the selected canvas. Stop every output, including guest returns, before
+changing it. `show.save` exports a snapshot; it does not switch the autosave
+workspace. Local assets under the exported show's directory use relative paths.
+
 `state.system` contains `cpu_percent`, `memory_percent`, `memory_used_bytes` and
 `memory_total_bytes`, refreshed once per second independently of publishing.
 CPU measures the whole machine (0–100%), including other applications. Before

@@ -43,13 +43,25 @@ try:
   with urllib.request.urlopen(request,timeout=15) as response:return json.load(response)
  assert api('/studio/state')['headless']
  mcp=run(['node','tools/mcp/studio-packaged-e2e.mjs',dest,target['discovery'],base],text=True,encoding='utf-8',timeout=60);assert mcp.returncode==0,mcp.stderr
- rec=base/'installed.mkv';api('/studio/command',{'command':'record.start','path':str(rec)});wait(lambda:api('/studio/state')['recording']['status'].startswith('Recording:'));time.sleep(3)
+ from PIL import Image
+ with Image.open(base/'mcp-program.png') as picture:
+  assert picture.height>picture.width and picture.convert('RGB').getpixel((picture.width//2,picture.height//2))==(18,52,208)
+ clip=base/'motion.mp4';generated=run([package/'ffmpeg/bin/ffmpeg.exe','-v','error','-y','-f','lavfi','-i','testsrc2=size=640x360:rate=30','-t','8','-c:v','libopenh264',clip],timeout=30);assert generated.returncode==0,generated.stderr
+ api('/studio/command',{'command':'source.add','kind':'media','name':'Installed motion','locator':str(clip)});time.sleep(2)
+ rec=base/'installed.mkv';api('/studio/command',{'command':'record.start','path':str(rec)});wait(lambda:api('/studio/state')['recording']['status'].startswith('Recording:'))
+ snapshots=[]
+ for _ in range(12):
+  picture=api('/studio/screenshot',{'target':'program','max_width':160});assert picture['height']>picture['width'];snapshots.append(picture['data']);time.sleep(.25)
+ assert len(set(snapshots))>=8,'Live screenshots did not follow the moving input'
  descendants=proc.children(recursive=True)
  api('/commands',{'command':'quit'});proc.wait(timeout=25);target=None
  wait(lambda:all(not p.is_running() for p in descendants))
  decoded=run([package/'ffmpeg/bin/ffmpeg.exe','-v','error','-i',rec,'-fps_mode','passthrough','-enc_time_base','1:1000000','-f','null','-'],timeout=30)
  assert decoded.returncode==0 and not decoded.stderr,decoded.stderr
- results={'installedCliAndMcp':True,'recordingDecoded':True,'noOwnedDescendants':True,'portableZipInstalledExeMatch':True,'executableSha256':executable_hash}
+ cadence=run([package/'ffmpeg/bin/ffmpeg.exe','-v','info','-copyts','-i',rec,'-an','-vf','showinfo','-f','null','-'],text=True,encoding='utf-8',timeout=30);assert cadence.returncode==0,cadence.stderr
+ pts=[float(x) for x in re.findall(r'\bn:\s*\d+\s+pts:\s*\S+\s+pts_time:([-\d.e+]+)',cadence.stderr)];gaps=[b-a for a,b in zip(pts,pts[1:])]
+ assert len(pts)>75 and max(gaps)<.07,(len(pts),max(gaps))
+ results={'installedCliAndMcp':True,'portraitLiveScreenshots':len(set(snapshots)),'recordingDecoded':True,'maxFrameGapMsDuringScreenshots':max(gaps)*1000,'noOwnedDescendants':True,'portableZipInstalledExeMatch':True,'executableSha256':executable_hash}
 finally:
  if target:
   try:

@@ -400,7 +400,9 @@ struct Session::Impl {
             detail::MatroskaStream mux;
             auto write = [&](const QByteArray &data) {
                 if (process.state() == QProcess::NotRunning) throw OutputError("Output connection closed. Check server availability and credentials.");
-                if (process.bytesToWrite() + data.size() > qint64(kMaximumQueueBytes)) throw OutputError("Output connection cannot keep up with the selected bitrate.");
+                if (process.bytesToWrite() + data.size() > qint64(kMaximumQueueBytes)) throw OutputError(
+                    config.protocol == Protocol::Recording ? "Recording writer is blocked. Check disk speed and free space."
+                    : "Output is blocked or cannot connect. Check server availability, credentials and bandwidth.");
                 if (process.write(data) != data.size()) throw OutputError("Output FFmpeg input failed.");
                 process.waitForBytesWritten(5);
                 // FFmpeg can echo full output URLs on failure. Keep stderr out
