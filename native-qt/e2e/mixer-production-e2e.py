@@ -184,7 +184,7 @@ try:
     assert np.any((pixels[:,:,0]>180) & (pixels[:,:,1]<80) & (pixels[:,:,2]<140)), 'Chat was not rendered'
     results['transparent_chat_overlay']='passed'
 
-    fixture=subprocess.Popen([sys.executable,'-B',str(Path(__file__).with_name('mixer-sources-e2e.py')),'--fixture'],creationflags=subprocess.CREATE_NO_WINDOW)
+    fixture=subprocess.Popen([sys._base_executable,'-B',str(Path(__file__).with_name('mixer-sources-e2e.py')),'--fixture'],creationflags=subprocess.CREATE_NO_WINDOW)
     children.append(fixture); time.sleep(2)
     add_source('Game / window','QA game',device='Desktop Studio QA Window')
     press('takeScene'); near(color('programCanvas'),(196,58,70)); results['native_game_capture']='passed'
@@ -204,6 +204,27 @@ try:
     press('layout-Picture in picture'); press('takeScene')
     recording=report/f'production-{int(time.time())}.mkv'
     configure('Record to file (MKV)',recording); press('studioStartOutput'); wait_output(True)
+    rehearsal=int(os.environ.get('STUDIO_UI_REHEARSAL_SECONDS','0'))
+    if rehearsal:
+        import psutil,ctypes
+        root=psutil.Process(args.pid);samples=[];started=time.monotonic()
+        while time.monotonic()-started<rehearsal:
+            owned=[root,*root.children(recursive=True)];private=cpu=0
+            for process in owned:
+                try:
+                    private+=process.memory_info().private
+                    value=process.cpu_times();cpu+=value.user+value.system
+                except psutil.Error:pass
+            response=ctypes.c_size_t();begin=time.monotonic()
+            assert ctypes.windll.user32.SendMessageTimeoutW(window.handle,0,0,0,2,1500,ctypes.byref(response))
+            samples.append({'elapsed':time.monotonic()-started,'treePrivateMiB':private/2**20,'treeCpuSeconds':cpu,'uiMs':(time.monotonic()-begin)*1000})
+            if len(samples)%60==0:
+                scene('Break');press('fadeScene');time.sleep(2);scene('Main');press('fadeScene')
+                window.capture_as_image().save(str(report/('rehearsal-'+str(len(samples))+'.png')))
+            time.sleep(1)
+        (report/'rehearsal-samples.json').write_text(json.dumps(samples,indent=2))
+        results['mixedShowRehearsal']={'seconds':time.monotonic()-started,'maxUiMs':max(s['uiMs'] for s in samples),
+            'privateMiBStart':samples[0]['treePrivateMiB'],'privateMiBEnd':samples[-1]['treePrivateMiB']}
     time.sleep(7); scene('Break'); press('fadeScene'); time.sleep(3)
     press('studioStartOutput'); wait_output(False); time.sleep(2)
     assert recording.exists() and recording.stat().st_size>10000
@@ -229,6 +250,10 @@ try:
     tone=float(abs(np.sum(samples*np.exp(-2j*np.pi*731*t)))*2/len(samples))
     assert tone>.03,tone
     results['private_srt_receiver']={'path':str(received),'video':'H.264','audio':'AAC','tone731Hz':tone}
+    for path in (recording,received):
+        decoded=subprocess.run([str(ffmpeg),'-v','error','-i',str(path),'-fps_mode','passthrough','-enc_time_base','1:1000000','-f','null','-'],capture_output=True,timeout=120)
+        assert decoded.returncode==0 and not decoded.stderr,decoded.stderr
+    results['fullMediaDecode']='production recording and private SRT receiver'
     scene('Break'); press('takeScene'); remove('QA browser'); scene('Opening'); press('takeScene')
     window.capture_as_image().save(str(report/'studio-phase2.png'))
 finally:

@@ -11,7 +11,7 @@ import win32gui, win32process, win32con
 helpers=Path(__file__).with_name('mixer-production-e2e.py').read_text()
 exec(helpers[helpers.index('def source_row'):helpers.index('\nclass Fixture')])
 results={}; original={}; dialog=None
-show=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/studio.mixer.json'
+show=show_path
 
 def restore_window():
     def restore(h,_):
@@ -127,7 +127,7 @@ try:
     results['savedShow']='camera mode and explicitly changed controls persisted'
     # Restart the shipped portable app to verify actual hardware settings are reapplied.
     window.set_focus();window.type_keys('^q');app.wait_for_process_exit(timeout=15)
-    child=subprocess.Popen([str(Path('dist/desktop-studio-portable/desktop-studio.exe').resolve())],creationflags=subprocess.CREATE_NO_WINDOW)
+    child=subprocess.Popen([str(Path('dist/desktop-studio-portable/desktop-studio.exe').resolve()),'--studio-show='+str(show_path)],creationflags=subprocess.CREATE_NO_WINDOW)
     (report/'app.pid').write_text(str(child.pid));time.sleep(3)
     app=Application(backend='uia').connect(process=child.pid);window=app.window(title='Desktop Studio - Powered by VDO.Ninja')
     # Helpers bind window as a default argument; rebind after restarting.

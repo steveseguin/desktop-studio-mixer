@@ -16,8 +16,8 @@ from urllib.parse import urlparse,parse_qs
 results={}
 children=[]
 fixture_server=None
-show=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/studio.mixer.json'
-profile=show.parent/'browser'
+show=show_path
+profile=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/browser'
 instrument='''(() => {window.qaPeers=[];const PC=RTCPeerConnection;
 window.RTCPeerConnection=new Proxy(PC,{construct(target,args){const pc=new target(...args);qaPeers.push(pc);return pc;}});})();'''
 stats_script='''async () => {const out=[];for(const pc of window.qaPeers||[]){const stats=await pc.getStats();

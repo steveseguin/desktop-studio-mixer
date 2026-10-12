@@ -12,7 +12,7 @@ sys.path.insert(0,str(Path('.cache/mixer-qa').resolve()))
 from playwright.sync_api import sync_playwright
 
 results={}; requests=[]; root=psutil.Process(args.pid)
-show=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/studio.mixer.json'
+show=show_path
 class Fixture(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         requests.append(self.path)
@@ -34,7 +34,7 @@ def responsive():
     return (time.perf_counter()-begin)*1000
 
 def connect(pw,source_id):
-    file=show.parent/'browser'/source_id/'EBWebView/DevToolsActivePort'; deadline=time.time()+30
+    file=(Path(os.environ['LOCALAPPDATA'])/'VideoMixer/browser')/source_id/'EBWebView/DevToolsActivePort'; deadline=time.time()+30
     while time.time()<deadline:
         try:
             browser=pw.chromium.connect_over_cdp('http://127.0.0.1:'+file.read_text().splitlines()[0],timeout=1500)
@@ -81,12 +81,16 @@ try:
         }''')
         responsive(); assert page.evaluate('1+1')==2
         results['malformedNativeMessages']='ignored; no host command execution or blocking dialog'
-        discovery=Path('e2e/reports/studio-isolation/control.json')
+        discovery=Path(os.environ.get('STUDIO_E2E_DISCOVERY',str(report/'control.json')))
         if discovery.exists():
-            data=json.loads(discovery.read_text());port=data.get('port')
-            if port:
-                page.evaluate('''async port => {try {await fetch('http://127.0.0.1:'+port+'/commands',{method:'POST',mode:'no-cors',body:JSON.stringify({command:'quit'})})}catch(e){}}''',port)
-                time.sleep(.5);responsive();results['unauthenticatedLoopbackCommand']='rejected'
+            data=json.loads(discovery.read_text())
+            # Deliberately supply no token, as an untrusted webpage would.
+            outcome=page.evaluate("""async base => {try {const r=await fetch(base+'/commands',{method:'POST',body:JSON.stringify({command:'quit'})});return r.status}catch(e){return e.name}}""",data['base_url'])
+            time.sleep(.5);responsive();assert root.is_running()
+            assert outcome in (401,403,'TypeError'),outcome
+            results['unauthenticatedLoopbackCommand']={'webResult':outcome,'mainAppSurvived':True}
+        else:
+            results['unauthenticatedLoopbackCommand']='not run: this launch has no control listener'
         # Flood the real WebView bridge; a separate media source supplies audio.
         path=report/'hostile-browser.mkv';press('studioRecord');dialog=window.child_window(title='Record Program',control_type='Window');dialog.wait('visible')
         dialog.child_window(title='File name:',control_type='Edit').set_edit_text(str(path));dialog.child_window(title='Save',control_type='Button').invoke()

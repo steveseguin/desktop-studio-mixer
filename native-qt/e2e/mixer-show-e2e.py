@@ -78,7 +78,13 @@ try:
     invalid = report/'invalid.mixer.json'
     invalid.write_text(json.dumps(fixture), encoding='utf-8')
     file_dialog('importShow', 'Open show', invalid, 'Open')
-    assert 'Invalid source reference' in control('mixerStatus').window_text()
+    failure=window.child_window(title='Could not open show',control_type='Window')
+    failure.wait('visible',timeout=5)
+    time.sleep(3)  # Device retries must not hide the import error.
+    text=' '.join(c.window_text() for c in failure.descendants(control_type='Text'))
+    assert 'Invalid source reference' in text and 'current show has been kept' in text,text
+    failure.capture_as_image().save(str(report/'invalid-show-error.png'))
+    failure.child_window(title='OK',control_type='Button').click_input()
     scene('QA imported show'); near(color('previewCanvas'), before)
     results['invalidShowKeepsCurrentShow'] = 'passed'
 finally:

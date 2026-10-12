@@ -558,9 +558,15 @@ struct MixerWidget::Impl {
         QObject::connect(importShow, &QPushButton::clicked, q, [this] {
             if (core->isLive() || recorder.busy() || virtualCamera->isChecked() || spoutOutput->isChecked()) { message("Stop streaming, recording and local outputs before opening another show."); return; }
             const auto path = QFileDialog::getOpenFileName(q, "Open show", {}, "Mixer show (*.mixer.json)");
-            if (!path.isEmpty() && load(path)) {
+            if (path.isEmpty()) return;
+            if (load(path)) {
                 selectedScene = 0; selectedSource.clear(); program = scenes[0]; fading = false;
                 history.clear(); historyIndex = 0; rebuild(); updateAudioRouting(); changed();
+            } else {
+                // Source retries can replace the status line while the user reads
+                // an import error. Keep this explicit action's result visible.
+                QMessageBox::warning(q, studioText("Could not open show"),
+                    status->text()+"\n\n"+studioText("Your current show has been kept."));
             }
         });
         root->addLayout(transport);

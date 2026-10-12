@@ -408,7 +408,9 @@ int ProcessWorker::run(int argc, char **argv) {
                 result["ok"] = r.success; result["error"] = QString::fromStdString(r.error); state["active"] = r.success;
             } else if (op == "start" && kind == "media") {
                 media = std::make_unique<MediaSource>(); media->setLoop(c["loop"].toBool()); media->setPaused(c["paused"].toBool());
-                media->start(c["locator"].toString(), frame, audio); result["ok"] = true; state["active"] = true;
+                media->start(c["locator"].toString(), [&](const video::CapturedFrame &f) {
+                    frameBytes(f, f.data.data(), f.data.size());
+                }, audio); result["ok"] = true; state["active"] = true;
             } else if (op == "media" && media) {
                 if (c.contains("paused")) media->setPaused(c["paused"].toBool());
                 if (c.contains("loop")) media->setLoop(c["loop"].toBool());

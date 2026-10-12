@@ -23,7 +23,8 @@ try:
             time.sleep(.2)
         assert hwnd,'first Open / Invite did not show the new chat dock'
         attempts.append(round(time.monotonic()-start,3));time.sleep(1)
-        win32gui.PostMessage(hwnd,0x10,0,0);time.sleep(.5)
+        dock=Application(backend='uia').connect(handle=hwnd).window(handle=hwnd)
+        dock.set_focus();dock.type_keys('%{F4}');time.sleep(.5)
         assert not dock_window(),'Close did not park the browser dock'
     results['firstClickOpenSeconds']=attempts;results['closeAndReopen']='passed'
 finally:

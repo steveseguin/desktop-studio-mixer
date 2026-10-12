@@ -95,9 +95,11 @@ try:
     # A URL edit really must reconnect and deliver the replacement pixels.
     before = len(loads)
     edit(url=base+'/replacement')
-    assert len(loads) == before+1, loads
     wait_color((196, 58, 70))
-    before = len(loads); press('reconnectSource'); time.sleep(3)
+    assert len(loads) == before+1, loads
+    before = len(loads); press('reconnectSource')
+    deadline=time.monotonic()+15
+    while len(loads)<before+1 and time.monotonic()<deadline:time.sleep(.2)
     assert len(loads) == before+1, loads
     wait_color((196, 58, 70))
     results['replacementAndExplicitReconnect'] = 'passed'

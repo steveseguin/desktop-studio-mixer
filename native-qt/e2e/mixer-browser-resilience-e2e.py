@@ -12,7 +12,7 @@ sys.path.insert(0,str(Path('.cache/mixer-qa').resolve()))
 from playwright.sync_api import sync_playwright
 results={};root=psutil.Process(args.pid)
 main_hwnd=window.handle
-show=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/studio.mixer.json'
+show=show_path
 ffmpeg=str(Path('dist/desktop-studio-portable/ffmpeg/bin/ffmpeg.exe').resolve())
 clip=media_fixture()
 
@@ -39,7 +39,7 @@ def connect(pw,id,path):
     deadline=time.time()+25
     while time.time()<deadline:
         try:
-            port=int((show.parent/'browser'/id/'EBWebView/DevToolsActivePort').read_text().splitlines()[0])
+            port=int(((Path(os.environ['LOCALAPPDATA'])/'VideoMixer/browser')/id/'EBWebView/DevToolsActivePort').read_text().splitlines()[0])
             browser=pw.chromium.connect_over_cdp(f'http://127.0.0.1:{port}',timeout=1500)
             page=next(p for c in browser.contexts for p in c.pages if path in p.url)
             page.wait_for_load_state('load',timeout=3000);return browser,page

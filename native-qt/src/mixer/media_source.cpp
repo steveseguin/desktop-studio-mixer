@@ -7,12 +7,13 @@
 #include <propvarutil.h>
 #include <algorithm>
 #include <cstring>
+#include <emmintrin.h>
 #include <set>
 using Microsoft::WRL::ComPtr;
 namespace versus::mixer {
 MediaSource::~MediaSource() { stop(); }
 void MediaSource::stop() { running_ = false; wake_.notify_all(); if (worker_.joinable()) worker_.join(); }
-void MediaSource::start(const QString &path, std::function<void(video::CapturedFrame)> frame,
+void MediaSource::start(const QString &path, std::function<void(const video::CapturedFrame &)> frame,
                         std::function<void(audio::StreamChunk&&)> audio) {
     stop(); running_ = true; ended_ = false; hasVideo_ = false; seek_ = false;
     { std::lock_guard lock(mutex_); error_.clear(); }
@@ -59,6 +60,7 @@ void MediaSource::start(const QString &path, std::function<void(video::CapturedF
                     hasVideo_ = videoStream != DWORD(-1);
                     using Clock = std::chrono::steady_clock;
                     auto origin = Clock::now(); std::set<DWORD> finished;
+                    video::CapturedFrame captured;
                     while (running_) {
                         if (paused_) {
                             const auto pauseStart = Clock::now(); std::unique_lock lock(mutex_);
@@ -117,15 +119,25 @@ void MediaSource::start(const QString &path, std::function<void(video::CapturedF
                         BYTE *bytes = nullptr; DWORD length = 0;
                         if (FAILED(buffer->Lock(&bytes, nullptr, &length))) continue;
                         if (stream == videoStream && width && height && length >= size_t(std::abs(stride))*height) {
-                            video::CapturedFrame captured; captured.width = width; captured.height = height; captured.stride = width*4;
+                            captured.width = width; captured.height = height; captured.stride = width*4;
                             captured.timestamp = timestamp; captured.opaque = true; captured.data.resize(size_t(width)*height*4);
                             for (UINT32 row = 0; row < height; ++row) {
                                 auto *out = captured.data.data()+size_t(row)*width*4;
                                 const auto *in = bytes+size_t(stride < 0 ? height-1-row : row)*std::abs(stride);
-                                std::memcpy(out, in, width*4);
-                                for (UINT32 col = 0; col < width; ++col) out[col*4+3] = 255;
+                                // MF RGB32 leaves its fourth byte unspecified;
+                                // Qt RGB32 requires it to be 255, including in
+                                // CPU scaling. Copy and normalize in one pass.
+                                const auto alpha = _mm_set1_epi32(-16777216);
+                                UINT32 col = 0;
+                                for (; col+4 <= width; col += 4) {
+                                    const auto pixels = _mm_loadu_si128(reinterpret_cast<const __m128i*>(in+col*4));
+                                    _mm_storeu_si128(reinterpret_cast<__m128i*>(out+col*4), _mm_or_si128(pixels, alpha));
+                                }
+                                for (; col < width; ++col) {
+                                    std::memcpy(out+col*4, in+col*4, 4); out[col*4+3] = 255;
+                                }
                             }
-                            frame(std::move(captured));
+                            frame(captured);
                         } else if (stream == audioStream && length%8 == 0) {
                             audio::StreamChunk chunk; chunk.sampleRate = 48000; chunk.channels = 2; chunk.captureTime100ns = timestamp;
                             chunk.samples.resize(length/sizeof(float)); std::memcpy(chunk.samples.data(), bytes, length); audio(std::move(chunk));

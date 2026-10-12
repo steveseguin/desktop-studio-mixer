@@ -6,6 +6,7 @@ to an external streaming destination or open physical cameras/microphones.
 import argparse
 import http.server
 import json
+import os
 import subprocess
 import threading
 import time
@@ -21,6 +22,7 @@ report = Path(args.report).resolve()
 report.mkdir(parents=True, exist_ok=True)
 app = Application(backend='uia').connect(process=args.pid)
 window = app.window(title='Desktop Studio - Powered by VDO.Ninja')
+show_path = Path(os.environ.get('STUDIO_E2E_SHOW', str(Path(os.environ['LOCALAPPDATA'])/'VideoMixer/studio.mixer.json')))
 
 
 def control(name, root=window):
@@ -36,8 +38,17 @@ def control(name, root=window):
     # just as a user scrolls them into view on a smaller display. Layout checks
     # opt out while inspecting intentionally clipped viewport edges.
     if root is window and globals().get('reveal_workspace', True):
+        # A view with an accessible name may have a short AutomationId. Its
+        # ancestors still identify the real scroll panel containing the view.
+        ancestor_ids = []
+        ancestor = found
+        for _ in range(20):
+            if ancestor is None: break
+            ancestor_ids.append(ancestor.element_info.automation_id or '')
+            ancestor = ancestor.parent()
+        ancestry = '.'.join(ancestor_ids)+'.'
         for name in ('audioTracksScroll','sourcesPanelScroll','scenesPanelScroll','audioPanelScroll','studioWorkspaceScroll'):
-            if '.'+name+'.' not in found.element_info.automation_id: continue
+            if '.'+name+'.' not in ancestry: continue
             viewport=next((c for c in elements if (c.element_info.automation_id or '').endswith('.'+name)),None)
             if not viewport: continue
             bars=[c for c in viewport.descendants(control_type='ScrollBar') if c.is_visible() and c.rectangle().height()>c.rectangle().width()]
@@ -53,7 +64,13 @@ def control(name, root=window):
 
 
 def press(name, root=window):
-    control(name, root).wrapper_object().invoke()
+    root.set_focus()
+    target = control(name, root).wrapper_object()
+    if os.environ.get('STUDIO_E2E_POINTER') == '1':
+        assert target.is_visible() and target.is_enabled(), ('Unavailable control', name)
+        target.click_input()
+    else:
+        target.invoke()
     time.sleep(0.2)
 
 
@@ -61,6 +78,16 @@ def studio_mode(enabled=True):
     box = control('studioMode')
     if bool(box.get_toggle_state()) != enabled: box.toggle()
     time.sleep(.3)
+
+
+def wait_recording(active):
+    deadline = time.monotonic()+40
+    while time.monotonic()<deadline:
+        text = control('recordingStatus').window_text()
+        if active and text.startswith('Recording:'): return
+        if not active and 'saved' in text.lower(): return
+        time.sleep(.2)
+    raise AssertionError(text)
 
 
 def color(name):

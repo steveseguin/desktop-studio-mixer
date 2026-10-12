@@ -21,6 +21,11 @@ def wait(fn):
   if fn():return
   time.sleep(.2)
  raise AssertionError('Timed out')
+
+def installer_registered():
+ try:
+  with winreg.OpenKey(winreg.HKEY_CURRENT_USER,r'Software\VideoMixer'):return True
+ except FileNotFoundError:return False
 target=None;results={}
 try:
  installed=run([setup,'/S','/D='+str(dest)],timeout=120);assert installed.returncode==0,installed.stderr
@@ -54,7 +59,10 @@ finally:
  assert dest.resolve().is_relative_to(workspace/'e2e/reports')
  if (dest/'uninstall.exe').exists():
   uninstall=run([dest/'uninstall.exe','/S'],timeout=90);assert uninstall.returncode==0
-  wait(lambda:not (dest/'desktop-studio.exe').exists() and not (dest/'tools/mcp').exists())
+  # NSIS relaunches a temporary uninstaller. Its parent can return while the
+  # final shortcuts and registry entries are still being removed.
+  wait(lambda:not (dest/'desktop-studio.exe').exists() and not (dest/'tools/mcp').exists()
+       and not shortcuts.exists() and not installer_registered())
   results['uninstallRemovedAutomation']=True
   assert not shortcuts.exists()
   try:

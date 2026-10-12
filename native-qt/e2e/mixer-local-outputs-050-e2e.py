@@ -27,7 +27,7 @@ try:
     enabled(control('spoutOutput'),False)
     enabled(control('virtualCamera'),True);time.sleep(2)
     with sync_playwright() as pw:
-        browser=pw.chromium.launch(channel='msedge',headless=True,args=['--autoplay-policy=no-user-gesture-required','--use-fake-ui-for-media-stream'])
+        browser=pw.chromium.launch(channel='msedge',headless=os.environ.get('STUDIO_E2E_POINTER')!='1',args=['--autoplay-policy=no-user-gesture-required','--use-fake-ui-for-media-stream'])
         context=browser.new_context(permissions=['camera']);page=context.new_page()
         page.goto(f'http://127.0.0.1:{server.server_port}/')
         devices=page.evaluate('async()=>(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput").map(d=>({id:d.deviceId,label:d.label}))')
@@ -37,7 +37,7 @@ try:
             await new Promise((resolve,reject)=>{const timeout=setTimeout(()=>reject(new Error('Camera frames timed out')),15000);function frame(){c.drawImage(v,0,0,64,36);let hash=0;for(const x of c.getImageData(0,0,64,36).data)hash=(hash*31+x)|0;hashes.add(hash);if(++frames>=45){clearTimeout(timeout);resolve();}else v.requestVideoFrameCallback(frame);}v.requestVideoFrameCallback(frame);});
             const settings=stream.getVideoTracks()[0].getSettings();stream.getTracks().forEach(t=>t.stop());return {frames,distinctFrames:hashes.size,width:settings.width,height:settings.height,frameRate:settings.frameRate};}''',device['id'])
         assert result['frames']==45 and result['distinctFrames']>20 and result['width']==1280 and result['height']==720,result
-        results['edge_camera']=result;browser.close()
+        page.screenshot(path=str(report/'edge-camera.png'));results['edge_camera']=result;browser.close()
 finally:
     enabled(control('spoutOutput'),False);enabled(control('virtualCamera'),False);press('unregisterCamera');server.shutdown()
     (report/'local-outputs.json').write_text(json.dumps(results,indent=2));print(json.dumps(results),flush=True)

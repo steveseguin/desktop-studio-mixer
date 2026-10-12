@@ -1,4 +1,4 @@
-# Desktop Studio 0.7.1 extended validation
+# Desktop Studio 0.7.1 and 0.7.2 validation
 
 Run on October 12, 2026 on the existing Windows workstation with a Logitech C920,
 Intel Core Ultra 7 265K (20 logical processors), Intel graphics and NVIDIA TITAN
@@ -163,3 +163,122 @@ conditions. It is not a browser vulnerability audit, assistive-technology
 conformance certification, hostile-network study or proof against OS/GPU-driver
 crashes. Clean-machine/Windows 10 coverage, other camera drivers and a full
 NVDA/JAWS/Narrator user audit remain outside this run.
+
+## 0.7.2 interface workflow pass
+
+The follow-up used the packaged application through Windows UI Automation,
+mouse/keyboard input, its file dialogs, and visible Edge guest/receiver pages.
+Studio commands were not substituted for GUI production actions. Read-only
+browser instrumentation, controlled media, external receivers and process fault
+injection supplied evidence. Screenshots were visually inspected and recordings
+were decoded. Private evidence is under `native-qt/e2e/reports/studio-ui-071/`.
+
+Opening a damaged show while unavailable devices retried exposed a real issue:
+the device status could immediately replace the import failure message. Version
+0.7.2 keeps the error in an acknowledgement dialog and confirms that the current
+show was preserved. The actual failed-import workflow passed after the change.
+
+The 4K playback check also exposed per-frame allocation/copy churn in the native
+media worker. Its decode buffer is now reused, and one SIMD pass copies pixels
+and normalizes the opaque byte required by Qt's CPU renderer. Full source
+resolution is retained. A first optimization candidate failed the CPU pixel
+check; it was corrected before the final candidate was retained.
+
+Verified workflows on the 0.7.2 package:
+
+| Workflow | Observed result |
+| --- | --- |
+| First recording | Added the physical C920 camera and microphone through the source dialog, saw the microphone meter move, recorded mute/unmute, stopped and saved the show. The recording decoded and contained the expected audible/silent intervals. |
+| Direct canvas and editing | Single-canvas scene/source changes reached recorded Program. Drag/resize, keyboard positioning, crop, Fit/Fill/Stretch, opacity, layer lock, undo/redo, scene shortcuts and restoring a removed source passed. CPU/GPU crop/alpha samples matched. |
+| Save/open and unavailable devices | Saved device identities and translucent colors survived a round trip. Invalid source references left the current show intact and displayed a persistent error. |
+| Editing a live browser source | No-op, rename and audio-delay edits did not reload it. URL changes and explicit reconnect did. The saved audio remained continuous apart from the intentional 80 ms delay. |
+| Independent stream/record | Starting/stopping recording independently of SRT publishing worked. Both recordings and the receiver file decoded with the expected tone. |
+| RTMP and WHIP | Private receivers decoded 1080p60 H.264 and audible audio from each transport. This exercised RTMP, not RTMPS/TLS. |
+| Mixed production | C920 camera/mic, native window, browser video and overlay mixed, recorded and switched through scenes. Smooth browser samples were 29–30 fps. Headphone mute, off-air Listen and desktop-audio monitoring exclusion passed. |
+| C920 settings | Brightness and zoom changed actual pixels. Exposure/focus/white-balance Auto and manual settings worked. Repeated 1080p30, 720p30 and 480p15 changes, reconnect and process restart preserved the chosen settings. Original driver controls were restored. |
+| Audio tracks | Green/amber/red levels, peak hold, clipping, track/master mute and scroll boundaries passed. Decoded recordings confirmed compression, gate and noise suppression effects. |
+| Laptop workspace | Both modes remained operable at 1366×768 with distinguishable scroll regions. |
+| Guests and wireless invite | Visible preflight and keyboard Start joined two controlled browser peers. Backstage, Preview/Take, re-admission, Program return and mix-minus passed. Private talkback reached both returns while Program recording had zero audio RMS. |
+| Social Stream Ninja | A synthetic incoming message in the real dock was featured in Program and then cleared. The overlay retained a transparent page background. No social account was authenticated. |
+| Local outputs | A separate Spout receiver obtained 60 frames, and visible Edge received 45 virtual-camera frames with 44 distinct images at 1280×720. |
+| Workspace and playback | Scene create/rename/duplicate/delete, pause/restart/loop/end, five visibly different themes, four layouts with changed panel widths, 1080×1920 recording and fullscreen Program output passed. |
+| Keyboard and NVDA | Keyboard-only source creation, invalid-file correction, track mute/gain, master gain, Preview/Take and recording passed. The saved recording decoded. NVDA spoke the workflow labels, and the unfocused meter sample produced no unsolicited meter speech or beeps. |
+| Normal-profile preferences | Both canvas modes and French/Spanish/English menus survived process restarts. X exited with tray-on-close disabled. The original show was restored byte-for-byte. Isolated `--studio-show` sessions intentionally do not save global mode preferences. |
+| Output failures | Separate publishing/recording encoder exits and a private RTMP receiver outage recovered. Scene controls remained usable. The ongoing recording and four receiver samples fully decoded with audio. |
+| Media safety | A 4096×2160 source recorded successfully, corrupt media showed an error, and an attempted recording overwrite left the existing file byte-for-byte intact. |
+| Capture recovery | Window resize/minimize/restore, close/reopen, repeated reconnect and a Chromium-process crash recovered while Studio remained operable. |
+| Browser overlays | Background transparency survived reload/navigation, strict CSP, late CSS/body replacement and reconnect. Opaque mode retained page styling. Encoded pixels matched the backing layer and opaque overlay card. |
+| Hostile browser content | Device/clipboard/screen requests, notifications, downloads, popup/file/custom-scheme escapes and native-command messages were blocked. An unauthenticated webpage command did not close Studio. A message flood and browser-host crash left a fully decodable recording. |
+| Browser resource isolation | Hardware video decode and GPU composition were enabled in WebView2. A busy page reached its four-core CPU cap while main-window message latency stayed below 1.6 ms in the sample. A hung renderer recovered in 16.3 seconds. GPU crashes, retry exhaustion and a roughly 4 GiB allocation limit left the healthy browser and recording alive. |
+
+The same 4096×2160/30 fps clip improved from median received rates of 22.15 fps
+(CPU compositor) / 22.0 fps (GPU compositor) to 28.1 fps with both. This is still
+below a sustained 30 fps and remains a performance limit for this workload.
+The eight-sample measurements used the source's visible health readout. Total
+process-tree CPU increased while more frames were delivered: 167.5% → 192.8%
+with CPU composition and 176.2% → 184.9% with GPU composition, where 100% is one
+logical processor. Do not describe this as a reduction in total CPU usage.
+Pixel checks, large-media recording, playback controls, portrait output,
+independent output lifecycles, RTMP/WHIP and encoder/network recovery were
+repeated after the media change.
+
+A five-minute mixed-show rehearsal on the final executable repeatedly faded
+between scenes while recording the camera, microphone, moving browser, window
+and chat overlay. Its 312.172-second recording contained 9,366 frames at
+29.9995 fps; the largest timestamp gap was 37 ms (99th percentile 34 ms).
+The entire file decoded successfully. Across Studio and its child processes,
+the 300.344-second resource sample averaged 84.42% of one logical processor
+(about 0.84 core). Private memory started at 799.77 MiB and ended at 809.17 MiB,
+with a 794.18–844.12 MiB range. Main-window response samples remained at or
+below 47 ms with the coarse sampling clock. This is a short rehearsal, not a
+long-duration memory-leak proof. Simultaneous streaming and independent recording
+were verified separately.
+
+The final 0.7.2 executable has SHA-256
+`b17008c0e94f35f26cf0e053ce92be82e012b55acdee06abbde2837062df9c71`.
+The earlier 0.7.2 browser/camera/security matrix preceded the native-media
+optimization; affected media/output workflows, workspace/preferences, the
+rehearsal, keyboard/NVDA operation and guest/wireless browser invites were
+repeated on this final executable. The browser-as-phone rerun used the actual
+invite page's preflight and Start controls, as requested; it also passed
+backstage, Take, return video/audio, mix-minus and private talkback isolation.
+Build, Python syntax and whitespace checks are gates, not workflow testing.
+
+The final portable, ZIP and privately installed executable matched that hash.
+From the actual installation, CLI launched a headless studio, the packaged MCP
+server exposed 31 tools, scene controls and a PNG Program screenshot worked,
+and the saved recording fully decoded. Quit left no owned workers; uninstall
+removed the private installation, automation files, shortcuts and registration.
+The harness now waits for the temporary NSIS uninstaller to finish its final
+shortcut/registry cleanup. This was an existing-machine install, not the
+deferred clean-machine check. Only this validation document was refreshed in
+the packages after that workflow.
+
+The original show matched its baseline SHA-256 after restoration, the settings
+registry export matched its backup byte-for-byte, and the original Game Capture
+checkout retained its baseline HEAD and pre-existing untracked note.
+
+Reusable additions under `native-qt/e2e/` include
+`mixer-ui-workflows-e2e.py`, `mixer-first-show-e2e.py`,
+`mixer-workspace-e2e.py`, `mixer-output-recovery-ui-e2e.py`,
+`mixer-preferences-ui-e2e.py`, `mixer-media-performance-ui-e2e.py` and
+`mixer-nvda-ui-runner.py`. For example, from `native-qt`, using a Python
+environment with pywinauto, psutil, Pillow and NumPy:
+
+```powershell
+python -B e2e/mixer-ui-workflows-e2e.py --report e2e/reports/my-ui-run first-show workspace
+python -B e2e/mixer-ui-workflows-e2e.py --report e2e/reports/my-output-run --mediamtx C:/path/to/mediamtx.exe outputs-050 protocols-050 output-recovery-ui
+```
+
+Use a fresh report directory. Guest/browser workflows additionally require
+Playwright and Edge; microphone/camera workflows expect the available C920.
+`STUDIO_UI_REHEARSAL_SECONDS=300` extends the `production` workflow.
+The runner drives visible controls, captures screenshots and verifies worker
+cleanup. On failure it leaves the owned app open for inspection.
+
+Guest inputs here are synthetic browser peers, not a real phone or remote human.
+Window tests use a native moving fixture, not an exclusive-fullscreen game.
+Actual mobile orientation/backgrounding, authenticated social delivery,
+multi-monitor/mixed-DPI hardware and the deferred clean-machine pass remain
+unverified. Physical USB removal was not repeated; the earlier final-0.7.1
+physical recovery evidence above remains the applicable result.

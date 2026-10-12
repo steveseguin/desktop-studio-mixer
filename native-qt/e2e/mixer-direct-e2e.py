@@ -105,7 +105,7 @@ try:
     dialog=window.child_window(title='Record Program', control_type='Window'); dialog.wait('visible')
     edit=next(c for c in dialog.descendants(control_type='Edit') if c.is_visible() and c.element_info.automation_id=='1001')
     edit.set_edit_text(str(recording)); dialog.child_window(title='Save',control_type='Button').invoke()
-    wait_output(True)
+    wait_recording(True)
     phases=[]
     def phase(name):
         phases.append(name); time.sleep(2.5)
@@ -127,7 +127,7 @@ try:
     source_row('QA direct browser').select(); press('removeSource')
     near(pixel(.7,.7),(16,23,34)); phase('removed_silent')
     results['remove_on_air_source'] = 'passed'
-    press('studioStartOutput'); wait_output(False); time.sleep(2)
+    press('studioRecord'); wait_recording(False); time.sleep(2)
     ffmpeg=Path('dist/desktop-studio-portable/ffmpeg/bin/ffmpeg.exe').resolve()
     raw=subprocess.check_output([str(ffmpeg),'-v','error','-i',str(recording),'-an','-vf','scale=160:90','-pix_fmt','rgb24','-f','rawvideo','pipe:1'])
     frames=np.frombuffer(raw,dtype=np.uint8).reshape(-1,90,160,3)
@@ -148,19 +148,25 @@ try:
         quiet=sum(rms[i]<.002 for i in indices if i>0 and mask[i-1])
         assert quiet>45,quiet
     results['decoded_output']={'frames':len(frames),'audiblePeakRms':float(rms.max()),'blankFrames':int(blank.sum()),'resizedFrames':int(resized.sum()),'recording':str(recording)}
-    # Persist both layout choices across real process restarts.
-    exe=psutil.Process(args.pid).exe()
-    for mode in (True,False):
-        studio_mode(mode); window.set_focus(); window.type_keys('^q')
-        psutil.Process(app.process).wait(15)
-        child=subprocess.Popen([exe],creationflags=subprocess.CREATE_NO_WINDOW)
-        app=Application(backend='uia').connect(process=child.pid,timeout=20)
-        window=app.window(title='Desktop Studio - Powered by VDO.Ninja'); window.wait('visible',timeout=25)
-        control.__defaults__=(window,); press.__defaults__=(window,)
-        window.set_focus(); time.sleep(1)
-        assert bool(control('studioMode').get_toggle_state())==mode
-    results['mode_restart_persistence']='passed'
-    (report/'app.pid').write_text(str(app.process))
+    # Isolated --studio-show sessions deliberately do not write global UI preferences.
+    # Run this check against a backed-up normal profile to cover persistence.
+    if 'STUDIO_E2E_SHOW' not in os.environ:
+        # Persist both layout choices across real process restarts.
+        exe=psutil.Process(args.pid).exe()
+        for mode in (True,False):
+            studio_mode(mode); window.set_focus(); window.type_keys('^q')
+            psutil.Process(app.process).wait(15)
+            child=subprocess.Popen([exe],creationflags=subprocess.CREATE_NO_WINDOW)
+            (report/'app.pid').write_text(str(child.pid))
+            app=Application(backend='uia').connect(process=child.pid,timeout=20)
+            window=app.window(title='Desktop Studio - Powered by VDO.Ninja'); window.wait('visible',timeout=25)
+            control.__defaults__=(window,); press.__defaults__=(window,)
+            window.set_focus(); time.sleep(1)
+            assert bool(control('studioMode').get_toggle_state())==mode
+        results['mode_restart_persistence']='passed'
+        (report/'app.pid').write_text(str(app.process))
+    else:
+        results['mode_restart_persistence']='not applicable to isolated profile; separate normal-profile check required'
     scene('Opening')
 finally:
     server.shutdown()

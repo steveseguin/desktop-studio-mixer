@@ -23,7 +23,7 @@ if '--fixture' in sys.argv:
 
 exec(Path(__file__).with_name('mixer-desktop-e2e.py').read_text().split('class Fixture')[0])
 from urllib.parse import urlparse, parse_qs
-fixture_process = subprocess.Popen([sys.executable, '-B', str(Path(__file__).resolve()), '--fixture'],
+fixture_process = subprocess.Popen([sys._base_executable, '-B', str(Path(__file__).resolve()), '--fixture'],
                                    creationflags=subprocess.CREATE_NO_WINDOW)
 time.sleep(1.5)
 results = {}

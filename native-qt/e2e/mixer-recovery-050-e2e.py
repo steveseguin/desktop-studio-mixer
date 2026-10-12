@@ -5,10 +5,10 @@ helpers=Path(__file__).with_name('mixer-production-e2e.py').read_text()
 exec(helpers[helpers.index('def source_row'):helpers.index('\nclass Fixture')])
 import os,sys,psutil,re
 results={};children=[];server=None
-show=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/studio.mixer.json'
+show=show_path
 window.set_focus();window.child_window(title='Studio',control_type='TabItem').click_input();studio_mode(False);scene('Main');remove_sources(('QA ',))
 def fixture():
-    child=subprocess.Popen([sys.executable,'-B',str(Path(__file__).with_name('mixer-sources-e2e.py')),'--fixture'],creationflags=subprocess.CREATE_NO_WINDOW);children.append(child);time.sleep(2);return child
+    child=subprocess.Popen([sys._base_executable,'-B',str(Path(__file__).with_name('mixer-sources-e2e.py')),'--fixture'],creationflags=subprocess.CREATE_NO_WINDOW);children.append(child);time.sleep(2);return child
 def wait_color(expected,timeout=35):
     deadline=time.time()+timeout
     while time.time()<deadline:
@@ -24,6 +24,15 @@ class Fixture(http.server.BaseHTTPRequestHandler):
     def log_message(self,*_):pass
 try:
     child=fixture();add_source('Game / window','QA recovered window',device='Desktop Studio QA Window');wait_color((196,58,70))
+    captured=Application(backend='win32').connect(process=child.pid).window(title='Desktop Studio QA Window')
+    captured.move_window(x=900,y=80,width=960,height=540);window.set_focus();time.sleep(1)
+    wait_color((196,58,70));captured.minimize();time.sleep(2)
+    scene('Break');scene('Main');captured.restore();window.set_focus();time.sleep(2);wait_color((196,58,70))
+    from PIL import ImageChops
+    first=control('previewCanvas').capture_as_image();time.sleep(.7)
+    assert ImageChops.difference(first,control('previewCanvas').capture_as_image()).getbbox(), 'Window frames did not resume'
+    results['windowResizeMinimizeRestore']='moving capture resumed and scene controls remained usable'
+    window.capture_as_image().save(str(report/'window-restored.png'))
     child.terminate();child.wait(timeout=5);time.sleep(3);fixture();wait_color((196,58,70))
     results['window_reopened_same_title_executable']='automatically recovered'
     for _ in range(5):

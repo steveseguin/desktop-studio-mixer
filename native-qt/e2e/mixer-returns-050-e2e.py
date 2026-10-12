@@ -12,8 +12,8 @@ sys.path.insert(0,str(Path('.cache/mixer-qa').resolve()))
 from playwright.sync_api import sync_playwright
 import numpy as np
 
-results={}; show=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/studio.mixer.json'
-profile=show.parent/'browser';ffmpeg=Path('dist/desktop-studio-portable/ffmpeg/bin/ffmpeg.exe').resolve()
+results={}; show=show_path
+profile=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/browser';ffmpeg=Path('dist/desktop-studio-portable/ffmpeg/bin/ffmpeg.exe').resolve()
 instrument='''(() => {window.qaPeers=[];window.qaAnalysers=[];const PC=RTCPeerConnection;
 window.RTCPeerConnection=new Proxy(PC,{construct(target,args){const pc=new target(...args);qaPeers.push(pc);
 pc.addEventListener('track',e=>{if(e.track.kind!=='audio')return;const c=new AudioContext({sampleRate:48000}),a=c.createAnalyser();a.fftSize=32768;
@@ -57,7 +57,7 @@ time.sleep(1);data=json.loads(show.read_text());ids={s['name']:s['id'] for s in 
 
 try:
     with sync_playwright() as pw:
-        sender=pw.chromium.launch(channel='msedge',headless=True,args=['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--autoplay-policy=no-user-gesture-required','--mute-audio'])
+        sender=pw.chromium.launch(channel='msedge',headless=os.environ.get('STUDIO_E2E_POINTER')!='1',args=['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--autoplay-policy=no-user-gesture-required','--mute-audio','--window-position=850,40','--window-size=1000,850'])
         pages=[]
         for (name,url),hz in zip(invites,(440,1660)):
             receiver=receiver_page(pw,ids[name]);page=sender.new_page();page.add_init_script(instrument)
@@ -65,8 +65,18 @@ try:
                 navigator.mediaDevices.getUserMedia=async constraints=>{const stream=await original(constraints);if(constraints.audio){stream.getAudioTracks().forEach(t=>{stream.removeTrack(t);t.stop();});
                 const c=new AudioContext({sampleRate:48000}),o=c.createOscillator(),g=c.createGain(),d=c.createMediaStreamDestination();o.frequency.value=HZ;g.gain.value=.12;
                 o.connect(g);g.connect(d);o.start();await c.resume();window.qaTone={c,o,g};stream.addTrack(d.stream.getAudioTracks()[0]);}return stream;};})();'''.replace('HZ',str(hz)))
-            page.goto(url+'&webcam&autostart&aec=0&agc=0&denoise=0&stereo',wait_until='domcontentloaded',timeout=60000)
+            page.goto(url+'&aec=0&agc=0&denoise=0&stereo',wait_until='domcontentloaded',timeout=60000)
+            page.wait_for_timeout(2000)
+            if not page.locator('#gowebcam').is_visible():page.locator('#container-3').click()
+            if page.locator('#getPermissions').is_visible():page.locator('#getPermissions').click()
+            page.locator('#gowebcam').wait_for(state='visible',timeout=30000)
+            page.screenshot(path=str(report/(name.replace(' ','-')+'-preflight.png')))
+            page.wait_for_function("!document.getElementById('gowebcam').disabled",timeout=45000)
+            # The join button pulses continuously. Keyboard activation exercises
+            # the visible control without waiting for its CSS animation to stop.
+            page.locator('#gowebcam').focus();page.keyboard.press('Enter')
             results[name]={'send':wait_media(page,'outbound-rtp'),'receive':wait_media(receiver,'inbound-rtp'),'return':wait_media(page,'inbound-rtp')}
+            page.screenshot(path=str(report/(name.replace(' ','-')+'-browser.png')))
             pages.append(page);print(name+' connected both directions',flush=True)
         press('layout-Side by side');press('takeScene');time.sleep(3)
         assert all(not next(s for s in json.loads(show.read_text())['sources'] if s['name']==name)['admitted'] for name,_ in invites)

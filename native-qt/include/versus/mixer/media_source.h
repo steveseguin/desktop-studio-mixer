@@ -11,7 +11,8 @@ namespace versus::mixer {
 class MediaSource {
 public:
     ~MediaSource();
-    void start(const QString &path, std::function<void(video::CapturedFrame)> frame,
+    // The synchronous callback borrows a reusable decode buffer until it returns.
+    void start(const QString &path, std::function<void(const video::CapturedFrame &)> frame,
                std::function<void(audio::StreamChunk&&)> audio);
     void stop();
     void setPaused(bool paused) { if (!paused && ended_) seek_ = true; paused_ = paused; wake_.notify_all(); }

@@ -6,7 +6,7 @@ exec(helpers[helpers.index('def source_row'):helpers.index('\nclass Fixture')])
 from PIL import Image,ImageDraw
 from pywinauto import mouse
 import numpy as np,os
-results={};show=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/studio.mixer.json'
+results={};show=show_path
 window.set_focus();window.child_window(title='Studio',control_type='TabItem').click_input();studio_mode(False);scene('Main');remove_sources(('QA ',))
 
 def spin(name,value):

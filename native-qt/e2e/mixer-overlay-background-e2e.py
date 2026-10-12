@@ -13,7 +13,7 @@ from PIL import Image
 helpers = Path(__file__).with_name('mixer-production-e2e.py').read_text()
 exec(helpers[helpers.index('def source_row'):helpers.index('\nclass Fixture')])
 profile = Path(os.environ['LOCALAPPDATA']) / 'VideoMixer/browser'
-show = profile.parent / 'studio.mixer.json'
+show = show_path
 results = {}
 
 

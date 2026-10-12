@@ -9,7 +9,7 @@ import hashlib,os,sys,uuid
 sys.path.insert(0,str(Path('.cache/mixer-qa').resolve()))
 from playwright.sync_api import sync_playwright
 profile=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/browser'
-show=profile.parent/'studio.mixer.json'
+show=show_path
 session='mixerqa'+uuid.uuid4().hex[:20]
 window.child_window(title='Studio',control_type='TabItem').click_input()
 studio_mode()
@@ -56,7 +56,15 @@ try:
         window.capture_as_image().save(str(report/'social-chat-studio.png'))
         results['social_stream_dock_to_program']='passed'
         dock.locator('#clear_overlay').click()
-        results['clear_featured_message']='sent'
+        # SSN retains the text and fades/translates its output container.
+        overlay.wait_for_function("getComputedStyle(document.getElementById('output')).opacity === '0'",timeout=15000)
+        window.set_focus();time.sleep(2)
+        cleared=control('programCanvas').capture_as_image()
+        import numpy as np
+        difference=np.abs(np.asarray(before.convert('RGB')).astype(int)-np.asarray(cleared.convert('RGB')).astype(int))
+        assert float(difference.mean())<1, 'Cleared message remained in Program'
+        window.capture_as_image().save(str(report/'social-chat-cleared.png'))
+        results['clear_featured_message']='removed from actual Program canvas'
 finally:
     (report/'chat-workflow.json').write_text(json.dumps(results,indent=2),encoding='utf-8')
     print(json.dumps(results,indent=2))
