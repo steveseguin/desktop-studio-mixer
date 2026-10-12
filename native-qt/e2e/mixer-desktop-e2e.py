@@ -108,7 +108,7 @@ def remove_sources(prefixes):
             rect, viewport = row.rectangle(), control('mixerSources').rectangle()
             if viewport.top < rect.top and rect.bottom < viewport.bottom: break
             control('mixerSources').wheel_mouse_input(wheel_dist=-1)
-        row.click_input(coords=(100, 12))
+        row.select()
         press('removeSource')
         after = [c for c in control('mixerSources').descendants(control_type='ListItem')
                  if c.window_text() == name]

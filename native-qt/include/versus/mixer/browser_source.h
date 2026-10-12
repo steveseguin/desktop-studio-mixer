@@ -11,7 +11,7 @@ class BrowserSource : public QWidget {
     Q_OBJECT
 public:
     BrowserSource(const QString &id, const QUrl &url, bool renderFrames = true,
-                  bool transparent = false, bool allowTalkback = false);
+                  bool transparent = false, bool allowTalkback = false, bool preserveColorMetadata = false);
     ~BrowserSource() override;
     void interact();
     void park();

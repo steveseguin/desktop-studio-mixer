@@ -56,6 +56,9 @@ struct BrowserSource::Impl {
     QElapsedTimer messageClock;
     int messageCount = 0, pcmBytes = 0;
     QTimer timer;
+    QTimer rendererHealth;
+    QElapsedTimer rendererProbeAt;
+    bool rendererProbePending = false;
     unsigned long mutedBrowserPid = 0;
     bool busy = false;
     bool deliveryPending = false;
@@ -72,7 +75,7 @@ struct BrowserSource::Impl {
 #endif
 };
 
-BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFrames, bool transparent, bool allowTalkback)
+BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFrames, bool transparent, bool allowTalkback, bool preserveColorMetadata)
     : QWidget(nullptr, renderFrames && !transparent ? Qt::Tool | Qt::FramelessWindowHint : Qt::Tool), impl_(std::make_unique<Impl>()) {
     setWindowTitle("Desktop Studio - Browser source");
     setAttribute(Qt::WA_QuitOnClose, false);
@@ -91,10 +94,10 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
             }
             profiles[profileKey] = proxy->finished.promise.get_future().share();
         }
-        impl_->startWorker = [proxy, id, url, renderFrames, transparent, allowTalkback] {
+        impl_->startWorker = [proxy, id, url, renderFrames, transparent, allowTalkback, preserveColorMetadata] {
             if (!proxy->worker.start("browser")) { proxy->error = proxy->worker.error(); proxy->failed = true; return; }
             const auto result = proxy->worker.call({{"op", "start"}, {"id", id}, {"locator", url.toString(QUrl::FullyEncoded)},
-                {"render", renderFrames}, {"transparent", transparent}, {"talkback", allowTalkback}});
+                {"render", renderFrames}, {"transparent", transparent}, {"talkback", allowTalkback}, {"preserveColorMetadata", preserveColorMetadata}});
             if (proxy->cancelled) { proxy->worker.stop(); return; }
             if (!result["ok"].toBool()) { proxy->error = result["error"].toString(); proxy->failed = true; return; }
             proxy->ready = true;
@@ -109,7 +112,8 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
             if (!proxy->ready && !proxy->failed) return;
             if (proxy->failed || !proxy->worker.alive()) {
                 proxy->worker.terminate();
-                impl_->timer.stop(); emit errorOccurred("Browser worker stopped. Reconnecting automatically...");
+                impl_->timer.stop(); emit errorOccurred(proxy->failed && !proxy->error.isEmpty()
+                    ? proxy->error + " Reconnecting automatically..." : "Browser worker stopped. Reconnecting automatically...");
                 QTimer::singleShot(2000, this, [this] { emit restartRequired(); }); return;
             }
             if (impl_->interactionPending) {
@@ -154,7 +158,7 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
     connect(escape, &QShortcut::activated, this, &BrowserSource::park);
     park();
     QPointer<BrowserSource> self(this);
-    QTimer::singleShot(0, this, [self, id, url, renderFrames, transparent, allowTalkback] {
+    QTimer::singleShot(0, this, [self, id, url, renderFrames, transparent, allowTalkback, preserveColorMetadata] {
         if (!self) return;
 #ifdef _WIN32
         const auto safeId = !QUuid(id).isNull() ? QUuid(id).toString(QUuid::WithoutBraces) :
@@ -167,7 +171,7 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
         const HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(nullptr,
             profile.toStdWString().c_str(), options.Get(),
             Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-                [self, url, renderFrames, transparent, allowTalkback](HRESULT result, ICoreWebView2Environment *environment) -> HRESULT {
+                [self, url, renderFrames, transparent, allowTalkback, preserveColorMetadata](HRESULT result, ICoreWebView2Environment *environment) -> HRESULT {
                     if (!self) return S_OK;
                     if (FAILED(result) || !environment) {
                         emit self->errorOccurred("Browser sources need Microsoft Edge WebView2 Evergreen Runtime. Install it from microsoft.com/edge/webview2, then reopen the source.");
@@ -176,7 +180,7 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                     const HRESULT created = environment->CreateCoreWebView2Controller(
                         reinterpret_cast<HWND>(self->winId()),
                         Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                            [self, url, renderFrames, transparent, allowTalkback](HRESULT result, ICoreWebView2Controller *controller) -> HRESULT {
+                            [self, url, renderFrames, transparent, allowTalkback, preserveColorMetadata](HRESULT result, ICoreWebView2Controller *controller) -> HRESULT {
                                 if (!self) return S_OK;
                                 if (FAILED(result) || !controller) {
                                     emit self->errorOccurred("Could not create the browser source.");
@@ -327,13 +331,16 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                                         }).Get(), &token);
                                     QFile script(":/mixer/mixer-audio.js");
                                     QFile overlay(":/mixer/mixer-overlay.js");
-                                    if (!script.open(QIODevice::ReadOnly) || (transparent && !overlay.open(QIODevice::ReadOnly))) {
+                                    QFile webrtc(":/mixer/mixer-webrtc.js");
+                                    if (!script.open(QIODevice::ReadOnly) || (transparent && !overlay.open(QIODevice::ReadOnly)) ||
+                                        (!preserveColorMetadata && !webrtc.open(QIODevice::ReadOnly))) {
                                         emit self->errorOccurred("Browser source initialization is missing. Reinstall Desktop Studio.");
                                         return S_OK;
                                     }
                                     {
                                         const auto javascript = (QString::fromUtf8(script.readAll()) + "\n" +
-                                            (transparent ? QString::fromUtf8(overlay.readAll()) : QString{})).toStdWString();
+                                            (transparent ? QString::fromUtf8(overlay.readAll()) : QString{}) + "\n" +
+                                            (!preserveColorMetadata ? QString::fromUtf8(webrtc.readAll()) : QString{})).toStdWString();
                                         if (!secure(web->AddScriptToExecuteOnDocumentCreated(javascript.c_str(),
                                             Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
                                                 [self, url](HRESULT result, LPCWSTR) -> HRESULT {
@@ -383,6 +390,29 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
 #endif
     });
     connect(&impl_->timer, &QTimer::timeout, this, &BrowserSource::capture);
+#ifdef _WIN32
+    // A worker heartbeat does not prove the page's renderer is responsive:
+    // JavaScript can spin forever while the native host keeps processing events.
+    connect(&impl_->rendererHealth, &QTimer::timeout, this, [this, self] {
+        if (!impl_->web || impl_->restarting) return;
+        if (impl_->rendererProbePending) {
+            if (impl_->rendererProbeAt.elapsed() > 10000) {
+                impl_->restarting = true; impl_->timer.stop();
+                emit errorOccurred("Browser page stopped responding. Reconnecting automatically...");
+                emit restartRequired();
+            }
+            return;
+        }
+        impl_->rendererProbePending = true; impl_->rendererProbeAt.restart();
+        const auto result = impl_->web->ExecuteScript(L"0",
+            Callback<ICoreWebView2ExecuteScriptCompletedHandler>([self](HRESULT, LPCWSTR) -> HRESULT {
+                if (self) self->impl_->rendererProbePending = false;
+                return S_OK;
+            }).Get());
+        if (FAILED(result)) impl_->rendererProbePending = false;
+    });
+    impl_->rendererHealth.start(2000);
+#endif
 }
 
 BrowserSource::~BrowserSource() {

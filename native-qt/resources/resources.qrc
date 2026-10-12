@@ -3,6 +3,7 @@
   <qresource prefix="/mixer">
     <file>mixer-audio.js</file>
     <file>mixer-overlay.js</file>
+    <file>mixer-webrtc.js</file>
   </qresource>
   <qresource prefix="/icons">
     <file>vdoninja.ico</file>

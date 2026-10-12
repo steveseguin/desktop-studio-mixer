@@ -104,6 +104,7 @@ struct Source {
     std::atomic<bool> monitored{true};
     std::atomic<bool> audioActive{false};
     bool transparent = false;
+    bool preserveColorMetadata = false;
     bool mediaLoop = true, mediaPaused = false;
     bool starting = false;
     int retryAttempts = 0;
@@ -125,6 +126,7 @@ struct Source {
     std::unique_ptr<IsolatedSource> spout;
     std::unique_ptr<IsolatedSource> audio;
     QPointer<BrowserSource> browser;
+    std::deque<int64_t> browserRestarts;
     ~Source() {
         if (window) window->stopCapture();
         if (camera) camera->stopCapture();
@@ -614,7 +616,7 @@ struct MixerWidget::Impl {
         QObject::connect(reconnect, &QPushButton::clicked, q, [this] {
             if (auto item = source(selectedSource)) {
                 if (item->kind == "window") addSourceDialog(true, true);
-                else { stopSource(item); startSource(item); message("Reconnecting " + item->name); }
+                else { item->browserRestarts.clear(); stopSource(item); startSource(item); message("Reconnecting " + item->name); }
             }
         });
         QObject::connect(add, &QPushButton::clicked, q, [this] { addSourceDialog(); });
@@ -1028,15 +1030,18 @@ struct MixerWidget::Impl {
         QPushButton browse("Choose file / color");
         QLabel help; help.setWordWrap(true);
         QCheckBox transparent("Transparent overlay background (up to 15 fps)"); transparent.setObjectName("browserTransparency");
+        QCheckBox colorMetadata("Preserve original video color metadata"); colorMetadata.setObjectName("browserColorMetadata");
+        colorMetadata.setToolTip("Enable if a WebRTC source's colors look wrong. On affected WebView2 versions this may use software decoding and more CPU.");
         QSpinBox audioDelay; audioDelay.setObjectName("sourceAudioDelay"); audioDelay.setRange(0, 500); audioDelay.setSuffix(" ms");
         audioDelay.setToolTip("Delay this source's Program audio to match its picture. Headphone monitoring stays immediate.");
         form->addRow("Source type", &type); form->addRow("Name", &name); form->addRow("Device / window", &device);
-        form->addRow("URL / file / text / color", &value); form->addRow(&browse); form->addRow(&transparent); form->addRow(&help);
+        form->addRow("URL / file / text / color", &value); form->addRow(&browse); form->addRow(&transparent); form->addRow(&colorMetadata); form->addRow(&help);
         form->addRow("Audio delay", &audioDelay);
         if (editing) form->addRow(new QLabel("Source changes apply to every scene, including Program.", &dialog));
         auto populate = [&] {
             const auto kind = type.currentData().toString(); device.clear();
             transparent.setVisible(kind == "browser" || kind == "guest" || kind == "wireless" || kind == "chat");
+            colorMetadata.setVisible(!transparent.isHidden());
             if (!existing) transparent.setChecked(kind == "browser" || kind == "chat");
             audioDelay.setEnabled(kind == "browser" || kind == "guest" || kind == "wireless" || kind == "window" || kind == "microphone" || kind == "desktop" || kind == "media");
             audioDelay.setValue(kind == "browser" || kind == "guest" || kind == "wireless" ? 60 : 0);
@@ -1053,7 +1058,7 @@ struct MixerWidget::Impl {
             } else {
                 device.setVisible(false);
                 if (kind == "desktop") { value.setVisible(false); help.setText("Captures other applications, excluding Desktop Studio, its browsers and monitoring. Avoid adding the same game's individual audio twice."); }
-                if (transparent.isVisible()) { value.setPlaceholderText("https://..."); help.setText("Overlay mode clears the page background automatically, keeping message and card styling. Turn it off for smooth browser video at 30 fps. Open / Invite allows interaction; Escape parks the browser."); }
+                if (!transparent.isHidden()) { value.setPlaceholderText("https://..."); help.setText("Overlay mode clears the page background automatically, keeping message and card styling. Turn it off for smooth browser video at 30 fps. Open / Invite allows interaction; Escape parks the browser."); }
                 if (kind == "media") help.setText("Local video or audio file. Playback uses Windows media decoders; H.264/AAC MP4 is recommended. Use Playback controls after adding it.");
                 if (kind == "image") help.setText("PNG, JPEG and other Qt-supported images. Transparent PNGs remain transparent.");
                 if (kind == "title") { value.setText("Your title"); help.setText("A full-frame title card. Resize and position it on the canvas."); }
@@ -1084,12 +1089,13 @@ struct MixerWidget::Impl {
             // Labels and audio delay do not change the capture session. Keeping it
             // alive avoids dropping video/audio or rejoining a remote guest.
             const bool restart = existing && (reconnect || kind != item->kind ||
-                locator != item->locator || transparent.isChecked() != item->transparent);
+                locator != item->locator || transparent.isChecked() != item->transparent || colorMetadata.isChecked() != item->preserveColorMetadata);
             if (restart && device.isVisible() && device.currentData(Qt::UserRole+1).toBool()) {
                 help.setText("The saved device is unavailable. Select an available device to reconnect."); return;
             }
-            if (restart) stopSource(item);
+            if (restart) { item->browserRestarts.clear(); stopSource(item); }
             item->kind = kind; item->transparent = transparent.isChecked();
+            item->preserveColorMetadata = colorMetadata.isChecked();
             item->audioDelayMs = audioDelay.value();
             if (kind == "camera" && locator != item->locator) {
                 item->cameraControls = {}; item->cameraWidth = Width; item->cameraHeight = Height; item->cameraFps = 30;
@@ -1109,6 +1115,7 @@ struct MixerWidget::Impl {
         populate();
         if (existing) {
             name.setText(existing->name); value.setText(existing->locator); transparent.setChecked(existing->transparent);
+            colorMetadata.setChecked(existing->preserveColorMetadata);
             audioDelay.setValue(existing->audioDelayMs);
             const int selectedDevice = device.findData(existing->locator);
             if (selectedDevice >= 0) device.setCurrentIndex(selectedDevice);
@@ -1226,9 +1233,18 @@ struct MixerWidget::Impl {
             item->media->setPaused(item->mediaPaused); item->media->start(item->locator, frame, audioChunk);
         } else if (item->kind == "browser" || item->kind == "guest" || item->kind == "wireless" || item->kind == "chat") {
             if (!webUrl(item->locator)) { item->error = "Invalid browser URL."; return; }
-            item->browser = new BrowserSource(item->id, QUrl(item->locator), true, item->transparent);
+            item->browser = new BrowserSource(item->id, QUrl(item->locator), true, item->transparent, false, item->preserveColorMetadata);
             QObject::connect(item->browser, &BrowserSource::restartRequired, q, [this, weak, valid] {
-                if (auto item = weak.lock(); item && *valid && running) { stopSource(item); startSource(item); }
+                if (auto item = weak.lock(); item && *valid && running) {
+                    const auto now = now100ns();
+                    while (!item->browserRestarts.empty() && now-item->browserRestarts.front() > 600000000)
+                        item->browserRestarts.pop_front();
+                    stopSource(item);
+                    if (item->browserRestarts.size() >= 3) {
+                        item->error = "Browser repeatedly crashed or stalled. Automatic reconnect paused; use Reconnect to try again.";
+                        message(item->name+": "+item->error);
+                    } else { item->browserRestarts.push_back(now); startSource(item); }
+                }
             }, Qt::QueuedConnection);
             QObject::connect(item->browser, &BrowserSource::recovered, q, [weak] { if (auto item = weak.lock()) item->error.clear(); });
             QObject::connect(item->browser, &BrowserSource::frameReady, q, [weak](const QImage &image) {
@@ -1640,6 +1656,7 @@ struct MixerWidget::Impl {
         for (const auto &item : sources) jsonSources.append(QJsonObject{{"id", item->id}, {"name", item->name}, {"kind", item->kind},
             {"locator", item->locator}, {"invite", item->invite}, {"color", item->color.name(QColor::HexArgb)}, {"gain", item->gain.load()},
             {"noiseSuppression", item->noiseSuppression.load()}, {"noiseGate", item->noiseGate.load()}, {"compression", item->compression.load()}, {"muted", item->muted.load()}, {"followsScene", item->followsScene.load()}, {"monitored", item->monitored.load()}, {"transparent", item->transparent}, {"audioDelayMs", item->audioDelayMs.load()},
+            {"preserveColorMetadata", item->preserveColorMetadata},
             {"returnId", item->returnId}, {"admitted", item->admitted.load()}, {"windowTitle", item->windowTitle}, {"windowExecutable", item->windowExecutable}, {"mediaLoop", item->mediaLoop}, {"mediaPaused", item->mediaPaused}, {"cameraWidth", item->cameraWidth}, {"cameraHeight", item->cameraHeight}, {"cameraFps", item->cameraFps}, {"cameraControls", item->cameraControls}});
         for (const auto &scene : scenes) {
             QJsonArray layers;
@@ -1678,6 +1695,7 @@ struct MixerWidget::Impl {
             item->gain = static_cast<float>(std::clamp(obj["gain"].toDouble(1), 0.0, 2.0)); item->muted = obj["muted"].toBool(); item->followsScene = obj["followsScene"].toBool(true);
             item->noiseSuppression = obj["noiseSuppression"].toBool(); item->noiseGate = obj["noiseGate"].toBool(); item->compression = obj["compression"].toBool();
             item->monitored = obj["monitored"].toBool(item->kind != "microphone"); item->transparent = obj["transparent"].toBool(item->kind == "chat");
+            item->preserveColorMetadata = obj["preserveColorMetadata"].toBool();
             const bool browserAudio = item->kind == "browser" || item->kind == "guest" || item->kind == "wireless";
             item->audioDelayMs = std::clamp(obj["audioDelayMs"].toInt(browserAudio ? 60 : 0), 0, 500);
             item->cameraWidth = std::clamp(obj["cameraWidth"].toInt(Width), 160, 7680);

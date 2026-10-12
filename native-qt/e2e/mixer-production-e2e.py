@@ -25,9 +25,16 @@ def choose_dialog(dialog, name, text):
     # dialog before using pointer input on its popup.
     dialog.set_focus()
     combo = control(name, dialog); combo.expand(); time.sleep(.2)
-    next(c for top in app.windows() for c in top.descendants(control_type='ListItem')
-         if c.is_visible() and text in c.window_text()).click_input()
-    time.sleep(.15)
+    item = next(c for top in app.windows() for c in top.descendants(control_type='ListItem')
+                if c.is_visible() and text in c.window_text())
+    # Qt can reposition a dialog after enumerating windows. Keyboard selection
+    # avoids clicking stale popup coordinates as browser windows appear/disappear.
+    siblings = item.parent().descendants(control_type='ListItem')
+    index = next(i for i, candidate in enumerate(siblings) if candidate.window_text()==item.window_text())
+    from pywinauto.keyboard import send_keys
+    send_keys('{HOME}'+'{DOWN}'*index+'{ENTER}', pause=.05)
+    time.sleep(.2)
+    assert text in combo.selected_text(), (text, combo.selected_text())
 
 def add_source(kind, name, value='', device=None, transparent=False):
     press('addSource'); dialog = window.child_window(title='Add source', control_type='Window'); dialog.wait('visible')
@@ -36,7 +43,7 @@ def add_source(kind, name, value='', device=None, transparent=False):
     if value: control('sourceValue', dialog).set_edit_text(value)
     if device: choose_dialog(dialog, 'sourceDevice', device)
     # Production video fixtures explicitly request the 30 fps capture path.
-    if kind.startswith('Browser'):
+    if kind.startswith('Browser') and transparent is not None:
         enabled(control('browserTransparency', dialog), transparent)
     dialog.child_window(title='OK', control_type='Button').invoke(); time.sleep(2)
 

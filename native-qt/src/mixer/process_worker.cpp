@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QWinEventNotifier>
 #include <QtEndian>
 #include <windows.h>
@@ -122,7 +123,25 @@ bool ProcessWorker::start(const QString &kind) {
     s.shared->magic = Magic; s.shared->blobCapacity = uint32_t(s.blobCapacity); s.shared->pixelCapacity = uint32_t(s.pixelCapacity);
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    if (!SetInformationJobObject(s.job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) return false;
+    if (kind == "browser") {
+        // Bound the complete source tree, including Chromium workers/GPU/audio
+        // children. Keep at least half the machine available to the mixer and
+        // other sources; a single page never gets more than four logical CPUs.
+        const DWORD processors = std::max<DWORD>(1, GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
+        JOBOBJECT_CPU_RATE_CONTROL_INFORMATION cpu{};
+        cpu.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
+        cpu.CpuRate = std::max<DWORD>(1, std::min<DWORD>(5000, 40000 / processors));
+        if (!SetInformationJobObject(s.job, JobObjectCpuRateControlInformation, &cpu, sizeof(cpu))) {
+            s.error = "Could not apply browser CPU protection."; return false;
+        }
+        MEMORYSTATUSEX memory{sizeof(memory)};
+        if (!GlobalMemoryStatusEx(&memory)) { s.error = "Could not determine the browser memory limit."; return false; }
+        limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+        limits.JobMemoryLimit = SIZE_T(std::clamp<ULONGLONG>(memory.ullTotalPhys / 4, 1ull << 30, 4ull << 30));
+    }
+    if (!SetInformationJobObject(s.job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+        s.error = "Could not apply worker resource protection."; return false;
+    }
     STARTUPINFOEXW startup{}; startup.StartupInfo.cb = sizeof(startup);
     SIZE_T bytes = 0; InitializeProcThreadAttributeList(nullptr, 1, 0, &bytes);
     std::vector<unsigned char> storage(bytes);
@@ -299,6 +318,21 @@ int ProcessWorker::run(int argc, char **argv) {
     std::unique_ptr<output::Session> output;
     std::atomic<qint64> keyframes{0};
     QJsonObject state{{"active", false}};
+    QElapsedTimer browserCpuAt;
+    qint64 browserCpuTicks = 0;
+    int browserCpuBusySamples = 0;
+    double browserCpuCores = 0;
+    if (kind == "browser") {
+        JOBOBJECT_CPU_RATE_CONTROL_INFORMATION cpu{};
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        if (QueryInformationJobObject(nullptr, JobObjectCpuRateControlInformation, &cpu, sizeof(cpu), nullptr) &&
+            QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation, &limits, sizeof(limits), nullptr)) {
+            state["cpuLimitPercent"] = cpu.CpuRate / 100.0;
+            state["memoryLimitMiB"] = qint64(limits.JobMemoryLimit / (1024 * 1024));
+            browserCpuCores = cpu.CpuRate / 10000.0 * GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+            browserCpuAt.start();
+        }
+    }
     qint64 browserImageKey = 0;
     size_t committedPixels = 0;
     auto publishState = [&] { if (lock(handles[3])) { json(shared->status, shared->statusSize, state); ReleaseMutex(handles[3]); } };
@@ -380,7 +414,7 @@ int ProcessWorker::run(int argc, char **argv) {
                 if (c.contains("loop")) media->setLoop(c["loop"].toBool());
                 if (c["restart"].toBool()) media->restart(); result["ok"] = true;
             } else if (op == "start" && kind == "browser") {
-                browser = std::make_unique<BrowserSource>(c["id"].toString(), QUrl(c["locator"].toString()), c["render"].toBool(), c["transparent"].toBool(), c["talkback"].toBool());
+                browser = std::make_unique<BrowserSource>(c["id"].toString(), QUrl(c["locator"].toString()), c["render"].toBool(), c["transparent"].toBool(), c["talkback"].toBool(), c["preserveColorMetadata"].toBool());
                 QObject::connect(browser.get(), &BrowserSource::frameReady, &application, [&](const QImage &image) {
                     app::detail::PerformanceTrace::Scope profile(app::detail::PerformanceTrace::BrowserDelivery);
                     // A static PNG overlay keeps its identity through IPC. Do
@@ -501,7 +535,20 @@ int ProcessWorker::run(int argc, char **argv) {
         if (spout) state["active"] = spout->isCapturing();
         if (captureAudio) state["active"] = captureAudio->IsCapturing();
         if (media) { state["error"] = media->error(); state["ended"] = media->ended(); state["hasVideo"] = media->hasVideo(); }
-        if (browser) state["description"] = browser->captureDescription();
+        if (browser) {
+            if (browserCpuAt.isValid() && browserCpuAt.elapsed() >= 1000) {
+                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION usage{};
+                if (QueryInformationJobObject(nullptr, JobObjectBasicAccountingInformation, &usage, sizeof(usage), nullptr)) {
+                    const auto ticks = usage.TotalKernelTime.QuadPart + usage.TotalUserTime.QuadPart;
+                    const double cores = (ticks-browserCpuTicks) / (browserCpuAt.elapsed()*10000.0);
+                    browserCpuBusySamples = cores > browserCpuCores*.8 ? std::min(3, browserCpuBusySamples+1) : 0;
+                    state["cpuLimitActive"] = browserCpuBusySamples >= 3;
+                    browserCpuTicks = ticks;
+                }
+                browserCpuAt.restart();
+            }
+            state["description"] = browser->captureDescription() + (state["cpuLimitActive"].toBool() ? " / CPU limit active" : "");
+        }
         if (output) {
             const auto s = output->status();
             state["state"] = int(s.state); state["message"] = QString::fromStdString(s.message);

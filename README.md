@@ -2,7 +2,7 @@
 
 A native Windows production studio for scenes, sources, audio mixing and live output. **Desktop Studio** complements Web Studio and Web Mixer. It is based on [Game Capture](https://github.com/steveseguin/game-capture), with its own executable, settings, installer identity, browser profiles, logs, and update feed.
 
-Development version: **0.6.1**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
+Development version: **0.6.2**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
 
 Previously named **Video Mixer**. Setup upgrades the existing installation and replaces its Start menu shortcuts. Existing shows, output profiles, camera settings, browser profiles and the layout preference carry over. The repository/build target, `%LOCALAPPDATA%/VideoMixer` data folder and `VDO.Ninja/Video Mixer` settings identity remain stable for compatibility. Older validation documents use the name of the version they measured.
 
@@ -61,6 +61,12 @@ Profiles live under `%LOCALAPPDATA%/VideoMixer/browser/`. Receiving/overlay page
 
 Studio cameras, window/Spout inputs, microphones/desktop capture, media decoders, browser hosts, video encoders and each publishing/recording destination run in separate helper processes. Bounded frame/audio buffers prevent a slow consumer from building an unlimited backlog. A failed source reconnects; a failed publisher reconnects independently. A failed recording destination preserves its existing file and requires a new recording. Closing the app closes its helper process trees.
 
+Each browser source and its Chromium children have a Windows CPU budget of at most half the machine, capped at four logical CPUs, plus a committed-memory limit of one quarter of physical RAM (minimum 1 GiB, maximum 4 GiB). Source health shows **CPU limit active** under sustained load. A page responsiveness watchdog supplements native worker heartbeats. After three automatic browser reconnects within a minute, a further failure pauses that source; **Reconnect** explicitly retries it. Limits apply per source, not to the combined total of all browser sources. Complex pages may run more slowly when they reach a limit.
+
+Browser audio routes into the source's mixer track by default. WebView2 retains its normal GPU rendering and compatible hardware video decoding, with software fallback for unsupported codecs/drivers. Transparent capture still uses CPU PNG snapshots at up to 15 fps; accelerated decoding does not make that capture path fully GPU-based.
+
+On WebView2 152-154, a compatibility workaround avoids a WebRTC decoder reinitialization bug by not negotiating the RTP color-space extension. Enable **Preserve original video color metadata** in the source dialog if a source needs that metadata; this can cause software decoding on affected runtimes. Other runtime versions retain normal negotiation, and HTML video/HEVC support is unchanged. For VDO.Ninja, `&codec=h264` can request a codec with hardware decoding on compatible PCs; this was verified with a live feed. The source's codec selection is never changed automatically.
+
 These boundaries contain user-mode failures in those components; they are not a guarantee against browser vulnerabilities, an OS/GPU-driver failure, or bugs in the main compositor. Headphone playback, local Program outputs and inherited non-Studio paths still include native code in the main process. Keep Windows, graphics drivers and Evergreen WebView2 updated.
 
 ## Build
@@ -80,13 +86,13 @@ powershell -ExecutionPolicy Bypass -File native-qt/build-mixer.ps1 -Installer
 
 Portable executable: `native-qt/dist/desktop-studio-portable/desktop-studio.exe`.
 
-Archives and setup: `native-qt/dist/desktop-studio-0.6.1-windows-x64.zip` and `desktop-studio-0.6.1-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
+Archives and setup: `native-qt/dist/desktop-studio-0.6.2-windows-x64.zip` and `desktop-studio-0.6.2-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
 
 The pinned SDK is fetched from NuGet; other native dependencies use CMake FetchContent. Downloaded dependencies, build outputs, local shows, and QA artifacts are excluded from Git.
 
 ## Validation and provenance
 
-[0.6.1 overlay background validation](docs/mixer-0.6.1-validation.md) covers default transparency, page security policies, reloads, source modes, composed recording and the real Social Stream Ninja workflow. [0.6.0 isolation, browser security and performance validation](docs/mixer-0.6.0-validation.md) records real publishing, recording, hardware, failure-injection and sustained workflows.
+[0.6.2 browser resilience validation](docs/mixer-0.6.2-validation.md) covers a live VDO.Ninja viewer, default audio, actual GPU decoding, resource exhaustion, hangs and repeated crashes during recording. [0.6.1 overlay background validation](docs/mixer-0.6.1-validation.md) covers default transparency, page security policies, reloads, source modes, composed recording and the real Social Stream Ninja workflow. [0.6.0 isolation, browser security and performance validation](docs/mixer-0.6.0-validation.md) records real publishing, recording, hardware, failure-injection and sustained workflows.
 
 [0.5.0 production validation](docs/mixer-0.5.0-validation.md) covers the native canvas, independent recording, media playback, editing, audio effects, guest returns, local outputs, recovery and performance measurements.
 
