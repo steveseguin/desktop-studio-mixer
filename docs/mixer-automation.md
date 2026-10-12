@@ -1,6 +1,6 @@
 # Desktop Studio automation and workspace preferences
 
-Version 0.7 adds a local mixer API, a JSON CLI, and a stdio MCP server with 31 tools.
+Version 0.7 adds a local mixer API, a JSON CLI, and a stdio MCP server (32 tools in 0.7.3).
 They control the same mixer and isolated workers as the UI. Automation is opt-in
 and does not start publishing or recording by itself.
 
@@ -24,6 +24,13 @@ node $cli --discovery $discovery schema
 node $cli --discovery $discovery screenshot program --out 'C:\shows\program.png'
 node $cli --discovery $discovery quit
 ```
+
+In 0.7.3, `status` includes `monitor.devices` with stable endpoint IDs and
+availability. `monitor.set` accepts `device`, `gain` (0–1), `enabled`, and
+`refresh`. A refresh is asynchronous; wait for `monitor.refreshing` to become
+false before selecting a newly connected output. It changes headphone Listen
+output, not Program audio. Monitoring starts disabled on each launch. The MCP
+tool is `desktop_studio_monitor_set`.
 
 `launch` defaults to windowless; `--gui` opens the window. Processes keep running
 after CLI/MCP disconnect. Quit explicitly to finalize recording and stop output.

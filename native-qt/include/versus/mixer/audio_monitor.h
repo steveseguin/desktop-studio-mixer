@@ -4,15 +4,29 @@
 #include <memory>
 
 namespace versus::mixer {
+struct MonitorDevice { int id; QString name, key; };
 // All instance methods run on the audio worker. Device enumeration is independent.
 class AudioMonitor {
 public:
     AudioMonitor();
     ~AudioMonitor();
-    static std::vector<std::pair<int, QString>> devices();
+    static std::vector<MonitorDevice> devices();
     QString open(int device);
     void close();
+    bool write(const std::vector<float> &samples);
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+// Driver calls run in a disposable worker; the Program bus only queues samples.
+class IsolatedAudioMonitor {
+public:
+    IsolatedAudioMonitor();
+    ~IsolatedAudioMonitor();
+    void open(const QString &device);
+    void close();
     void write(const std::vector<float> &samples);
+    QString error() const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

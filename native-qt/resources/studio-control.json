@@ -684,6 +684,35 @@
       "required": [
         "command"
       ]
+    },
+    "monitor.set": {
+      "description": "Select a monitoring output by stable device ID from state.monitor.devices, set headphone gain or enable monitoring. Does not change Program audio.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "monitor.set"
+        },
+        "device": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "gain": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "refresh": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "command"
+      ]
     }
   },
   "screenshot": {

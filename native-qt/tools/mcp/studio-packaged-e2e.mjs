@@ -17,6 +17,22 @@ try {
  await call('attach',{discovery});
  const state=(await call('status')).structuredContent;assert(state.headless);
  assert(!JSON.stringify(state).includes('Bearer '));
+ assert(listed.tools.some(t=>t.name==='desktop_studio_monitor_set'));
+ await call('monitor_set',{refresh:true});
+ let monitoring;
+ for(let attempt=0;attempt<50;attempt++){
+  monitoring=(await call('status')).structuredContent.monitor;
+  if(!monitoring.refreshing)break;
+  await new Promise(resolve=>setTimeout(resolve,100));
+ }
+ assert(!monitoring.refreshing);assert(monitoring.devices.some(d=>d.id==='default'&&d.available));
+ const missingOutput=await client.callTool({name:'desktop_studio_monitor_set',arguments:{device:'qa-missing-endpoint'}});assert(missingOutput.isError);
+ const invalidMonitorGain=await client.callTool({name:'desktop_studio_monitor_set',arguments:{gain:2}});assert(invalidMonitorGain.isError);
+ await call('monitor_set',{device:'default',gain:.37,enabled:true});
+ await new Promise(resolve=>setTimeout(resolve,1200));
+ monitoring=(await call('status')).structuredContent.monitor;
+ assert(monitoring.enabled);assert.equal(monitoring.device,'default');assert(Math.abs(monitoring.gain-.37)<.001);
+ await call('monitor_set',{enabled:false});assert(!(await call('status')).structuredContent.monitor.enabled);
  const added=(await call('scene_add',{name:'MCP blue',background:'#1234d0'})).structuredContent;
  assert(added.id);
  await call('scene_select',{id:added.id});
@@ -27,5 +43,5 @@ try {
  const resource=await client.readResource({uri:'studio://state'});assert(JSON.parse(resource.contents[0].text).scenes.some(s=>s.id===added.id));
  await call('scene_select',{id:state.preview});await call('scene_remove',{id:added.id});
  const invalid=await client.callTool({name:'desktop_studio_audio_set',arguments:{source:'missing',gain:100}});assert(invalid.isError);
- await writeFile(path.join(report,'mcp.json'),JSON.stringify({tools:listed.tools.length,imageBytes:pixels.length,resource:true,invalidRejected:true},null,2));
+ await writeFile(path.join(report,'mcp.json'),JSON.stringify({tools:listed.tools.length,imageBytes:pixels.length,resource:true,invalidRejected:true,monitorDeviceAndGain:true,monitorRefresh:true,missingMonitorRejected:true},null,2));
 } finally { await client.close(); }

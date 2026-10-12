@@ -52,6 +52,7 @@ for command,title,label in [('inviteGuest','Invite guest','QA guest'),('inviteCa
     press(command);prompt=window.child_window(title=title,control_type='Window');prompt.child_window(control_type='Edit').set_edit_text(label)
     prompt.child_window(title='OK',control_type='Button').invoke()
     dialog=window.child_window(title=label+' - invite',control_type='Window');dialog.wait('visible')
+    if command=='inviteCamera':choose_dialog(dialog,'inviteReturnMode','Program video and mix-minus audio')
     invites.append((label,control('inviteUrl',dialog).get_value()));press('closeInvite',dialog)
 time.sleep(1);data=json.loads(show.read_text());ids={s['name']:s['id'] for s in data['sources']}
 
@@ -86,9 +87,12 @@ try:
             assert all(max(v['440'],v['1660']) < -55 for v in levels),levels
         for name,_ in invites:admit(name)
         time.sleep(2)
-        # Admitting to Preview must not expose the guest in Program before Take.
+        # Admitted guests can converse off-screen. The wireless camera still
+        # follows Program, so it enters the return mix only after Take.
         before=[p.evaluate(levels_script) for p in pages];results['previewOnlyLevels']=before
-        assert all(all(max(v['440'],v['1660']) < -55 for v in levels) for levels in before),before
+        assert all(v['1660'] < -55 for levels in before for v in levels),before
+        assert max(v['440'] for v in before[1])>-40,before
+        assert all(v['440'] < -55 for v in before[0]),before
         press('takeScene');time.sleep(4)
         levels=[p.evaluate(levels_script) for p in pages];results['mix_minus_levels']=levels
         for incoming,own,other in zip(levels,('440','1660'),('1660','440')):
@@ -97,7 +101,7 @@ try:
         print('Backstage, Take and guest mix-minus passed',flush=True)
         # Backstage a previously live guest, then re-admit without Take.
         admit('QA guest');admit('QA guest');time.sleep(3)
-        assert all(v['440'] < -55 for v in pages[1].evaluate(levels_script))
+        assert max(v['440'] for v in pages[1].evaluate(levels_script))>-40
         press('takeScene');time.sleep(2)
         add_source('Microphone / audio input','QA host',device='HD Pro Webcam C920')
         for name in ('QA guest','QA phone','QA media'):enabled(channel(name,'Mute'),True)

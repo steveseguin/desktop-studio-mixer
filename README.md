@@ -2,7 +2,7 @@
 
 A native Windows production studio for scenes, sources, audio mixing and live output. **Desktop Studio** complements Web Studio and Web Mixer. It is based on [Game Capture](https://github.com/steveseguin/game-capture), with its own executable, settings, installer identity, browser profiles, logs, and update feed.
 
-Development version: **0.7.2**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
+Development version: **0.7.3**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
 
 Previously named **Video Mixer**. Setup upgrades the existing installation and replaces its Start menu shortcuts. Existing shows, output profiles, camera settings, browser profiles and the layout preference carry over. The repository/build target, `%LOCALAPPDATA%/VideoMixer` data folder and `VDO.Ninja/Video Mixer` settings identity remain stable for compatibility. Older validation documents use the name of the version they measured.
 
@@ -34,18 +34,18 @@ Select a webcam source and choose **Camera settings...** for a live preview, cap
 
 Camera changes apply immediately, including to Program. **Apply capture mode** briefly restarts that source and shows the actual negotiated mode. The canvas format is selected separately in the top bar. Explicitly changed controls and the requested mode are saved with the source and reapplied on reconnect/show reload. Selecting a different physical camera clears those overrides. Opening the settings panel does not change the device. Exposure and low light can reduce delivered frame rate, and other applications may share the camera's hardware settings.
 
-**Headphone monitor** has its own device and volume controls and starts off each launch. A channel's **Listen** sends it to headphones, including while off air; **Mute** silences both monitoring and Program. Microphones start with Listen off. Desktop audio excludes Desktop Studio and its browser processes, preventing its monitor output from feeding back into the mix. Use headphones for guests and microphones.
+**Headphone monitor** has its own device and volume controls and starts off each launch. The output selection is remembered by its Windows endpoint identity. Use **Refresh** after connecting headphones or an audio interface. A missing saved device stays marked unavailable; it does not silently fall back to speakers. Monitoring and device discovery run in isolated workers, so a failed monitor does not stop the Program audio bus. A channel's **Listen** sends it to headphones, including while off air; **Mute** silences both monitoring and Program. Microphones start with Listen off. Desktop audio excludes Desktop Studio and its browser/monitor processes, preventing monitor feedback. Use headphones for guests and microphones.
 
 **Program window** provides clean output (F11 for fullscreen). Shows autosave under `%LOCALAPPDATA%/VideoMixer/studio.mixer.json`; Save show as/Open show transfer layouts and source settings. Show files include private source URLs and invitation links.
 
 ## Guests, phones, and chat
 
-- **Invite guest** creates a private VDO.Ninja room invitation and a receiving source. Guests choose and start their camera/microphone in their browser, then join **backstage**, off air. Select the source and choose **Admit / Backstage**. In single-canvas mode admission goes live; in Studio mode it prepares Preview and requires Take. Studio Preview can show backstage video. The room and invitations are retained in the saved show.
-- **Wireless camera** creates a similar invitation with the rear-camera preference for a phone.
+- **Invite guest** creates a private VDO.Ninja room invitation and a receiving source. Guests choose and start their camera/microphone, then join **backstage**. Select the source and choose **Admit / Backstage**. Admission joins the guest conversation immediately, including off-screen. Program still follows scenes: single-canvas admission goes live when that source is in the scene; Studio mode requires Take. Studio Preview can show backstage video. The room and invitations are retained in the saved show.
+- **Wireless camera** creates a similar invitation with the rear-camera preference and no incoming return by default. The phone still sends its camera/microphone to Studio.
 - **Social chat** accepts a Social Stream Ninja session ID or overlay URL. A session ID adds its featured-message overlay. Select it and choose **Open / Invite** to open its chat dock and feature messages. Connect social platforms in Social Stream Ninja first.
 - Browser sources also accept existing VDO.Ninja viewing URLs. **Open / Invite** provides browser interaction.
 
-**Guest Program return** sends each invited guest the complete Program picture and a mix with their own audio removed. Creating an invitation enables it. After reopening a saved show, enable it when ready to send return video/audio. Each connected guest currently uses a separate encoder; more guests increase resource use. Recreate invitations made before 0.5.0 to use Program return.
+**Guest Program return** sends guests the Program picture and mix-minus audio: their own voice is removed, other admitted guests remain audible even off-screen, and unadmitted backstage sources are excluded. Muting a guest also silences them in other guests' returns. Each invitation offers **No return**, **Audio return only**, or **Program video and mix-minus audio**. Changing that choice updates the link; reopen the new link on a connected device. Guests default to video/audio return; wireless cameras default to none to save resources. The choice and master return switch are saved with new shows. Existing shows retain their previous invite mode. Each connected video return currently uses a separate encoder; more guests increase resource use. Recreate invitations made before 0.5.0 to use Program return.
 
 **Private talkback** sends the Studio microphone inputs only to guests while the button is active, removing those inputs from Program and recordings. Add your microphone as a source first and leave its channel unmuted. Turn talkback off to restore normal routing. This addresses all guests with Program return enabled; use headphones.
 
@@ -94,11 +94,13 @@ powershell -ExecutionPolicy Bypass -File native-qt/build-mixer.ps1 -Installer
 
 Portable executable: `native-qt/dist/desktop-studio-portable/desktop-studio.exe`.
 
-Archives and setup: `native-qt/dist/desktop-studio-0.7.2-windows-x64.zip` and `desktop-studio-0.7.2-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
+Archives and setup: `native-qt/dist/desktop-studio-0.7.3-windows-x64.zip` and `desktop-studio-0.7.3-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
 
 The pinned SDK is fetched from NuGet; other native dependencies use CMake FetchContent. Downloaded dependencies, build outputs, local shows, and QA artifacts are excluded from Git.
 
 ## Validation and provenance
+
+[0.7.3 audio and isolation validation](docs/mixer-0.7.3-validation.md) covers browser audio, monitoring devices and failures, off-screen guest conversation, wireless return modes and concurrent browser overload.
 
 [0.7.1/0.7.2 validation](docs/mixer-0.7.1-validation.md) covers interface workflows, production endurance, CPU readout, real NVDA workflows, hardware/compositor matrix, browser GPU/CPU failures, disk-space failures and concurrent MCP clients.
 

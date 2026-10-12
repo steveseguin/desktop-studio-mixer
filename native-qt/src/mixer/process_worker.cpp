@@ -2,6 +2,7 @@
 #include "versus/app/performance_trace.h"
 #include "versus/mixer/browser_source.h"
 #include "versus/mixer/media_source.h"
+#include "versus/mixer/audio_monitor.h"
 #include "versus/video/camera_capture.h"
 #include "versus/video/spout_capture.h"
 #include "versus/video/video_encoder.h"
@@ -104,7 +105,7 @@ bool ProcessWorker::start(const QString &kind) {
     stop(); impl_ = std::make_unique<Impl>(); auto &s = *impl_;
     s.kind = kind;
     SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-    s.blobCapacity = kind == "encoder" ? BlobCapacity : kind == "output" ? 8*1024*1024 : 0;
+    s.blobCapacity = kind == "encoder" ? BlobCapacity : kind == "output" ? 8*1024*1024 : kind == "monitor" ? 960*sizeof(float) : 0;
     s.pixelCapacity = (kind == "camera" || kind == "window" || kind == "spout" || kind == "media" || kind == "browser") ? BlobCapacity : 0;
     const auto mappingSize = sizeof(Shared)+s.blobCapacity+s.pixelCapacity;
     // Reserve an address range; commit only the media bytes actually used.
@@ -312,6 +313,8 @@ int ProcessWorker::run(int argc, char **argv) {
     std::unique_ptr<video::SpoutCapture> spout;
     std::unique_ptr<audio::WindowAudioCaptureCore> captureAudio;
     std::unique_ptr<MediaSource> media;
+    std::unique_ptr<AudioMonitor> monitor;
+    std::vector<float> monitorSamples(960);
     std::unique_ptr<BrowserSource> browser;
     std::unique_ptr<video::VideoEncoder> encoder;
     video::CapturedFrame encoderFrame; // Reuse capacity across frames.
@@ -374,9 +377,24 @@ int ProcessWorker::run(int argc, char **argv) {
                     result["state"] = int(final.state); result["message"] = QString::fromStdString(final.message);
                 }
             }
+            else if (kind == "monitor") {
+                if (op == "start") {
+                    monitor = std::make_unique<AudioMonitor>();
+                    const auto key = c["device"].toString("default");
+                    const auto devices = AudioMonitor::devices();
+                    const auto found = std::find_if(devices.begin(), devices.end(), [&](const auto &d) { return d.key == key; });
+                    const auto error = found == devices.end() ? QString("Selected monitoring device is unavailable. Connect it and click Refresh, or select another output.") : monitor->open(found->id);
+                    result = {{"ok", error.isEmpty()}, {"error", error}};
+                } else if (op == "audio" && monitor && shared->inputSize == 960*sizeof(float)) {
+                    memcpy(monitorSamples.data(), blobData(shared), 960*sizeof(float));
+                    result["ok"] = monitor->write(monitorSamples);
+                }
+            }
             else if (kind == "devices") {
                 QJsonArray devices;
-                if (op == "cameras") {
+                if (op == "outputs") {
+                    for (const auto &d : AudioMonitor::devices()) devices.append(QJsonObject{{"index", d.id}, {"id", d.key}, {"name", d.name}});
+                } else if (op == "cameras") {
                     video::CameraCapture enumerator;
                     for (const auto &c : enumerator.getCameras()) devices.append(QJsonObject{{"id", QString::fromStdString(c.id)}, {"name", QString::fromStdString(c.name)}});
                 } else if (op == "inputs") {
@@ -563,7 +581,7 @@ int ProcessWorker::run(int argc, char **argv) {
     });
     health.start(250); SetEvent(handles[2]);
     const int result = application.exec();
-    output.reset(); browser.reset(); media.reset(); captureAudio.reset(); spout.reset(); window.reset(); camera.reset(); encoder.reset();
+    monitor.reset(); output.reset(); browser.reset(); media.reset(); captureAudio.reset(); spout.reset(); window.reset(); camera.reset(); encoder.reset();
     UnmapViewOfFile(shared); for (auto &handle : handles) close(handle);
     if (SUCCEEDED(apartment)) CoUninitialize();
     if (preciseClock) timeEndPeriod(1);

@@ -6,6 +6,7 @@ mode persistence, so it cannot establish normal launch behavior.
 import argparse,json,os,subprocess,time,hashlib,psutil,winreg
 from pathlib import Path
 from pywinauto import Application
+from pywinauto.keyboard import send_keys
 p=argparse.ArgumentParser();p.add_argument('--report',required=True);a=p.parse_args()
 report=Path(a.report).resolve();report.mkdir(parents=True,exist_ok=False)
 show=Path(os.environ['LOCALAPPDATA'])/'VideoMixer/studio.mixer.json'
@@ -33,6 +34,13 @@ def quit():
     window.set_focus();window.type_keys('{ESC 2}');window.type_keys('^q');process.wait(timeout=25);process=None
 def mode():
     return next(c for c in window.descendants(control_type='CheckBox') if (c.element_info.automation_id or '').endswith('.studioMode'))
+def monitor_control(name):
+    target=next(c for c in window.descendants() if (c.element_info.automation_id or '').endswith('.'+name))
+    panel=next(c for c in window.descendants() if (c.element_info.automation_id or '').endswith('.audioPanelScroll'))
+    bars=[c for c in panel.descendants(control_type='ScrollBar') if c.is_visible() and c.rectangle().height()>c.rectangle().width()]
+    if bars and target.rectangle().bottom>panel.rectangle().bottom:
+        bar=min(bars,key=lambda c:len(c.element_info.automation_id));bar.iface_range_value.SetValue(bar.iface_range_value.CurrentMaximum);time.sleep(.2)
+    return target
 try:
     launch()
     for wanted in (True,False):
@@ -41,6 +49,24 @@ try:
         quit();launch();assert bool(mode().get_toggle_state())==wanted
         window.capture_as_image().save(str(report/(('studio' if wanted else 'single')+'-reopened.png')))
     results['normalLaunchModePersistence']='both modes restored after process restart'
+    time.sleep(1);combo=monitor_control('monitorDevice');combo.expand();time.sleep(.4)
+    first=next(c for top in Application(backend='uia').connect(process=process.pid).windows() for c in top.descendants(control_type='ListItem') if c.is_visible() and c.window_text()=='Default Windows playback device')
+    choices=[c.window_text() for c in first.parent().descendants(control_type='ListItem')];assert len(choices)>=2
+    send_keys('{END}{ENTER}');selected=combo.selected_text();assert selected==choices[-1]
+    quit();launch();time.sleep(1);assert monitor_control('monitorDevice').selected_text()==selected
+    window.capture_as_image().save(str(report/'monitor-device-reopened.png'))
+    results['monitorDevicePersistence']=selected
+    quit()
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER,settings_root+r'\mixer') as key:
+        winreg.SetValueEx(key,'monitorDevice',0,winreg.REG_SZ,'qa-missing-endpoint')
+        winreg.SetValueEx(key,'monitorDeviceName',0,winreg.REG_SZ,'QA disconnected headphones')
+    launch();time.sleep(1)
+    for _ in range(3):monitor_control('refreshMonitorDevices').click_input();time.sleep(.6)
+    assert monitor_control('monitorDevice').selected_text()=='Unavailable: QA disconnected headphones'
+    monitor_control('monitorEnable').toggle();time.sleep(1)
+    assert not monitor_control('monitorEnable').get_toggle_state()
+    window.capture_as_image().save(str(report/'monitor-unavailable.png'))
+    results['unavailableMonitor']='preserved selection; refresh stable; monitoring refused instead of falling back to speakers'
     current='Language'
     for label,menu,file in [('Fran\u00e7ais','Langue','french'),('Espa\u00f1ol','Idioma','spanish'),('English','Language','english')]:
         window.menu_select(current+'->'+label);quit();launch()
