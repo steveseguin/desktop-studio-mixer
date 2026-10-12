@@ -1886,6 +1886,12 @@ void VersusApp::updateSourceHealthFromFrame(const video::CapturedFrame &frame) {
         sourceHealth_.greenRatio >= 0.20;
 }
 
+ConnectionHealth VersusApp::getSystemResourceUsage() const {
+    ConnectionHealth health;
+    populateSystemResourceUsage(health);
+    return health;
+}
+
 void VersusApp::populateSystemResourceUsage(ConnectionHealth &health) const {
 #ifdef _WIN32
     MEMORYSTATUSEX memoryStatus{};
@@ -1908,6 +1914,13 @@ void VersusApp::populateSystemResourceUsage(ConnectionHealth &health) const {
     const uint64_t kernel = fileTimeToUint64(kernelTime);
     const uint64_t user = fileTimeToUint64(userTime);
     std::lock_guard<std::mutex> lock(systemResourceMutex_);
+    const auto sampledAt = std::chrono::steady_clock::now();
+    // UI, publishing diagnostics and API clients share a sample. Closely spaced
+    // requests must not turn this into a noisy sub-millisecond CPU reading.
+    if (systemCpuSampleInitialized_ && sampledAt-lastSystemCpuSampleAt_ < std::chrono::milliseconds(500)) {
+        health.systemCpuPercent = lastSystemCpuPercent_;
+        return;
+    }
     if (systemCpuSampleInitialized_) {
         const uint64_t idleDelta = idle >= lastSystemIdleTime_ ? idle - lastSystemIdleTime_ : 0;
         const uint64_t kernelDelta = kernel >= lastSystemKernelTime_ ? kernel - lastSystemKernelTime_ : 0;
@@ -1925,6 +1938,7 @@ void VersusApp::populateSystemResourceUsage(ConnectionHealth &health) const {
     lastSystemIdleTime_ = idle;
     lastSystemKernelTime_ = kernel;
     lastSystemUserTime_ = user;
+    lastSystemCpuSampleAt_ = sampledAt;
     health.systemCpuPercent = lastSystemCpuPercent_;
 #else
     (void)health;

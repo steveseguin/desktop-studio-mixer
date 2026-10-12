@@ -203,6 +203,7 @@ class VersusApp {
     float getAdditionalAudioPeak() const;
     StreamMetrics getStreamMetrics() const;
     ConnectionHealth getConnectionHealth() const;
+    ConnectionHealth getSystemResourceUsage() const;
     SourceHealth getSourceHealth() const;
     std::shared_ptr<const versus::video::CapturedFrame> getPublisherPreviewFrame();
     std::string buildDiagnosticsJson() const;
@@ -622,6 +623,7 @@ class VersusApp {
     mutable bool recentMetricsInitialized_ = false;
     mutable std::mutex systemResourceMutex_;
     mutable bool systemCpuSampleInitialized_ = false;
+    mutable std::chrono::steady_clock::time_point lastSystemCpuSampleAt_{};
     mutable uint64_t lastSystemIdleTime_ = 0;
     mutable uint64_t lastSystemKernelTime_ = 0;
     mutable uint64_t lastSystemUserTime_ = 0;

@@ -11,6 +11,8 @@
 #include <QLockFile>
 #include <QRandomGenerator>
 #include <QSaveFile>
+#include <QPointer>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
@@ -245,6 +247,7 @@ void LocalControlServer::stop() {
         }
     }
     buffers_.clear();
+    deviceScans_.clear();
     removeDiscoveryFile();
 }
 
@@ -318,6 +321,9 @@ void LocalControlServer::handleReadyRead(QTcpSocket *socket) {
     if (!socket) {
         return;
     }
+    // Exactly one request per connection, including while an asynchronous
+    // device query is pending. Additional input remains bounded by the socket.
+    if (socket->property("controlRequestDispatched").toBool()) return;
     auto buffer = buffers_.find(socket);
     if (buffer == buffers_.end()) {
         return;
@@ -332,6 +338,7 @@ void LocalControlServer::handleReadyRead(QTcpSocket *socket) {
     if (!tryParseRequest(socket, request)) {
         return;
     }
+    socket->setProperty("controlRequestDispatched", true);
     routeRequest(socket, request);
 }
 
@@ -476,7 +483,7 @@ void LocalControlServer::routeRequest(QTcpSocket *socket, const HttpRequest &req
         return;
     }
     if (request.method == "GET" && path == "/sources/cameras") {
-        sendJson(socket, 200, sourcesJson(cameraSourcesProvider_));
+        sendDeviceSources(socket, path, cameraSourcesProvider_);
         return;
     }
     if (request.method == "GET" && path == "/sources/spout") {
@@ -484,7 +491,7 @@ void LocalControlServer::routeRequest(QTcpSocket *socket, const HttpRequest &req
         return;
     }
     if (request.method == "GET" && path == "/sources/audio-inputs") {
-        sendJson(socket, 200, sourcesJson(audioInputSourcesProvider_));
+        sendDeviceSources(socket, path, audioInputSourcesProvider_);
         return;
     }
     if (request.method == "GET" && path == "/logs/recent") {
@@ -671,6 +678,30 @@ QByteArray LocalControlServer::schemaJson() const {
 QByteArray LocalControlServer::sourcesJson(const SourcesProvider &provider) const {
     QJsonObject root{{"ok", true}, {"sources", provider ? provider() : QJsonArray{}}};
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
+void LocalControlServer::sendDeviceSources(QTcpSocket *socket, const QString &kind, const SourcesProvider &provider) {
+    // Concurrent clients share an in-flight scan. There can be at most one
+    // camera and one microphone enumeration, with no stale device-list cache.
+    auto *watcher = deviceScans_.value(kind);
+    const bool startScan = !watcher;
+    if (startScan) {
+        watcher = new QFutureWatcher<QJsonArray>(this);
+        deviceScans_.insert(kind, watcher);
+        connect(watcher, &QFutureWatcher<QJsonArray>::finished, this, [this, watcher, kind] {
+            if (deviceScans_.value(kind) == watcher) deviceScans_.remove(kind);
+            watcher->deleteLater();
+        });
+    }
+    connect(watcher, &QFutureWatcher<QJsonArray>::finished, this, [this, watcher, client = QPointer<QTcpSocket>(socket)] {
+        if (!client || client->state() != QAbstractSocket::ConnectedState) return;
+        try {
+            sendJson(client, 200, QJsonDocument(QJsonObject{{"ok", true}, {"sources", watcher->result()}}).toJson(QJsonDocument::Compact));
+        } catch (...) {
+            sendError(client, 500, "Device enumeration failed");
+        }
+    });
+    if (startScan) watcher->setFuture(QtConcurrent::run([provider] { return provider ? provider() : QJsonArray{}; }));
 }
 
 QByteArray LocalControlServer::recentLogJson(int maxLines) const {

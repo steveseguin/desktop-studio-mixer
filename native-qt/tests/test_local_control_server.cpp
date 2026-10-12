@@ -11,6 +11,9 @@
 #include <QThread>
 
 #include <algorithm>
+#include <atomic>
+#include <memory>
+#include <stdexcept>
 
 #include "versus/control/local_control_server.h"
 
@@ -80,12 +83,45 @@ class TestLocalControlServer : public QObject {
     void testAuthAndDiagnostics();
     void testRoomQualityDiagnosticsPassThrough();
     void testSourcesAndIssueReport();
+    void testDeviceEnumerationDoesNotBlockControl();
     void testRecentLogTailReadsFromEnd();
     void testIssueReportFailureReturnsServerError();
     void testStopCommand();
     void testRefreshPeerTransportsCommand();
     void testFailedStartDoesNotRemoveDiscovery();
 };
+
+void TestLocalControlServer::testDeviceEnumerationDoesNotBlockControl() {
+    QTemporaryDir directory;
+    versus::control::LocalControlServer server;
+    versus::control::LocalControlServerConfig config;
+    config.token = "test-token"; config.discoveryPath = directory.filePath("control.json");
+    auto calls = std::make_shared<std::atomic<int>>(0);
+    server.setCameraSourcesProvider([calls] {
+        ++*calls; QThread::msleep(400);
+        return QJsonArray{QJsonObject{{"id", "camera"}, {"name", "Camera"}}};
+    });
+    QVERIFY(server.start(config));
+    QTcpSocket first, second;
+    for (auto *socket : {&first, &second}) {
+        socket->connectToHost(QHostAddress::LocalHost, server.port());
+        QVERIFY(socket->waitForConnected(1000));
+        socket->write(authGet("/sources/cameras")); socket->flush();
+    }
+    QTRY_COMPARE(calls->load(), 1);
+    QElapsedTimer timer; timer.start();
+    QCOMPARE(statusCode(httpRequest(server.port(), authGet("/health"))), 200);
+    QVERIFY2(timer.elapsed() < 200, "Device enumeration blocked health requests");
+    QTRY_VERIFY(first.bytesAvailable() > 0 && second.bytesAvailable() > 0);
+    QCOMPARE(statusCode(first.readAll()), 200);
+    QCOMPARE(statusCode(second.readAll()), 200);
+    QCOMPARE(calls->load(), 1); // Concurrent clients shared the same scan.
+    server.setCameraSourcesProvider([]() -> QJsonArray { throw std::runtime_error("private provider failure"); });
+    const auto failed = httpRequest(server.port(), authGet("/sources/cameras"));
+    QCOMPARE(statusCode(failed), 500);
+    QVERIFY(!failed.contains("private provider failure"));
+    QCOMPARE(statusCode(httpRequest(server.port(), authGet("/health"))), 200);
+}
 
 void TestLocalControlServer::testHealthAndDiscovery() {
     QTemporaryDir dir;

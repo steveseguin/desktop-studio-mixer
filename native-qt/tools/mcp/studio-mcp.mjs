@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { readFile } from 'node:fs/promises';
 import { discovery, defaultDiscovery, request, launch, screenshot } from './studio-client.mjs';
 
-const server=new McpServer({name:'desktop-studio',version:'0.7.0'});
+const server=new McpServer({name:'desktop-studio',version:'0.7.1'});
 let selected=defaultDiscovery;
 let queue=Promise.resolve();
 const text=value=>({content:[{type:'text',text:JSON.stringify(value)}],structuredContent:value});

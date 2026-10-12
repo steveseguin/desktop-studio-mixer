@@ -2,7 +2,7 @@
 #include "versus/video/video_encoder.h"
 #include "versus/video/window_capture.h"
 #include <QFileInfo>
-#include <QStorageInfo>
+#include <QDir>
 #include <windows.h>
 #include <objbase.h>
 
@@ -56,9 +56,15 @@ bool ProgramRecorder::start(const QString &path, int width, int height, int fps)
                       image = std::move(pending_); pending_ = {}; timestamp = timestamp_; }
                     if (session->status().state == output::State::Error) { setStatus(QString::fromStdString(session->status().message)); running_ = false; break; }
                     if (std::chrono::steady_clock::now()-diskCheck > std::chrono::seconds(2)) {
-                        QStorageInfo storage(QFileInfo(path).absolutePath());
                         diskCheck = std::chrono::steady_clock::now();
-                        if (storage.isValid() && storage.bytesAvailable() >= 0 && storage.bytesAvailable() < 128*1024*1024) {
+                        // Query the actual destination directory. QStorageInfo
+                        // can resolve a UNC submount to its share's parent volume
+                        // and miss a full/quota-limited recording destination.
+                        auto directory = QDir::toNativeSeparators(QFileInfo(path).absolutePath());
+                        if (!directory.endsWith('\\')) directory += '\\';
+                        ULARGE_INTEGER available{};
+                        const bool haveSpace = GetDiskFreeSpaceExW(directory.toStdWString().c_str(), &available, nullptr, nullptr);
+                        if (haveSpace && available.QuadPart < 128*1024*1024) {
                             setStatus("Recording stopped: less than 128 MB disk space remains."); running_ = false; break;
                         }
                     }

@@ -5,6 +5,7 @@ helpers = Path(__file__).with_name('mixer-production-e2e.py').read_text()
 exec(helpers[helpers.index('def source_row'):helpers.index('\nclass Fixture')])
 import numpy as np
 import win32gui, win32process
+import re
 
 def restore(hwnd, _):
     if win32process.GetWindowThreadProcessId(hwnd)[1] == args.pid and win32gui.GetWindowText(hwnd).startswith('Desktop Studio - Powered'):
@@ -26,7 +27,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
     def log_message(self,*_): pass
 
 def meter(name):
-    return window.child_window(title=name+' audio level (dBFS)',control_type='ProgressBar').wrapper_object()
+    return window.child_window(title_re='^'+re.escape(name+' audio level (dBFS)')+': .*').wrapper_object()
 
 def reading(name): return meter(name).iface_range_value.CurrentValue
 

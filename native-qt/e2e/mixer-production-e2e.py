@@ -24,9 +24,14 @@ def choose_dialog(dialog, name, text):
     # Window-capture fixtures can take foreground focus. Focus the actual
     # dialog before using pointer input on its popup.
     dialog.set_focus()
-    combo = control(name, dialog); combo.expand(); time.sleep(.2)
-    item = next(c for top in app.windows() for c in top.descendants(control_type='ListItem')
-                if c.is_visible() and text in c.window_text())
+    combo = control(name, dialog); combo.expand()
+    item = None
+    deadline = time.time()+5
+    while time.time()<deadline and item is None:
+        item = next((c for top in app.windows() for c in top.descendants(control_type='ListItem')
+                     if c.is_visible() and text in c.window_text()), None)
+        if item is None: time.sleep(.1)
+    assert item is not None, ('Missing source choice', name, text)
     # Qt can reposition a dialog after enumerating windows. Keyboard selection
     # avoids clicking stale popup coordinates as browser windows appear/disappear.
     siblings = item.parent().descendants(control_type='ListItem')
@@ -54,7 +59,7 @@ def channel(name, label):
     for text in window.descendants(control_type='Text'):
         if text.window_text() == name:
             parent = text.parent()
-            return next(c for c in parent.descendants(control_type='CheckBox') if c.window_text() == label)
+            return next(c for c in parent.descendants(control_type='CheckBox') if c.window_text() in (label, name+' - '+label))
     raise AssertionError((name,label))
 
 def enabled(box, value):

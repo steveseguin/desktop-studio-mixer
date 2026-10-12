@@ -11,6 +11,7 @@
 #include <QPointer>
 #include <QTimer>
 #include <QUuid>
+#include "versus/mixer/isolated_source.h"
 #ifdef _WIN32
 #include <windows.h>
 #include <shellapi.h>
@@ -654,14 +655,14 @@ int main(int argc, char *argv[]) {
         localControlServer->setWindowSourcesProvider([&core]() {
             return sourceListToJson(core.listWindows());
         });
-        localControlServer->setCameraSourcesProvider([&core]() {
-            return sourceListToJson(core.listCameras());
+        localControlServer->setCameraSourcesProvider([]() {
+            return sourceListToJson(versus::mixer::IsolatedSource::cameras());
         });
         localControlServer->setSpoutSourcesProvider([&core]() {
             return sourceListToJson(core.listSpoutSenders());
         });
-        localControlServer->setAudioInputSourcesProvider([&core]() {
-            return audioInputListToJson(core.listAudioInputDevices());
+        localControlServer->setAudioInputSourcesProvider([]() {
+            return audioInputListToJson(versus::mixer::IsolatedSource::inputs());
         });
         localControlServer->setStopCallback([&core, &guiWindow, headless]() {
             QMetaObject::invokeMethod(qApp, [&core, &guiWindow, headless]() {

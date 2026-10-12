@@ -110,6 +110,13 @@ In Studio mode, take sources off Program before deleting them. Scene selection
 goes live immediately in single-canvas mode and stages Preview in Studio mode.
 Theme/layout changes don't take scenes live.
 
+`state.system` contains `cpu_percent`, `memory_percent`, `memory_used_bytes` and
+`memory_total_bytes`, refreshed once per second independently of publishing.
+CPU measures the whole machine (0–100%), including other applications. Before
+the first sample, this object can be empty. `state.canvas.active_renderer`
+reports `pending`, `passthrough`, `cpu` or `gpu`; `renderer_error` explains a GPU
+composition fallback. `output.state=error` also covers a rejected encoder start.
+
 Start/stop operations are asynchronous. Poll `output.state`, `output.live`, packet
 counters and `recording.status`; acceptance is not proof of receiver playback.
 `output.active` includes reconnecting sessions. Wait for `recording.busy=false`
@@ -129,12 +136,21 @@ the show, capture configured devices, write explicit show/recording paths and
 publish to configured destinations. Don't forward the port or share discovery
 files with websites or other users.
 
+Camera and microphone listing runs outside the rendering thread. Concurrent
+queries share an in-flight device scan, without returning a stale cached list.
+Clients can disconnect while a scan is pending; no background polling is needed
+unless the client wants to watch device availability.
+
 ## Accessibility, themes and languages
 
 The default stylesheet, control geometry and existing focus indicators are
 preserved. Accessibility adds descriptive names, label relationships, per-track
 labels, keyboard-operable numeric layout controls and status announcements. VU
-meters expose dBFS values and clipping descriptions through Windows UI Automation.
+meters expose read-only dBFS values and clipping descriptions through Windows UI
+Automation as indicators, without progress events on every frame. Ctrl+Shift+L
+announces the selected audio track's current level, or Master if no audio track
+is selected. Recording status changes and source-dialog validation errors are
+announced without changing focus or the default styling.
 Scene navigation supports the keyboard and Ctrl+1–9. Ctrl+Enter takes Preview,
 Ctrl+Z/Ctrl+Y undo/redo, and Ctrl+Shift+M mutes the selected source. This is not a
 completed assistive-technology conformance audit.

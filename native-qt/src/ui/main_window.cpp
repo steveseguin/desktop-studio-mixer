@@ -6,6 +6,7 @@
 #include <QActionGroup>
 #include <QBuffer>
 #include <QScopedValueRollback>
+#include <QStatusBar>
 
 #include "versus/ui/update_checker.h"
 
@@ -750,6 +751,27 @@ MainWindow::MainWindow(
     }
 
     appearance_->apply(QSettings("VDO.Ninja", "Video Mixer").value("ui/theme", "original").toString());
+    if (core_) {
+        studioSystemResourceLabel_ = new QLabel(studioText("System: CPU - | RAM -"), this);
+        studioSystemResourceLabel_->setObjectName("studioSystemResources");
+        studioSystemResourceLabel_->setToolTip(studioText("Total usage across all apps and processors. 100% means the entire system. Updates every second."));
+        studioSystemResourceLabel_->setAccessibleDescription(studioSystemResourceLabel_->toolTip());
+        statusBar()->addPermanentWidget(studioSystemResourceLabel_);
+        auto *resources = new QTimer(this);
+        resources->setInterval(1000);
+        connect(resources, &QTimer::timeout, this, [this] {
+            const auto health = core_->getSystemResourceUsage();
+            systemResources_ = {{"cpu_percent", health.systemCpuPercent}, {"memory_percent", health.systemMemoryPercent},
+                {"memory_used_bytes", qint64(health.systemMemoryUsedBytes)}, {"memory_total_bytes", qint64(health.systemMemoryTotalBytes)}};
+            const auto text = studioText("System: CPU %1 | RAM %2").arg(percentText(health.systemCpuPercent), percentText(health.systemMemoryPercent));
+            const auto style = QString("color: %1;").arg(systemResourceColor(health.systemCpuPercent, health.systemMemoryPercent));
+            for (auto *label : {studioSystemResourceLabel_, systemResourceLabel_}) if (label) {
+                label->setText(text);
+                if (label->styleSheet() != style) label->setStyleSheet(style);
+            }
+        });
+        resources->start();
+    }
     // Initial window list
     refreshWindowList();
     refreshSelectedWindowPreview();
@@ -962,15 +984,18 @@ QJsonObject MainWindow::studioControl(const QString &operation, const QJsonObjec
     if (operation == "state") {
         auto state = studio->controlState();
         state["headless"] = qApp->property("studioHeadless").toBool();
+        state["system"] = systemResources_;
         const auto outputState = core_->getOutputStatus();
         const bool external = core_->isExternalOutput();
         static const char *outputStates[]{"stopped", "connecting", "live", "reconnecting", "error"};
         state["output"] = QJsonObject{{"protocol", outputSelect_->currentData().toString()},
             {"active", isLive_}, {"live", isLive_ && (!external || outputState.state == output::State::Live)},
-            {"state", external ? outputStates[int(outputState.state)] : isLive_ ? "live" : startInProgress_ ? "connecting" : "stopped"},
+            {"state", !isLive_ && !startInProgress_ && !stopInProgress_ && statusLabel_->property("outputStatusClass") == "error" ? "error" :
+                external ? outputStates[int(outputState.state)] : isLive_ ? "live" : startInProgress_ ? "connecting" : "stopped"},
             {"video_packets", qint64(outputState.videoPackets)}, {"audio_packets", qint64(outputState.audioPackets)},
             {"starting", startInProgress_}, {"stopping", stopInProgress_},
-            {"status", statusLabel_->text()}, {"encoder", encoderStatusLabel_->text()}};
+            {"status", external && !outputState.message.empty() ? QString::fromStdString(outputState.message) : statusLabel_->text()},
+            {"encoder", encoderStatusLabel_->text()}};
         state["preferences"] = QJsonObject{{"theme", qApp->property("studioTheme").toString()},
             {"language", qApp->property("studioLanguage").toString()},
             {"next_language", QSettings("VDO.Ninja", "Video Mixer").value("ui/language", "en").toString()}};
@@ -1054,7 +1079,7 @@ QJsonObject MainWindow::studioControl(const QString &operation, const QJsonObjec
             customBitrateSpin_->setValue(request["bitrate_kbps"].toInt());
         }
         sourceModeSelect_->setCurrentIndex(sourceModeSelect_->findData("mixer"));
-        updateGoLiveButton(); return {{"ok", true}};
+        updateStatus("Mixer ready", "ready"); updateGoLiveButton(); return {{"ok", true}};
     }
     if ((command == "show.open" || command == "canvas.set") && (isLive_ || startInProgress_ || stopInProgress_ || hasPendingAsyncOperation()))
         return fail("Stop output before changing the show or canvas");
@@ -3569,6 +3594,7 @@ void MainWindow::updateStatus(const QString &text, const QString &statusClass) {
     }
     const bool changed = statusLabel_->text() != text;
     statusLabel_->setText(text);
+    statusLabel_->setProperty("outputStatusClass", statusClass);
 
     QString color;
     if (statusClass == "live") {
@@ -4107,10 +4133,6 @@ void MainWindow::resetOperatorHealthUi() {
         connectionMediaLabel_->setText(studioText("Codec: - | FPS: - | Resolution: - | Bitrate: -"));
         connectionMediaLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     }
-    if (systemResourceLabel_) {
-        systemResourceLabel_->setText(studioText("System: CPU - | RAM -"));
-        systemResourceLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
-    }
     if (connectionIssueLabel_) {
         connectionIssueLabel_->setText(studioText("Drops/encode/video/audio send: 0/0/0/0 | Last disconnect: none"));
         connectionIssueLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
@@ -4160,13 +4182,6 @@ void MainWindow::updateOperatorHealthUi(const versus::app::ConnectionHealth &hea
         connectionMediaLabel_->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
     }
 
-    if (systemResourceLabel_) {
-        systemResourceLabel_->setText(QString("System: CPU %1 | RAM %2")
-            .arg(percentText(health.systemCpuPercent))
-            .arg(percentText(health.systemMemoryPercent)));
-        systemResourceLabel_->setStyleSheet(
-            QString("color: %1;").arg(systemResourceColor(health.systemCpuPercent, health.systemMemoryPercent)));
-    }
 
     if (connectionIssueLabel_) {
         const QString lastDisconnect = health.lastPeerDisconnectReason.empty()

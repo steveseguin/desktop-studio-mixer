@@ -2,7 +2,7 @@
 
 A native Windows production studio for scenes, sources, audio mixing and live output. **Desktop Studio** complements Web Studio and Web Mixer. It is based on [Game Capture](https://github.com/steveseguin/game-capture), with its own executable, settings, installer identity, browser profiles, logs, and update feed.
 
-Development version: **0.7.0**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
+Development version: **0.7.1**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
 
 Previously named **Video Mixer**. Setup upgrades the existing installation and replaces its Start menu shortcuts. Existing shows, output profiles, camera settings, browser profiles and the layout preference carry over. The repository/build target, `%LOCALAPPDATA%/VideoMixer` data folder and `VDO.Ninja/Video Mixer` settings identity remain stable for compatibility. Older validation documents use the name of the version they measured.
 
@@ -11,6 +11,8 @@ Previously named **Video Mixer**. Setup upgrades the existing installation and r
 Use the bundled CLI or stdio MCP server to control scenes, sources, audio, recording and publishing, including windowless operation. Capture Program, Preview or the app window directly as PNG. See [automation setup and API reference](docs/mixer-automation.md).
 
 The **Language** menu adds English, Spanish and French core controls. **Appearance** offers five palettes and four workspace layouts. The default styling stays unchanged; accessibility adds descriptive labels, per-track names and keyboard access.
+
+The bottom-right status bar shows **total system CPU and RAM usage**, refreshed every second even when idle or only recording. CPU is normalized across all logical processors: 100% means the whole machine. The same values are available in the local API. **Ctrl+Shift+L** reads the selected audio track's level (or Master when no audio track is selected) through a screen reader; meters do not send continuous progress beeps.
 
 ## Use the studio
 
@@ -55,7 +57,7 @@ The original controls remain in **Capture & output**: standalone window/camera/S
 - New browser sources and Social chat default to **Transparent overlay background**, using snapshots at up to **15 fps**. Overlay mode overrides the top-level HTML/body background to transparent on each navigation; message cards, embedded pages and other element styling remain intact. Social Stream Ninja can still supply its own custom CSS. Turn overlay mode off for opaque browser video using **Windows Graphics Capture targeting 30 fps**, avoiding PNG encoding/decoding. Existing saved capture modes are preserved. Actual cadence depends on hardware and page activity. The compositor still reads back to CPU memory.
 - One streaming destination, plus independent recording, Spout output and virtual-camera output. **Spout output** publishes `Desktop Studio Program`. **Virtual camera** registers `Desktop Studio Virtual Camera` for the current Windows account without administrator access. It supplies video; select an audio device in the receiving app separately. This is a 64-bit DirectShow camera, verified in FFmpeg and Edge; applications requiring other camera interfaces may not support it. **Unregister camera** removes its registration. Local outputs start off each launch.
 - **Video / audio file** uses Windows Media Foundation codecs, including H.264/AAC MP4 and WAV. **Playback** offers pause, restart and looping. Unsupported codecs report an error. Audio-only files contribute audio without occupying a video layout position.
-- Cameras and native sources start asynchronously. Failed native captures retry with backoff; browser navigation failures and browser process crashes recover automatically. Windows restore by a unique executable/title match, including when their window reopens. Ambiguous or renamed windows require selecting the intended window through Reconnect. Missing devices/images/runtime report errors. Physical USB unplug recovery still needs a dedicated hardware run.
+- Cameras and native sources start asynchronously. Failed native captures retry with backoff; browser navigation failures and browser process crashes recover automatically. Windows restore by a unique executable/title match, including when their window reopens. Ambiguous or renamed windows require selecting the intended window through Reconnect. Missing devices/images/runtime report errors. Physical Logitech C920 unplug/reconnect recovered camera and microphone while recording and publishing continued; other camera drivers still need hardware coverage.
 - Browser audio is routed from Web Audio/media streams to the native mixer. Browser speaker sessions are silenced; only enabled native monitoring plays locally. Ordinary Web Audio and WebRTC receivers are supported. Protected media, cross-origin media without CORS permission, and unusual page audio graphs may not expose audio; check the channel meter before going live. Chat overlays are visual sources.
 - Application/desktop loopback audio needs Windows build 20348 or newer. Camera/mic capture and the browser audio bridge do not use that process-loopback API. Avoid capturing the same game's audio both individually and via Desktop audio.
 
@@ -92,11 +94,13 @@ powershell -ExecutionPolicy Bypass -File native-qt/build-mixer.ps1 -Installer
 
 Portable executable: `native-qt/dist/desktop-studio-portable/desktop-studio.exe`.
 
-Archives and setup: `native-qt/dist/desktop-studio-0.7.0-windows-x64.zip` and `desktop-studio-0.7.0-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
+Archives and setup: `native-qt/dist/desktop-studio-0.7.1-windows-x64.zip` and `desktop-studio-0.7.1-setup.exe`. Setup installs under `%LOCALAPPDATA%/Programs/Desktop Studio`, includes Qt/VC runtime DLLs, creates Start menu shortcuts, and preserves shows/recordings on uninstall. It does not bundle WebView2 or modify firewall rules. These development packages are unsigned. `installer-mixer.nsi` is the current installer; `installer.nsi` remains the inherited machine-wide installer.
 
 The pinned SDK is fetched from NuGet; other native dependencies use CMake FetchContent. Downloaded dependencies, build outputs, local shows, and QA artifacts are excluded from Git.
 
 ## Validation and provenance
+
+[0.7.1 extended validation](docs/mixer-0.7.1-validation.md) covers the production endurance run, CPU readout, real NVDA workflows, hardware/compositor matrix, browser GPU/CPU failures, disk-space failures and concurrent MCP clients.
 
 [0.7.0 automation and accessibility validation](docs/mixer-0.7.0-validation.md) covers packaged CLI/MCP control, windowless screenshots and production, private RTMP/SRT/WHIP receivers, browser recovery, keyboard access, themes and language menus.
 

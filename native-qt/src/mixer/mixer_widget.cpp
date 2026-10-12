@@ -69,6 +69,15 @@ namespace {
 using Profile = app::detail::PerformanceTrace;
 constexpr int Width = 1280, Height = 720;
 QString newId() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
+void announce(QWidget *widget, const QString &text) {
+    if (!widget->isVisible() || !QAccessible::isActive() || text.isEmpty()) return;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    QAccessibleAnnouncementEvent event(widget, text);
+#else
+    QAccessibleEvent event(widget, QAccessible::NameChanged);
+#endif
+    QAccessible::updateAccessibility(&event);
+}
 int64_t now100ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count() / 100;
@@ -255,6 +264,7 @@ struct MixerWidget::Impl {
     // Bounded to Preview, Program and the outgoing transition scene.
     std::array<CompositionCache, 3> compositions;
     QImage lastProgram;
+    QString programRenderer = "pending", compositorError;
     QListWidget *sceneList = nullptr, *sourceList = nullptr;
     Canvas *previewView = nullptr, *programView = nullptr;
     QPointer<Canvas> outputView;
@@ -387,7 +397,6 @@ struct MixerWidget::Impl {
         const auto path = QFileDialog::getSaveFileName(q, "Record Program", QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)+"/Desktop Studio recording.mkv", "Matroska video (*.mkv)");
         if (path.isEmpty()) return;
         recorder.start(path.endsWith(".mkv", Qt::CaseInsensitive) ? path : path+".mkv", Width, Height, canvasFps);
-        recordingStatus->setText(recorder.status());
     }
     void updateModeUi() {
         audioBox->setMinimumWidth(340);
@@ -402,14 +411,7 @@ struct MixerWidget::Impl {
     void message(const QString &text) {
         if (status->text() == text) return;
         status->setText(text);
-        if (status->isVisible()) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
-            QAccessibleAnnouncementEvent event(status, text);
-#else
-            QAccessibleEvent event(status, QAccessible::NameChanged);
-#endif
-            QAccessible::updateAccessibility(&event);
-        }
+        announce(status, text);
     }
 
     void buildUi() {
@@ -507,6 +509,15 @@ struct MixerWidget::Impl {
         };
         shortcut(QKeySequence::Undo, [this] { undo(false); }); shortcut(QKeySequence::Redo, [this] { undo(true); });
         shortcut(QKeySequence("Ctrl+Shift+M"), [this] { if (auto item = source(selectedSource)) { item->muted = !item->muted; rebuildAudio(); changed(); } });
+        shortcut(QKeySequence("Ctrl+Shift+L"), [this] {
+            auto item = source(selectedSource);
+            const bool track = item && item->hasAudio();
+            const float peak = track ? item->peak.load() : masterPeak.load();
+            const auto value = peak >= 1 ? QString("Clipping") : peak <= .001f ? QString("Silent, below -60 dBFS") : QString::number(20*std::log10(peak), 'f', 1)+" dBFS";
+            const auto label = (track ? item->name : QString("Master"))+": "+value;
+            // Repeating the shortcut must speak again even if the value is stable.
+            announce(q, label);
+        });
         shortcut(QKeySequence("Ctrl+Return"), [this] { if (studioMode) takeScene(false); });
         for (int i = 0; i < 9; ++i) shortcut(QKeySequence(QString("Ctrl+%1").arg(i+1)), [this, i] {
             if (i < int(scenes.size())) sceneList->setCurrentRow(i);
@@ -871,6 +882,7 @@ struct MixerWidget::Impl {
             meters.emplace_back(item, meter);
             auto *controls = new QHBoxLayout;
             auto *gain = new QSlider(Qt::Horizontal, row); gain->setRange(0, 200); gain->setValue(qRound(item->gain*100));
+            gain->setObjectName("audio_gain_"+item->id);
             gain->setAccessibleName(item->name+" volume"); controls->addWidget(gain);
             auto *mute = new QCheckBox(studioText("Mute"), row); mute->setChecked(item->muted); controls->addWidget(mute);
             auto *follow = new QCheckBox(studioText("Scene"), row); follow->setChecked(item->followsScene); controls->addWidget(follow);
@@ -1056,7 +1068,8 @@ struct MixerWidget::Impl {
         QComboBox device; device.setObjectName("sourceDevice"); device.setMinimumWidth(400);
         QLineEdit value; value.setObjectName("sourceValue");
         QPushButton browse("Choose file / color");
-        QLabel help; help.setWordWrap(true);
+        QLabel help; help.setObjectName("sourceValidation"); help.setWordWrap(true);
+        auto validationError = [&](const QString &text) { help.setText(text); announce(&help, text); };
         QCheckBox transparent("Transparent overlay background (up to 15 fps)"); transparent.setObjectName("browserTransparency");
         QCheckBox colorMetadata("Preserve original video color metadata"); colorMetadata.setObjectName("browserColorMetadata");
         colorMetadata.setToolTip(studioText("Enable if a WebRTC source's colors look wrong. On affected WebView2 versions this may use software decoding and more CPU."));
@@ -1107,11 +1120,11 @@ struct MixerWidget::Impl {
         QObject::connect(&buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
         QObject::connect(&buttons, &QDialogButtonBox::accepted, &dialog, [&] {
             const auto kind = type.currentData().toString();
-            if (device.isVisible() && device.count() == 0) { help.setText(studioText("No source found. Connect a device or open a window first.")); return; }
-            if (transparent.isVisible() && !webUrl(value.text().trimmed())) { help.setText(studioText("Enter a complete http:// or https:// source URL.")); return; }
-            if (kind == "color" && !QColor(value.text()).isValid()) { help.setText(studioText("Enter a valid color, for example #24466f.")); return; }
-            if (kind == "media" && !QFileInfo(value.text()).isFile()) { help.setText(studioText("Choose an existing local media file.")); return; }
-            if (kind == "image" && !QImageReader(value.text()).canRead()) { help.setText(studioText("Choose a readable image file.")); return; }
+            if (device.isVisible() && device.count() == 0) { validationError(studioText("No source found. Connect a device or open a window first.")); return; }
+            if (transparent.isVisible() && !webUrl(value.text().trimmed())) { validationError(studioText("Enter a complete http:// or https:// source URL.")); return; }
+            if (kind == "color" && !QColor(value.text()).isValid()) { validationError(studioText("Enter a valid color, for example #24466f.")); return; }
+            if (kind == "media" && !QFileInfo(value.text()).isFile()) { validationError(studioText("Choose an existing local media file.")); return; }
+            if (kind == "image" && !QImageReader(value.text()).canRead()) { validationError(studioText("Choose a readable image file.")); return; }
             auto item = existing ? existing : std::make_shared<Source>();
             const auto locator = device.isVisible() ? device.currentData().toString() : value.text().trimmed();
             // Labels and audio delay do not change the capture session. Keeping it
@@ -1119,7 +1132,7 @@ struct MixerWidget::Impl {
             const bool restart = existing && (reconnect || kind != item->kind ||
                 locator != item->locator || transparent.isChecked() != item->transparent || colorMetadata.isChecked() != item->preserveColorMetadata);
             if (restart && device.isVisible() && device.currentData(Qt::UserRole+1).toBool()) {
-                help.setText(studioText("The saved device is unavailable. Select an available device to reconnect.")); return;
+                validationError(studioText("The saved device is unavailable. Select an available device to reconnect.")); return;
             }
             if (restart) { item->browserRestarts.clear(); stopSource(item); }
             item->kind = kind; item->transparent = transparent.isChecked();
@@ -1488,6 +1501,7 @@ struct MixerWidget::Impl {
             keys[0].target == QRectF(0, 0, Width, Height) &&
             keys[0].crop == QRectF(0,0,Width,Height) && frames[0].size() == QSize(Width, Height) && frames[0].format() == QImage::Format_RGB32) {
             cached = {scene.background, std::move(keys), frames[0]};
+            if (slot == 1) { programRenderer = "passthrough"; compositorError.clear(); }
             return cached.image;
         }
         if (renderer->currentIndex() == 0) {
@@ -1499,10 +1513,14 @@ struct MixerWidget::Impl {
                 layers.push_back({frames[i], keys[i].target, keys[i].crop, float(keys[i].opacity)});
             }
             auto image = gpu[slot].compose({Width, Height}, scene.background, layers);
-            if (!image.isNull()) { cached = {scene.background, std::move(keys), std::move(image)}; return cached.image; }
+            if (!image.isNull()) {
+                if (slot == 1) { programRenderer = "gpu"; compositorError.clear(); }
+                cached = {scene.background, std::move(keys), std::move(image)}; return cached.image;
+            }
             if (!gpu[slot].error().isEmpty()) message(gpu[slot].error());
         }
         QImage image(Width, Height, scene.background.alpha() == 255 ? QImage::Format_RGB32 : QImage::Format_ARGB32_Premultiplied);
+        if (slot == 1) { programRenderer = "cpu"; compositorError = renderer->currentIndex() == 0 ? gpu[slot].error() : QString(); }
         image.fill(scene.background);
         QPainter painter(&image); painter.setRenderHint(QPainter::SmoothPixmapTransform);
         for (size_t i = 0; i < keys.size(); ++i) {
@@ -1527,7 +1545,11 @@ struct MixerWidget::Impl {
         videoTimer.setInterval(std::max(1, int((nextRender-tick+9999)/10000)));
         recordOutput->setText(recorder.active() ? studioText("Stop recording") : studioText("Record..."));
         recordOutput->setAccessibleName(recordOutput->text());
-        recordingStatus->setText(recorder.status()); recordingStatus->setVisible(!recorder.status().isEmpty());
+        const auto recordingText = recorder.status();
+        if (recordingStatus->text() != recordingText) {
+            recordingStatus->setText(recordingText); recordingStatus->setVisible(!recordingText.isEmpty());
+            announce(recordingStatus, recordingText);
+        }
         canvasFormat->setEnabled(!core->isLive() && !recorder.busy() && !guestReturnEnabled->isChecked() && !virtualCamera->isChecked() && !spoutOutput->isChecked());
         recordOutput->setEnabled(!recorder.busy() || recorder.active());
         if (studioMode && previewView->isVisible()) {
@@ -1845,7 +1867,8 @@ QJsonObject MixerWidget::controlState() const {
         {"program_layers", layers(i.program)}, {"transitioning", i.fading},
         {"mode", i.studioMode ? "studio" : "single"}, {"layout", property("workspaceLayout").toString()},
         {"canvas", QJsonObject{{"width", i.Width}, {"height", i.Height}, {"fps", i.canvasFps},
-            {"format", i.canvasFormat->currentIndex()}, {"renderer", i.renderer->currentIndex() == 0 ? "gpu" : "cpu"}}},
+            {"format", i.canvasFormat->currentIndex()}, {"renderer", i.renderer->currentIndex() == 0 ? "gpu" : "cpu"},
+            {"active_renderer", i.programRenderer}, {"renderer_error", i.compositorError}}},
         {"recording", QJsonObject{{"active", i.recorder.active()}, {"busy", i.recorder.busy()},
             {"status", i.recorder.status()}, {"dropped_frames", qint64(i.recorder.dropped())}}},
         {"master_gain", i.masterGain.load()}, {"master_peak", i.masterPeak.load()}};

@@ -108,5 +108,8 @@
   "Layer opacity": "Opacité du calque",
   "Master volume": "Volume principal",
   "Headphone output device": "Périphérique casque",
-  "Headphone volume": "Volume du casque"
+  "Headphone volume": "Volume du casque",
+  "System: CPU - | RAM -": "Système : CPU - | RAM -",
+  "System: CPU %1 | RAM %2": "Système : CPU %1 | RAM %2",
+  "Total usage across all apps and processors. 100% means the entire system. Updates every second.": "Utilisation totale de toutes les applications et de tous les processeurs. 100 % correspond au système entier. Actualisation chaque seconde."
 }

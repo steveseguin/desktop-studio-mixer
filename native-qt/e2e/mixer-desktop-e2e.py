@@ -25,7 +25,13 @@ window = app.window(title='Desktop Studio - Powered by VDO.Ninja')
 
 def control(name, root=window):
     elements = root.descendants()
-    found = next(c for c in elements if (c.element_info.automation_id or '').endswith('.' + name))
+    # Qt rows can expose the object path while their view uses its accessible
+    # name as AutomationId. Resolve the owning view, not an arbitrary row.
+    list_name = {'sceneList':'Scenes', 'mixerSources':'Sources in selected scene'}.get(name)
+    found = (next(c for c in elements if c.element_info.control_type == 'List' and c.window_text() == list_name)
+             if list_name else next(c for c in elements if (c.element_info.automation_id or '').endswith('.' + name)))
+    if found.element_info.control_type in ('ListItem','TreeItem','DataItem'):
+        found = found.parent()
     # Real pointer/screenshot workflows must reveal controls in the workspace,
     # just as a user scrolls them into view on a smaller display. Layout checks
     # opt out while inspecting intentionally clipped viewport edges.

@@ -2,23 +2,31 @@
 
 #include <QElapsedTimer>
 #include <QPainter>
-#include <QProgressBar>
+#include <QWidget>
+#include <QAccessibleWidget>
+#include <QAccessibleValueInterface>
 #include <algorithm>
 #include <cmath>
 
 namespace versus::mixer {
-// Retain the accessible progress-bar role/value, expressed in dBFS rather than
-// linear amplitude. Painting is updated only when the visible reading changes.
-class AudioLevelMeter : public QProgressBar {
+inline QAccessibleInterface *audioMeterAccessibility(const QString &, QObject *);
+// A live level is an indicator, not task progress. Expose its value on demand
+// without sending a stream of progress events that makes screen readers beep.
+class AudioLevelMeter : public QWidget {
 public:
-    explicit AudioLevelMeter(QWidget *parent = nullptr) : QProgressBar(parent) {
-        setRange(-60, 0); setValue(-60); setTextVisible(false);
+    explicit AudioLevelMeter(QWidget *parent = nullptr) : QWidget(parent) {
+        static const bool installed = [] { QAccessible::installFactory(audioMeterAccessibility); return true; }();
+        (void)installed;
         setMinimumWidth(200); setFixedHeight(58);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         setToolTip("Peak level after volume and mute, in dBFS. White marker holds the peak for one second. "
                    "Green below -18 dBFS, amber above -18, red above -6. CLIP indicates a level at or above 0 dBFS.");
         clock_.start();
+        setAccessibleDescription("Peak audio level in dBFS, from -60 to 0. Use Ctrl+Shift+L to read the selected track or master level.");
     }
+
+    double level() const { return db_; }
+    QString reading() const { return clipped_ ? "Clipping" : db_ <= -60 ? "Silent, below -60 dBFS" : QString::number(db_, 'f', 1)+" dBFS"; }
 
     void setLevel(float amplitude) {
         const auto now = clock_.elapsed();
@@ -31,9 +39,7 @@ public:
         if (std::isfinite(amplitude) && amplitude >= 1.0f) clipUntil_ = now+2000;
         const bool clipped = now < clipUntil_;
         const bool changed = qRound(db*10) != qRound(db_*10) || qRound(previousHeld*10) != qRound(heldDb_*10) || clipped != clipped_;
-        if (clipped != clipped_) setAccessibleDescription(clipped ? "Clipping. Reduce this track's volume." : "Peak audio level in dBFS, from -60 to 0.");
         db_ = db; clipped_ = clipped;
-        setValue(qRound(db));
         if (changed) update();
     }
 
@@ -74,4 +80,29 @@ private:
     float db_ = -60, heldDb_ = -60;
     bool clipped_ = false;
 };
+
+class AudioMeterAccessible final : public QAccessibleWidget, public QAccessibleValueInterface {
+    AudioLevelMeter *meter() const { return static_cast<AudioLevelMeter*>(widget()); }
+public:
+    explicit AudioMeterAccessible(AudioLevelMeter *meter) : QAccessibleWidget(meter, QAccessible::Indicator) {}
+    QString text(QAccessible::Text kind) const override {
+        if (kind == QAccessible::Name) return QAccessibleWidget::text(kind)+": "+meter()->reading();
+        if (kind == QAccessible::Value) return meter()->reading();
+        return QAccessibleWidget::text(kind);
+    }
+    void *interface_cast(QAccessible::InterfaceType type) override {
+        if (type == QAccessible::ValueInterface) return static_cast<QAccessibleValueInterface*>(this);
+        return QAccessibleWidget::interface_cast(type);
+    }
+    QVariant currentValue() const override { return meter()->level(); }
+    QVariant minimumValue() const override { return -60.0; }
+    QVariant maximumValue() const override { return 0.0; }
+    QVariant minimumStepSize() const override { return 0.1; }
+    void setCurrentValue(const QVariant &) override {} // A read-only indicator.
+    QAccessible::State state() const override { auto s = QAccessibleWidget::state(); s.readOnly = true; return s; }
+};
+inline QAccessibleInterface *audioMeterAccessibility(const QString &, QObject *object) {
+    if (auto *meter = dynamic_cast<AudioLevelMeter*>(object)) return new AudioMeterAccessible(meter);
+    return nullptr;
+}
 } // namespace versus::mixer

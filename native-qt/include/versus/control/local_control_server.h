@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
+#include <QFutureWatcher>
 #include <QString>
 
 #include <functional>
@@ -46,6 +47,8 @@ class LocalControlServer : public QObject {
 
     void setDiagnosticsProvider(DiagnosticsProvider provider);
     void setWindowSourcesProvider(SourcesProvider provider);
+    // Camera/audio enumeration runs off the UI thread. Providers must own their
+    // dependencies and remain safe if a client disconnects or this server stops.
     void setCameraSourcesProvider(SourcesProvider provider);
     void setSpoutSourcesProvider(SourcesProvider provider);
     void setAudioInputSourcesProvider(SourcesProvider provider);
@@ -75,6 +78,7 @@ class LocalControlServer : public QObject {
     QByteArray healthJson() const;
     QByteArray schemaJson() const;
     QByteArray sourcesJson(const SourcesProvider &provider) const;
+    void sendDeviceSources(QTcpSocket *socket, const QString &kind, const SourcesProvider &provider);
     QByteArray recentLogJson(int maxLines) const;
     QByteArray issueReportJson(const QByteArray &requestBody);
     bool writeDiscoveryFile();
@@ -92,6 +96,7 @@ class LocalControlServer : public QObject {
     RefreshPeerTransportsCallback refreshPeerTransportsCallback_;
     StudioProvider studioProvider_;
     QHash<QTcpSocket*, QByteArray> buffers_;
+    QHash<QString, QFutureWatcher<QJsonArray>*> deviceScans_;
     bool discoveryFileWritten_ = false;
     QByteArray discoveryFileContents_;
 };

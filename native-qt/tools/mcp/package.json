@@ -1,6 +1,6 @@
 {
   "name": "video-mixer-mcp",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "type": "module",
   "description": "Local MCP controls for packaged Desktop Studio on Windows",

@@ -4,7 +4,7 @@ Unicode True
 !include "LogicLib.nsh"
 !include "x64.nsh"
 !ifndef VERSION
-!define VERSION "0.7.0"
+!define VERSION "0.7.1"
 !endif
 !ifndef BUILD_BIN_DIR
 !define BUILD_BIN_DIR "dist\desktop-studio-portable"

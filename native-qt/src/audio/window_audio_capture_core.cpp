@@ -559,13 +559,12 @@ void WindowAudioCaptureCore::StopCapture() {
     std::thread threadToJoin;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (capturing_.exchange(false)) {
-            if (stopEvent_) {
-                SetEvent(static_cast<HANDLE>(stopEvent_));
-            }
-            if (audioClient_) {
-                static_cast<IAudioClient *>(audioClient_)->Stop();
-            }
+        capturing_.store(false);
+        if (stopEvent_) {
+            SetEvent(static_cast<HANDLE>(stopEvent_));
+        }
+        if (audioClient_) {
+            static_cast<IAudioClient *>(audioClient_)->Stop();
         }
         if (captureThread_.joinable()) {
             threadToJoin = std::move(captureThread_);
@@ -1144,12 +1143,15 @@ void WindowAudioCaptureCore::CaptureLoop() {
     ScopedAudioRuntime apartment;
     HANDLE waitHandles[2] = {static_cast<HANDLE>(sampleReadyEvent_), static_cast<HANDLE>(stopEvent_)};
 
-    while (true) {
-        DWORD wait = WaitForMultipleObjects(2, waitHandles, FALSE, INFINITE);
+    while (capturing_.load()) {
+        // Unplugged endpoints can stop signaling without a final audio event.
+        // Probe once a second on this same capture thread so WASAPI reports
+        // invalidation and the isolated-source supervisor can reconnect.
+        DWORD wait = WaitForMultipleObjects(2, waitHandles, FALSE, 1000);
         if (wait == WAIT_OBJECT_0 + 1) {
             break;
         }
-        if (wait != WAIT_OBJECT_0) {
+        if (wait != WAIT_OBJECT_0 && wait != WAIT_TIMEOUT) {
             break;
         }
 
@@ -1157,7 +1159,12 @@ void WindowAudioCaptureCore::CaptureLoop() {
             UINT32 nextPacket = 0;
             auto *captureClient = static_cast<IAudioCaptureClient *>(captureClient_);
             HRESULT hr = captureClient->GetNextPacketSize(&nextPacket);
-            if (FAILED(hr) || nextPacket == 0) {
+            if (FAILED(hr)) {
+                spdlog::warn("[Audio] Capture endpoint stopped: 0x{:08X}", static_cast<uint32_t>(hr));
+                capturing_.store(false);
+                break;
+            }
+            if (nextPacket == 0) {
                 break;
             }
 
@@ -1167,6 +1174,8 @@ void WindowAudioCaptureCore::CaptureLoop() {
             UINT64 captureTime100ns = 0;
             hr = captureClient->GetBuffer(&data, &frameCount, &flags, nullptr, &captureTime100ns);
             if (FAILED(hr)) {
+                spdlog::warn("[Audio] Capture buffer failed: 0x{:08X}", static_cast<uint32_t>(hr));
+                capturing_.store(false);
                 break;
             }
             ScopedAudioCaptureBuffer releaseBuffer{captureClient, frameCount, true};
