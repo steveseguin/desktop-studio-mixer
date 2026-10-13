@@ -1,0 +1,24 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:08.300
+Build a show from scenes, live sources and overlays. Single-canvas edits go
+straight to output.
+
+00:00:08.300 --> 00:00:13.900
+Enable Studio mode: prepare the next scene in Preview while Program stays
+live.
+
+00:00:13.900 --> 00:00:22.100
+Fade takes the prepared scene to Program.
+
+00:00:22.100 --> 00:00:29.800
+Record Program independently using the same composed scene.
+
+00:00:29.800 --> 00:00:36.600
+Private break replaces Program with a slate while recording continues.
+
+00:00:36.600 --> 00:00:44.200
+Resume the show, then stop recording to finalize the file.
+
+00:00:44.200 --> 00:00:48.470
+Scenes, sources and the saved show remain ready for the next production.

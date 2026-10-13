@@ -1,0 +1,33 @@
+{
+  "video": "videos/desktop-studio-walkthrough.mp4",
+  "chapters": [
+    {
+      "seconds": 0.0,
+      "text": "Build a show from scenes, live sources and overlays. Single-canvas edits go straight to output."
+    },
+    {
+      "seconds": 8.3,
+      "text": "Enable Studio mode: prepare the next scene in Preview while Program stays live."
+    },
+    {
+      "seconds": 13.9,
+      "text": "Fade takes the prepared scene to Program."
+    },
+    {
+      "seconds": 22.1,
+      "text": "Record Program independently using the same composed scene."
+    },
+    {
+      "seconds": 29.8,
+      "text": "Private break replaces Program with a slate while recording continues."
+    },
+    {
+      "seconds": 36.6,
+      "text": "Resume the show, then stop recording to finalize the file."
+    },
+    {
+      "seconds": 44.2,
+      "text": "Scenes, sources and the saved show remain ready for the next production."
+    }
+  ]
+}

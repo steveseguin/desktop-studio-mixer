@@ -1,5 +1,7 @@
 # Desktop Studio
 
+[Screenshots and demo videos](media-assets/README.md) | [Machine-readable media manifest](media-assets/manifest.json)
+
 A native Windows production studio for scenes, sources, audio mixing and live output. **Desktop Studio** complements Web Studio and Web Mixer. It is based on [Game Capture](https://github.com/steveseguin/game-capture), with its own executable, settings, installer identity, browser profiles, logs, and update feed.
 
 Development version: **0.9.0**. Fork baseline: `a76d44feaf01ad228aa99ed35531454be6fe1b4b` (Game Capture 0.2.62). The original project is independent and unchanged.
