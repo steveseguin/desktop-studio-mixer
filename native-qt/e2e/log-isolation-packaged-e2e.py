@@ -22,6 +22,8 @@ def main():
     run.mkdir(parents=True)
     processes = []
     results = []
+    user_show = Path(os.environ['LOCALAPPDATA']) / 'VideoMixer/studio.mixer.json'
+    original_show_hash = hashlib.sha256(user_show.read_bytes()).hexdigest() if user_show.exists() else None
 
     def request(control, path, body=None):
         req = Request(control['base_url'] + path,
@@ -34,7 +36,8 @@ def main():
     def start():
         discovery = run / f'control-{len(processes)}.json'
         process = subprocess.Popen(
-            [str(publisher), '--local-control', f'--local-control-discovery={discovery}'],
+            [str(publisher), '--local-control', f'--local-control-discovery={discovery}',
+             f'--studio-show={run / ("show-" + str(len(processes)) + ".mixer.json")}'],
             env=dict(os.environ, LOCALAPPDATA=str(run)),
             creationflags=subprocess.CREATE_NO_WINDOW)
         processes.append((process, None))
@@ -83,6 +86,16 @@ def main():
         still_second = request(second, '/logs/recent?lines=2000')
         record('remaining-publisher-log-preserved',
                all(line in still_second['lines'] for line in second_logs['lines']))
+        request(second, '/commands', {'command': 'quit'})
+        processes[1][0].wait(timeout=10)
+        fourth = start()
+        fourth_logs = request(fourth, '/logs/recent?lines=2000')
+        record('concurrent-instance-slot-reused', fourth_logs['path'] == second_logs['path'])
+        previous = Path(fourth_logs['path'])
+        previous = previous.with_name(previous.stem + '.1' + previous.suffix)
+        archived = previous.read_text(encoding='utf-8')
+        record('concurrent-instance-previous-session-retained',
+               all(line in archived for line in second_logs['lines']))
     finally:
         for process, control in processes:
             if process.poll() is None:
@@ -94,6 +107,8 @@ def main():
                     if process.poll() is None:
                         process.kill()
                         process.wait(timeout=5)
+        record('default-user-show-unchanged',
+               (hashlib.sha256(user_show.read_bytes()).hexdigest() if user_show.exists() else None) == original_show_hash)
         (run / 'results.json').write_text(json.dumps(dict(
             publisher=str(publisher), sha256=hashlib.sha256(publisher.read_bytes()).hexdigest(),
             results=results), indent=2), encoding='utf-8')

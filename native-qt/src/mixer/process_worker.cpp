@@ -22,6 +22,7 @@
 #include <mmsystem.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <utility>
 #include <cmath>
@@ -136,6 +137,14 @@ struct ProcessWorker::Impl {
     size_t committedBlob = 0;
     QString error;
     QString kind;
+    std::atomic_bool failureLogged{false};
+    void logFailure(const char *reason, DWORD code) {
+        // One record per failed worker, even when video/audio/status readers
+        // notice it together. Never include the source URL or command payload.
+        if (!failureLogged.exchange(true))
+            spdlog::warn("[Worker] kind={} pid={} reason={} code={}",
+                         kind.toStdString(), process ? GetProcessId(process) : 0, reason, code);
+    }
     ~Impl() {
         // Closing the job also removes orphaned FFmpeg/WebView2 descendants.
         if (browserBudget) browserBudget->remove(job);
@@ -158,8 +167,20 @@ QJsonObject ProcessWorker::browserBudgetState() {
     }
     return state;
 }
-bool ProcessWorker::alive() const { return impl_->process && WaitForSingleObject(impl_->process, 0) == WAIT_TIMEOUT; }
-void ProcessWorker::terminate() { if (impl_->job) TerminateJobObject(impl_->job, 1); }
+bool ProcessWorker::alive() const {
+    auto &s = *impl_;
+    if (!s.process) return false;
+    if (WaitForSingleObject(s.process, 0) == WAIT_TIMEOUT) return true;
+    DWORD code = 0;
+    if (GetExitCodeProcess(s.process, &code) && code) s.logFailure("unexpected-exit", code);
+    return false;
+}
+void ProcessWorker::terminate() {
+    if (impl_->job) {
+        impl_->logFailure("forced-termination", 1);
+        TerminateJobObject(impl_->job, 1);
+    }
+}
 QString ProcessWorker::error() const { return impl_->error; }
 bool ProcessWorker::start(const QString &kind) {
     stop(); impl_ = std::make_unique<Impl>(); auto &s = *impl_;
@@ -237,7 +258,9 @@ bool ProcessWorker::start(const QString &kind) {
     if (s.browserBudget && !s.browserBudget->add(s.job)) { TerminateProcess(s.process,1); CloseHandle(process.hThread); s.error = "Could not balance browser resource limits."; return false; }
     ResumeThread(process.hThread); CloseHandle(process.hThread);
     const HANDLE waits[]{s.response, s.process};
-    if (WaitForMultipleObjects(2, waits, FALSE, 15000) != WAIT_OBJECT_0) { s.error = "Worker did not start."; TerminateJobObject(s.job, 1); return false; }
+    const auto startupWait = WaitForMultipleObjects(2, waits, FALSE, 15000);
+    if (startupWait != WAIT_OBJECT_0) { s.error = "Worker did not start."; s.logFailure("startup-wait-failed", startupWait); TerminateJobObject(s.job, 1); return false; }
+    spdlog::debug("[Worker] Started kind={} pid={}", kind.toStdString(), process.dwProcessId);
     return true;
 }
 QJsonObject ProcessWorker::call(const QJsonObject &command, const void *data, size_t size, QByteArray *reply, int timeoutMs) {
@@ -252,8 +275,10 @@ QJsonObject ProcessWorker::call(const QJsonObject &command, const void *data, si
     s.shared->inputSize = uint32_t(size); s.shared->outputSize = 0;
     SetEvent(s.request);
     const HANDLE waits[]{s.response, s.process};
-    if (WaitForMultipleObjects(2, waits, FALSE, DWORD(timeoutMs)) != WAIT_OBJECT_0) {
+    const auto callWait = WaitForMultipleObjects(2, waits, FALSE, DWORD(timeoutMs));
+    if (callWait != WAIT_OBJECT_0) {
         s.error = "Isolated worker stopped or became unresponsive.";
+        s.logFailure("request-wait-failed", callWait);
         TerminateJobObject(s.job, 1); return {{"ok", false}, {"error", s.error}};
     }
     const auto outputSize = s.shared->outputSize;

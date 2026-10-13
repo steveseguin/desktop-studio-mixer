@@ -189,3 +189,114 @@ Reproduction: `mixer-crash-timing-e2e.py`, `mixer-export-failure-e2e.py`,
 MKV; `STUDIO_COMBINED_SECONDS` and `STUDIO_COMBINED_FORMAT` control the bounded
 combined workload. `STUDIO_CRASH_AGES` selects crash timings and
 `STUDIO_CRASH_DURING_STOP=1` exercises interrupted finalization.
+
+## Fault quality and diagnostic retention
+
+The next pass uses private evidence under
+`native-qt/e2e/reports/studio-090-fault-quality/`. It adds two packaged-app
+workflows, `mixer-diagnostics-fault-e2e.py` and `mixer-fault-quality-e2e.py`.
+
+Review found that restarting truncated the main diagnostic log, and repeated
+concurrent instances accumulated UUID-named logs. Logs now rotate on startup
+and at 5 MiB, keeping three archives per independently locked instance slot.
+Slots are reused after their owner exits. Native crash reports also preserve
+the last log beside the JSON/minidump. The exception handler no longer enters
+the logger, whose mutex could belong to the faulting thread. Worker starts and
+failures now identify the component and PID; failures are logged once per
+worker without source URLs or command payloads.
+
+The diagnostics workflow records moving video and a known audio tone, then
+injects an actual unhandled access violation into its owned packaged process.
+It verifies the exception code, JSON, minidump, crash-log snapshot, complete
+decode of the interrupted MKV, descendant cleanup, and a fresh recording after
+restart. Five further launches rotate near-limit closed logs while checking
+that the crash snapshot remains unchanged. A synthetic publishing credential
+must be absent from logs and the issue report. Blocking the log directory with
+a regular file must still allow launching, recording and decoding media.
+These checks do not establish that crash dumps contain no private process data.
+
+The quality workflow records Program plus separate media/browser audio tracks
+while publishing hardware-encoded RTMP through a private loopback proxy. Its
+moving source contains binary frame numbers and audio pulses whose frequencies
+identify their matching source second. Analysis uses decoded video/audio PTS
+and source identities, measuring repeated and skipped source pictures as well
+as container timing; it cannot mistake a neighboring one-second pulse for the
+correct sync match. It exercises 24 busy JavaScript workers, browser process
+termination, browser suspension, 35 seconds at approximately 256 kbit/s,
+bandwidth restoration without a fixture socket reset, publisher termination,
+and simultaneous browser termination/publisher suspension. Each fault must
+leave the independent media worker and recording alive. Received clips are
+decoded and checked against a current Program screenshot for stale backlog.
+
+The initial quality run on executable
+`519dc0a43ae4b33dc9ca1774041803124d594265fafb47cbd3d99b6c9ee2018f`
+recorded 6,699 video frames at 30.001 fps. Local maximum A/V offset was 26 ms;
+the maximum timestamp gap was 58 ms and the longest repeated picture was
+92 ms. Four receiver clips decoded with maximum measured offsets of 19.5 to
+36.2 ms. Recording drops stayed at the startup count of 13, browser audio was
+present before/after recovery, and the unaffected media worker never restarted.
+API p95/maximum was 27.6/38.6 ms. Total private memory peaked at 940.9 MiB
+during deliberate browser overload and fell after the browser was replaced.
+This is a short containment measurement, not a long-term leak clearance.
+
+Process CPU samples in that run attributed about 0.12 logical cores to the
+main app at baseline and 0.21 during the busy-browser interval. The browser
+runtime used approximately four logical cores during intentional overload,
+consistent with its existing per-source budget. Both hardware encoders together
+used approximately 0.29/0.32 cores. These are observations of this workload,
+not an optimization benchmark or a promise for other machines. Newly started
+processes contribute only after their first sample.
+
+The harness initially supplied an unsupported RTSP `rw_timeout` input option;
+using the RTSP-specific `timeout` option allowed the complete run. The first
+diagnostics attempt expected HTTP 200 for issue-report creation; the API
+correctly returned 201. Both fixture mistakes were corrected before the
+successful runs above.
+
+The final executable adds the worker failure records:
+`caf831dd7a2bb24b17f7d44610cadabcc02ea4b5f233b2a2ae1a22af7d30a4b3`.
+Its repeated quality run recorded 6,711 frames at 29.999 fps. Program and the
+separate clock audio track independently measured 15 ms p95 and 17 ms maximum
+absolute A/V offset, with no unmatched pulses. The largest timestamp gap was
+52 ms, and the longest repeated picture was 78 ms. There were 17 repeated and
+14 skipped source pictures in the measured interval, so this is not a claim
+of zero picture loss. Recording queue drops remained at the startup count of
+nine throughout all faults. Four received clips decoded with maximum A/V
+offsets of 15.2-27 ms. Their last pictures were 200-233 ms behind the current
+Program screenshot; the restored stream was not playing a growing old backlog.
+
+API p95/maximum was 26.9/31.9 ms. The main process averaged 0.21 logical cores
+both at baseline and during browser CPU pressure; the deliberately busy browser
+runtime averaged 3.99 cores. Total private memory was 634.6 MiB initially,
+peaked at 940.3 MiB, and ended at 647.2 MiB. At the half-second sampling cadence,
+replacement browser processes first appeared after 2.14 seconds for termination
+and 12.45 seconds for suspension. A publisher replacement appeared after
+1.09 seconds for termination; during the simultaneous fault, browser/publisher
+replacements appeared after 2.20/5.45 seconds. These are process-replacement
+observations, not first-decoded-frame recovery latencies. The failure log
+contained exactly the five injected worker failures, with component, PID and
+reason; it did not repeat warnings on every media/status poll.
+
+The final executable also passed the access-violation/recording/rotation/log
+failure workflow again. Concurrent visible instances retained separate logs,
+reused released default and secondary slots, and archived the secondary
+instance's preceding session. That older fixture first tried opening the same
+show in both instances; the app correctly refused the second open. Giving each
+instance its own show completed the intended log-isolation workflow. Opening
+the default show in that old fixture had also serialized newer default fields;
+cleanup detected the changed hash and restored the exact original bytes from
+the app's verified backup. The fixture now explicitly selects separate shows
+and checks the user's default-show hash. User preferences were restored
+byte-for-byte, and the original Game Capture checkout was unchanged. A fresh
+installation passed CLI/MCP control, portrait screenshots during recording,
+media decode and uninstall. Portable, ZIP and installed executable hashes
+matched, and owned children exited. Build, native crash-reporter and whitespace
+checks are gates; the packaged workflows above are the actual testing.
+
+The next production checks should prioritize long repeated-failure rehearsals
+with memory/handle/GPU-memory trends; SRT/WHIP/guest packet loss, reordering and
+variable delay; long-run physical lip-sync across independent device clocks;
+slow/disconnected/network storage; and real GPU/device/reset, sleep and RDP
+transitions. Maximum retained crash-artifact storage, worker minidumps and
+broader secret-redaction cases also remain follow-up work. The clean-machine
+check remains deferred. No software fault injection proves power-loss safety.

@@ -104,7 +104,8 @@ void writeTextFile(const std::filesystem::path &path,
                    EXCEPTION_POINTERS *exceptionPointers,
                    const std::string &message,
                    const std::filesystem::path &dumpPath,
-                   bool dumpWritten) {
+                   bool dumpWritten,
+                   const std::filesystem::path &logSnapshotPath) {
     try {
         std::ofstream out(path, std::ios::out | std::ios::trunc);
         if (!out) {
@@ -120,6 +121,7 @@ void writeTextFile(const std::filesystem::path &path,
         out << "  \"thread_id\": " << threadId << ",\n";
         out << "  \"app_version\": \"" << jsonEscape(crashState().appVersion) << "\",\n";
         out << "  \"log_path\": \"" << jsonEscape(crashState().logPath) << "\",\n";
+        out << "  \"log_snapshot_path\": \"" << jsonEscape(logSnapshotPath.string()) << "\",\n";
         out << "  \"dump_path\": \"" << jsonEscape(dumpPath.string()) << "\",\n";
         out << "  \"dump_written\": " << (dumpWritten ? "true" : "false");
         if (!message.empty()) {
@@ -189,20 +191,17 @@ void writeCrashReport(const char *reason, EXCEPTION_POINTERS *exceptionPointers,
         reportPath = state.crashDirectory / (baseName + ".json");
         dumpPath = state.crashDirectory / (baseName + ".dmp");
         dumpWritten = writeMiniDump(dumpPath, exceptionPointers);
-        writeTextFile(reportPath, reason, exceptionPointers, message, dumpPath, dumpWritten);
-    } catch (...) {
-    }
-
-    try {
-        spdlog::critical(
-            "[CrashReporter] Captured crash reason={} dumpWritten={} report={} dump={}",
-            reason ? reason : "unknown",
-            dumpWritten,
-            reportPath.string(),
-            dumpPath.string());
-        if (auto logger = spdlog::default_logger()) {
-            logger->flush();
+        // Preserve the last bounded log even after the user relaunches several
+        // times. Avoid entering the logger here: the faulting thread may own
+        // its mutex. Normal logging already flushes each message.
+        std::filesystem::path logSnapshotPath;
+        if (!state.logPath.empty()) {
+            std::error_code ec;
+            const auto snapshot = state.crashDirectory / (baseName + ".log");
+            if (std::filesystem::copy_file(state.logPath, snapshot,
+                    std::filesystem::copy_options::none, ec)) logSnapshotPath = snapshot;
         }
+        writeTextFile(reportPath, reason, exceptionPointers, message, dumpPath, dumpWritten, logSnapshotPath);
     } catch (...) {
     }
 }

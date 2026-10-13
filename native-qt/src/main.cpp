@@ -29,10 +29,11 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <vector>
 
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/basic_file_sink.h>
+#include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_sinks.h>
 #include <rtc/rtc.hpp>
 
@@ -509,20 +510,27 @@ int main(int argc, char *argv[]) {
 
     // Set up logging - console for headless, file otherwise
     std::string logPath = resolveLogFilePath();
-    // Preserve the conventional log name for the first publisher. Other
-    // publishers must not truncate or mix records into its active log.
-    QLockFile logLock(QString::fromStdString(logPath) + ".lock");
-    logLock.setStaleLockTime(0); // Held for the process lifetime, not a short write.
-    if (!logLock.tryLock(0)) {
-        const std::filesystem::path defaultPath(logPath);
-        const std::string uniqueName = defaultPath.stem().string() + '-' +
-            QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString() +
-            defaultPath.extension().string();
-        logPath = (defaultPath.parent_path() / uniqueName).string();
+    // Reuse independently locked slots so concurrent instances keep separate
+    // bounded logs without accumulating a new UUID filename on every launch.
+    const std::filesystem::path defaultLogPath(logPath);
+    std::unique_ptr<QLockFile> logLock;
+    for (unsigned slot = 0;; ++slot) {
+        const auto name = defaultLogPath.stem().string() +
+            (slot ? "-instance-" + std::to_string(slot) : "") +
+            defaultLogPath.extension().string();
+        logPath = (defaultLogPath.parent_path() / name).string();
+        logLock = std::make_unique<QLockFile>(QString::fromStdString(logPath) + ".lock");
+        logLock->setStaleLockTime(0);
+        if (logLock->tryLock(0)) break;
+        if (logLock->error() != QLockFile::LockFailedError) break;
     }
     try {
         std::vector<spdlog::sink_ptr> sinks;
-        sinks.push_back(std::make_shared<spdlog::sinks::basic_file_sink_mt>(logPath, true));
+        if (!logLock->isLocked()) throw std::runtime_error("Could not lock diagnostic log");
+        // Keep the previous session, including abrupt exits, and cap each
+        // instance at 5 MiB per file plus three archives. Rotate on startup.
+        sinks.push_back(std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+            logPath, 5 * 1024 * 1024, 3, true));
         if (headless) {
             sinks.push_back(std::make_shared<spdlog::sinks::stdout_sink_mt>());
         }
