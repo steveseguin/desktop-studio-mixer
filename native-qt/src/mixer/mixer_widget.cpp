@@ -936,7 +936,7 @@ struct MixerWidget::Impl {
             auto *onTake = new QCheckBox(studioText("Restart when this source enters Program"),&dialog); onTake->setObjectName("mediaRestartOnTake"); onTake->setChecked(item->mediaRestartOnTake); layout->addWidget(onTake);
             onTake->setToolTip(studioText("Start from the beginning when the source changes from off-screen to visible in Program. Shared sources that remain visible keep playing."));
             QObject::connect(onTake,&QCheckBox::toggled,&dialog,[this,item](bool value) { item->mediaRestartOnTake = value; changed(); });
-            auto *timeLabel = new QLabel(&dialog); timeLabel->setObjectName("mediaTime"); layout->addWidget(timeLabel);
+            auto *timeLabel = new QLabel(&dialog); timeLabel->setObjectName("mediaTime"); timeLabel->setWordWrap(true); layout->addWidget(timeLabel);
             auto *seek = new QSlider(Qt::Horizontal,&dialog); seek->setObjectName("mediaSeek"); seek->setAccessibleName(studioText("Playback position"));
             seek->setRange(0,int(std::min<int64_t>(INT_MAX,item->media->durationMs()))); seek->setSingleStep(1000); seek->setPageStep(5000); layout->addWidget(seek);
             seek->setToolTip(studioText("Seek within the clip. A paused video shows the picture at the new position without resuming audio."));
@@ -945,7 +945,11 @@ struct MixerWidget::Impl {
             QObject::connect(seek,&QSlider::valueChanged,&dialog,[item,seek,&cueIdle](int value) { cueIdle.restart(); if (!seek->isSliderDown() && item->media) item->media->seek(value); });
             QTimer clock; QObject::connect(&clock,&QTimer::timeout,&dialog,[item,timeLabel,seek,&cueIdle] {
                 if (item->media) {
-                    timeLabel->setText(QString("%1 / %2 s  (%3 s remaining)").arg(item->media->positionMs()/1000.0,0,'f',1).arg(item->media->durationMs()/1000.0,0,'f',1).arg(std::max<int64_t>(0,item->media->durationMs()-item->media->positionMs())/1000.0,0,'f',1));
+                    const bool durationKnown = item->media->durationMs() > 0;
+                    seek->setEnabled(durationKnown);
+                    if (durationKnown) timeLabel->setText(QString("%1 / %2 s  (%3 s remaining)").arg(item->media->positionMs()/1000.0,0,'f',1).arg(item->media->durationMs()/1000.0,0,'f',1).arg(std::max<int64_t>(0,item->media->durationMs()-item->media->positionMs())/1000.0,0,'f',1));
+                    else timeLabel->setText(QString("%1 s - duration unavailable.").arg(item->media->positionMs()/1000.0,0,'f',1) +
+                        (item->locator.endsWith(".mkv", Qt::CaseInsensitive) ? "\nTo restore seeking for an interrupted recording, use Recordings > Export recording as MP4..." : ""));
                     // Worker position reports trail input. Do not overwrite a
                     // keyboard repeat or rapid clicks with an older cue.
                     if (!seek->isSliderDown() && (!cueIdle.isValid() || cueIdle.elapsed()>=500)) { const QSignalBlocker block(seek); seek->setMaximum(int(std::min<int64_t>(INT_MAX,item->media->durationMs()))); seek->setValue(int(item->media->positionMs())); }

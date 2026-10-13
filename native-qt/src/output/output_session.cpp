@@ -387,7 +387,10 @@ struct Session::Impl {
             else args << "-an";
             args << "-max_interleave_delta" << "100000" << "-flush_packets" << "1" << "-stats_period" << "0.5"
                  << "-progress" << "pipe:1" << "-rw_timeout" << "5000000";
-            if (config.protocol == Protocol::Recording) args << "-n" << "-f" << "matroska";
+            // Flush short MKV clusters so an abrupt app/writer exit does not
+            // discard an entire GOP still buffered inside the muxer. This is
+            // not an fsync/power-loss guarantee; the OS still caches disk I/O.
+            if (config.protocol == Protocol::Recording) args << "-n" << "-f" << "matroska" << "-cluster_time_limit" << "250";
             else if (config.protocol == Protocol::Srt) args << "-f" << "mpegts" << "-mpegts_flags" << "+resend_headers" << "-muxdelay" << "0" << "-muxpreload" << "0";
             else {
                 args << "-f" << "flv" << "-flvflags" << "no_duration_filesize";
