@@ -2,7 +2,7 @@
 
 Real screenshots and recordings of **Desktop Studio 0.9.0**, captured on Windows on **2026-10-13**. Build a show, stage Preview separately from Program, fade between scenes, record, and use Private break.
 
-For AI assistants and applications: start with [manifest.json](manifest.json). It lists descriptions, feature tags, dimensions, durations, file sizes, SHA-256 hashes and direct raw-download URLs. [walkthrough.json](walkthrough.json) provides timestamped descriptions. Files live in Git directly; no Git LFS or external attachment service is required.
+For AI assistants and applications: start with [manifest.json](manifest.json). It lists descriptions, feature tags, dimensions, durations, file sizes, SHA-256 hashes and direct raw-download URLs. [walkthrough.json](walkthrough.json) provides timestamped descriptions. Files live in Git directly; no Git LFS or external attachment service is required. The manifest also provides GitHub Contents API URLs for authenticated integrations. **This repository is private: AI tools and apps need authorized repository access. Anonymous raw links return 404.** Request a Contents API URL with `Accept: application/vnd.github.raw+json` to download the file using your GitHub authentication.
 
 ## Videos
 

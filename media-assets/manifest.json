@@ -35,7 +35,8 @@
       "height": 903,
       "bytes": 56069,
       "sha256": "0e97660d89c2eab86df7666b6282553e4699cff036976db6a9678dd9a5ff5dd3",
-      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/screenshots/01-single-canvas.png"
+      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/screenshots/01-single-canvas.png",
+      "contents_api_url": "https://api.github.com/repos/steveseguin/video-mixer/contents/media-assets/screenshots/01-single-canvas.png?ref=main"
     },
     {
       "path": "screenshots/02-preview-and-program.png",
@@ -53,7 +54,8 @@
       "height": 903,
       "bytes": 117906,
       "sha256": "e54ed9166bc11eb8dfe195c60dcd8d71ca40d926b1001ed76dde251edf7202d3",
-      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/screenshots/02-preview-and-program.png"
+      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/screenshots/02-preview-and-program.png",
+      "contents_api_url": "https://api.github.com/repos/steveseguin/video-mixer/contents/media-assets/screenshots/02-preview-and-program.png?ref=main"
     },
     {
       "path": "screenshots/03-recording-program.png",
@@ -69,7 +71,8 @@
       "height": 903,
       "bytes": 116146,
       "sha256": "26b51275d48c6d5e720a5ef9e37fdd6eac3248da4fe8202906530a962589dfa2",
-      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/screenshots/03-recording-program.png"
+      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/screenshots/03-recording-program.png",
+      "contents_api_url": "https://api.github.com/repos/steveseguin/video-mixer/contents/media-assets/screenshots/03-recording-program.png?ref=main"
     },
     {
       "path": "screenshots/04-private-break.png",
@@ -86,7 +89,8 @@
       "height": 903,
       "bytes": 117104,
       "sha256": "8d92c99dd7cb04d0e064cddf9334ac585578bc8b5612e8ccc856aeda438f163a",
-      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/screenshots/04-private-break.png"
+      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/screenshots/04-private-break.png",
+      "contents_api_url": "https://api.github.com/repos/steveseguin/video-mixer/contents/media-assets/screenshots/04-private-break.png?ref=main"
     },
     {
       "path": "screenshots/05-show-ready.png",
@@ -102,7 +106,8 @@
       "height": 903,
       "bytes": 114584,
       "sha256": "ee0b376f6caaeb16f88d19875a145261c39ae1a29e1cac4259937eae1779a2fd",
-      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/screenshots/05-show-ready.png"
+      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/screenshots/05-show-ready.png",
+      "contents_api_url": "https://api.github.com/repos/steveseguin/video-mixer/contents/media-assets/screenshots/05-show-ready.png?ref=main"
     },
     {
       "path": "videos/desktop-studio-walkthrough.mp4",
@@ -120,7 +125,8 @@
       "chapters": "walkthrough.json",
       "bytes": 1243714,
       "sha256": "b8e07ac3b47633f8602283ea92d2eeadfa25a08a0442e5d67c42f597bc9c8fd9",
-      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/videos/desktop-studio-walkthrough.mp4"
+      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/videos/desktop-studio-walkthrough.mp4",
+      "contents_api_url": "https://api.github.com/repos/steveseguin/video-mixer/contents/media-assets/videos/desktop-studio-walkthrough.mp4?ref=main"
     },
     {
       "path": "videos/program-recording-sample.mp4",
@@ -136,7 +142,8 @@
       "decode_validation": "Full video/audio decode completed without errors.",
       "bytes": 1676131,
       "sha256": "42f8484d24d9f0792b553d244ee803ba175bbc621d0aeadfee78e32985605bf8",
-      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/videos/program-recording-sample.mp4"
+      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/videos/program-recording-sample.mp4",
+      "contents_api_url": "https://api.github.com/repos/steveseguin/video-mixer/contents/media-assets/videos/program-recording-sample.mp4?ref=main"
     },
     {
       "path": "videos/desktop-studio-walkthrough.vtt",
@@ -145,7 +152,8 @@
       "title": "English walkthrough captions",
       "bytes": 705,
       "sha256": "a3e9555cfc2a164f6cfc80df388236d06de937625a6e868f4f7a0a8f43585c71",
-      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/videos/desktop-studio-walkthrough.vtt"
+      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/videos/desktop-studio-walkthrough.vtt",
+      "contents_api_url": "https://api.github.com/repos/steveseguin/video-mixer/contents/media-assets/videos/desktop-studio-walkthrough.vtt?ref=main"
     },
     {
       "path": "walkthrough.json",
@@ -154,7 +162,8 @@
       "title": "Timestamped walkthrough transcript",
       "bytes": 918,
       "sha256": "74624c6a7f854abf6b951b472673634d63417cecdddbc0f20f5dd7d419cf21c4",
-      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/walkthrough.json"
+      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/walkthrough.json",
+      "contents_api_url": "https://api.github.com/repos/steveseguin/video-mixer/contents/media-assets/walkthrough.json?ref=main"
     },
     {
       "path": "fixtures/neon-orbit.html",
@@ -163,7 +172,10 @@
       "title": "Local animated demo source",
       "bytes": 2786,
       "sha256": "beb8be7dd322bfefb1cd279b7bcb0f1286ee607e6ab04db15c44f580eb4a32c9",
-      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/fixtures/neon-orbit.html"
+      "raw_url": "https://raw.githubusercontent.com/steveseguin/video-mixer/main/media-assets/fixtures/neon-orbit.html",
+      "contents_api_url": "https://api.github.com/repos/steveseguin/video-mixer/contents/media-assets/fixtures/neon-orbit.html?ref=main"
     }
-  ]
+  ],
+  "repository_visibility_at_capture": "private",
+  "download_access": "This repository is private. Use repository-authorized GitHub access with contents_api_url and Accept: application/vnd.github.raw+json. Conventional raw_url values are not anonymously accessible."
 }
