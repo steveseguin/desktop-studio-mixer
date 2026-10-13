@@ -121,7 +121,7 @@ struct SceneAudioRoute {
     }
 };
 struct Source {
-    QString id = newId(), name, kind, locator, invite, error;
+    QString id = newId(), name, kind, locator, invite, error, browserStatusMessage;
     QColor color{"#183657"};
     std::mutex imageMutex, audioMutex;
     QImage image;
@@ -1634,15 +1634,25 @@ struct MixerWidget::Impl {
                     } else { item->browserRestarts.push_back(now); startSource(item); }
                 }
             }, Qt::QueuedConnection);
-            QObject::connect(item->browser, &BrowserSource::recovered, q, [weak] { if (auto item = weak.lock()) item->error.clear(); });
-            QObject::connect(item->browser, &BrowserSource::frameReady, q, [weak](const QImage &image) {
-                if (auto item = weak.lock()) { std::lock_guard lock(item->imageMutex); item->image = image; item->lastFrame = now100ns(); ++item->frames; }
+            QObject::connect(item->browser, &BrowserSource::recovered, q, [weak, valid] { if (auto item = weak.lock(); item && *valid) item->error.clear(); });
+            QObject::connect(item->browser, &BrowserSource::frameReady, q, [this, weak, valid](const QImage &image) {
+                if (auto item = weak.lock(); item && *valid) {
+                    { std::lock_guard lock(item->imageMutex); item->image = image; item->lastFrame = now100ns(); ++item->frames; }
+                    // A replacement proxy starts with no error, so it need not
+                    // emit recovered(). Retire its previous warning when usable
+                    // pictures return, without overwriting a later user message.
+                    if (item->error.isEmpty() && !item->browserStatusMessage.isEmpty()) {
+                        if (status->text() == item->browserStatusMessage) message(item->name+": Browser video resumed.");
+                        item->browserStatusMessage.clear();
+                    }
+                }
             });
-            QObject::connect(item->browser, &BrowserSource::errorOccurred, q, [this, weak](const QString &message) {
-                if (auto item = weak.lock()) {
+            QObject::connect(item->browser, &BrowserSource::errorOccurred, q, [this, weak, valid](const QString &message) {
+                if (auto item = weak.lock(); item && *valid) {
                     item->error = message;
                     { std::lock_guard lock(item->imageMutex); item->image = {}; }
-                    this->message(item->name+": "+message);
+                    item->browserStatusMessage = item->name+": "+message;
+                    this->message(item->browserStatusMessage);
                 }
             });
             QObject::connect(item->browser, &BrowserSource::audioReady, q, [weak, audioChunk](const QByteArray &pcm, int rate) {

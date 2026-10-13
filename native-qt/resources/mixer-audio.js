@@ -7,8 +7,9 @@
   const createElement = AudioContext.prototype.createMediaElementSource;
   const destinations = new WeakMap();
   const elements = new WeakMap();
+  const automaticElements = new WeakSet();
+  const connectedElements = new WeakSet();
   const streams = new WeakMap();
-  const watchedStreams = new WeakSet();
   const warnedElements = new WeakMap();
   let mixer, input, processor;
   const send = data => {
@@ -74,6 +75,14 @@
     elements.set(element, node);
     return node;
   };
+  function releaseStream(element) {
+    const old = streams.get(element);
+    if (!old) return;
+    if (old.source) disconnect.call(old.source);
+    if (old.gain) disconnect.call(old.gain);
+    old.removeListeners();
+    streams.delete(element);
+  }
   function captureElement(element) {
     try {
       // A normally playable cross-origin element can become silent when Web
@@ -90,28 +99,50 @@
       // WebRTC audio. Tap its MediaStream and retain the element's mute/volume.
       if (element.srcObject instanceof MediaStream) {
         const stream = element.srcObject;
-        if (!watchedStreams.has(stream)) {
-          watchedStreams.add(stream);
-          stream.addEventListener('addtrack', () => captureElement(element));
-        }
-        if (!stream.getAudioTracks().length) return;
-        if (streams.get(element)?.stream === stream) { streams.get(element).update(); return; }
-        initialize();
+        const tracks = stream.getAudioTracks();
         const old = streams.get(element);
-        if (old) { disconnect.call(old.source); disconnect.call(old.gain); old.removeListeners(); }
-        if (!elements.has(element)) elements.set(element, createElement.call(mixer, element));
-        const source = mixer.createMediaStreamSource(stream), gain = mixer.createGain();
-        const update = () => { gain.gain.value = element.muted || element.paused ? 0 : element.volume; };
+        // A MediaStreamAudioSource keeps its selected track when the same
+        // MediaStream later removes/replaces that track. Rebuild the tap too.
+        if (old?.stream === stream && old.tracks.length === tracks.length &&
+            old.tracks.every((track, index) => track === tracks[index])) { old.update(); return; }
+        releaseStream(element);
+        initialize();
+        if (!elements.has(element)) {
+          elements.set(element, createElement.call(mixer, element));
+          automaticElements.add(element);
+        }
+        if (connectedElements.has(element)) {
+          try { disconnect.call(elements.get(element), input); } catch (_) {}
+          connectedElements.delete(element);
+        }
+        const source = tracks.length ? mixer.createMediaStreamSource(stream) : null;
+        const gain = source ? mixer.createGain() : null;
+        const update = () => { if (gain) gain.gain.value = element.muted || element.paused ? 0 : element.volume; };
         const events = ['volumechange', 'playing', 'pause', 'ended'];
         events.forEach(event => element.addEventListener(event, update));
-        streams.set(element, {stream, source, gain, update, removeListeners: () => events.forEach(event => element.removeEventListener(event, update))});
-        connect.call(source, gain); connect.call(gain, input); update();
+        const reconcile = () => captureElement(element);
+        stream.addEventListener('addtrack', reconcile);
+        stream.addEventListener('removetrack', reconcile);
+        streams.set(element, {stream, tracks, source, gain, update, removeListeners: () => {
+          events.forEach(event => element.removeEventListener(event, update));
+          stream.removeEventListener('addtrack', reconcile);
+          stream.removeEventListener('removetrack', reconcile);
+        }});
+        if (source) { connect.call(source, gain); connect.call(gain, input); }
+        update();
         return;
       }
-      if (elements.has(element)) return;
+      // srcObject=null can switch a previously tapped element back to a file.
+      // Disconnect the old live stream before restoring its element audio.
+      releaseStream(element);
       initialize();
-      const node = createElement.call(mixer, element);
-      elements.set(element, node); connect.call(node, input);
+      if (!elements.has(element)) {
+        elements.set(element, createElement.call(mixer, element));
+        automaticElements.add(element);
+      }
+      if (automaticElements.has(element) && !connectedElements.has(element)) {
+        connect.call(elements.get(element), input); connectedElements.add(element);
+      }
     } catch (error) {
       send({type: 'mixer-audio-error', message: 'This page owns an unsupported media audio path. Check its audio meter.'});
     }

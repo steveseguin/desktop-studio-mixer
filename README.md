@@ -114,6 +114,8 @@ The pinned SDK is fetched from NuGet; other native dependencies use CMake FetchC
 
 ## Validation and provenance
 
+[Additional 0.9.0 browser-audio and recovery testing](docs/mixer-0.9.0-followup-validation.md) documents a fixed stale-audio bug when pages replace tracks or switch between live streams and files, plus actual app-crash, disk-full, guest and browser security workflows.
+
 [0.9.0 project, recording and resource validation](docs/mixer-0.9.0-validation.md) covers active projects and asset collection, media seeking, named audio tracks and separate videos, SRT listener, aggregate browser limits, and the remaining engineering work.
 
 [0.8.0 production controls and validation](docs/mixer-0.8.0-validation.md) covers private breaks, configurable global hotkeys, audio channel routing, guest automation, browser viewports, MP4 export, guest panels, accessibility, failure recovery, and the remaining equipment/account checks.

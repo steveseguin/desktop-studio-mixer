@@ -1,5 +1,10 @@
 # Desktop Studio 0.9.0: projects, recording and isolation
 
+Subsequent [browser-audio and recovery testing](mixer-0.9.0-followup-validation.md)
+found and fixed stale audio when pages replace live tracks or switch back to file
+playback. That report identifies the newer packaged executable. Results and
+hashes below describe the original development pass.
+
 This development pass addresses remaining production software in the Windows
 application. Testing means packaged app workflows and decoded media. Build,
 syntax, schema and whitespace checks are separate gates. Private recordings,

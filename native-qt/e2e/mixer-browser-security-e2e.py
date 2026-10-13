@@ -109,6 +109,10 @@ try:
         host.kill();host.wait(timeout=8);time.sleep(4)
         browser,page=connect(pw,source_id);responsive()
         assert control('studioRecord').window_text()=='Stop recording'
+        deadline=time.time()+12
+        while time.time()<deadline and 'reconnecting automatically' in control('mixerStatus').window_text().lower():time.sleep(.2)
+        assert 'reconnecting automatically' not in control('mixerStatus').window_text().lower(),control('mixerStatus').window_text()
+        results['recoveryNotice']=control('mixerStatus').window_text()
         results['browserHostCrash']='automatically recovered; recording stayed active'
         press('studioRecord');deadline=time.time()+30
         while time.time()<deadline and 'saved' not in control('recordingStatus').window_text().lower():time.sleep(.3)
