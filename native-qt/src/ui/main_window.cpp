@@ -995,7 +995,11 @@ QJsonObject MainWindow::studioControl(const QString &operation, const QJsonObjec
             {"video_packets", qint64(outputState.videoPackets)}, {"audio_packets", qint64(outputState.audioPackets)},
             {"starting", startInProgress_}, {"stopping", stopInProgress_},
             {"status", external && !outputState.message.empty() ? QString::fromStdString(outputState.message) : statusLabel_->text()},
-            {"encoder", encoderStatusLabel_->text()}};
+            {"encoder", encoderStatusLabel_->text()},
+            {"video_nack", outputState.videoNack}, {"video_pli", outputState.videoPli},
+            {"video_playout_ms", outputState.videoPlayoutMs}, {"video_rtx", outputState.videoRtx}, {"audio_red", outputState.audioRed},
+            {"retransmitted_packets", qint64(outputState.retransmitted)}, {"repair_cache_misses", qint64(outputState.repairMisses)},
+            {"whip_playout_ms", outputWhipPlayoutSpin_->value()}, {"whip_history_ms", outputWhipHistorySpin_->value()}, {"whip_audio_red_requested", outputWhipRedCheck_->isChecked()}};
         state["preferences"] = QJsonObject{{"theme", qApp->property("studioTheme").toString()},
             {"language", qApp->property("studioLanguage").toString()},
             {"next_language", QSettings("VDO.Ninja", "Video Mixer").value("ui/language", "en").toString()}};
@@ -1059,6 +1063,9 @@ QJsonObject MainWindow::studioControl(const QString &operation, const QJsonObjec
         if (protocol == "srt") config.passphrase = credential;
         config.streamId = request["stream_id"].toString().toStdString();
         config.latencyMs = request.contains("latency_ms") ? request["latency_ms"].toInt() : 120;
+        config.whipPlayoutMs = request["whip_playout_ms"].toInt(500);
+        config.whipHistoryMs = request["whip_history_ms"].toInt(1500);
+        config.whipAudioRed = request["whip_audio_red"].toBool(true);
         if (protocol != "vdo") {
             const auto why = output::validateConfig(config);
             if (!why.empty()) return fail(QString::fromStdString(why));
@@ -1069,6 +1076,7 @@ QJsonObject MainWindow::studioControl(const QString &operation, const QJsonObjec
         outputSelect_->setCurrentIndex(outputSelect_->findData(protocol));
         outputUrlInput_->setText(request["url"].toString()); outputSecretInput_->setText(request["credential"].toString());
         outputStreamIdInput_->setText(request["stream_id"].toString()); outputLatencySpin_->setValue(config.latencyMs);
+        outputWhipPlayoutSpin_->setValue(config.whipPlayoutMs); outputWhipHistorySpin_->setValue(config.whipHistoryMs); outputWhipRedCheck_->setChecked(config.whipAudioRed);
         streamIdInput_->setText(request["stream"].toString()); passwordInput_->setText(request["password"].toString());
         // API output configuration describes a complete destination; never inherit
         // a room, remote-control privilege or password from a previous GUI session.
@@ -1233,6 +1241,9 @@ void MainWindow::loadPersistedSettings() {
         config.passphrase = stored.value("passphrase").toString().toStdString();
         config.latencyMs = stored.value("latencyMs").toInt(200);
         config.aacBitrateKbps = stored.value("aacBitrateKbps").toInt(192);
+        config.whipPlayoutMs = std::clamp(stored.value("whipPlayoutMs").toInt(500), 0, 1000);
+        config.whipHistoryMs = std::clamp(stored.value("whipHistoryMs").toInt(1500), 250, 3000);
+        config.whipAudioRed = stored.value("whipAudioRed").toBool(true);
         outputProfiles_.insert(name, config);
     }
     previousOutput_ = "vdo";
@@ -1296,7 +1307,7 @@ void MainWindow::savePersistedSettings() {
                 {"url", QString::fromStdString(config.url)}, {"token", QString::fromStdString(config.bearerToken)},
                 {"key", QString::fromStdString(config.streamKey)}, {"streamId", QString::fromStdString(config.streamId)},
                 {"passphrase", QString::fromStdString(config.passphrase)}, {"latencyMs", config.latencyMs},
-                {"aacBitrateKbps", config.aacBitrateKbps}});
+                {"aacBitrateKbps", config.aacBitrateKbps}, {"whipPlayoutMs", config.whipPlayoutMs}, {"whipHistoryMs", config.whipHistoryMs}, {"whipAudioRed", config.whipAudioRed}});
         }
         const auto encrypted = protectOutputProfiles(QJsonDocument(profiles).toJson(QJsonDocument::Compact), false);
         if (!encrypted.isEmpty()) {
@@ -1374,7 +1385,8 @@ void MainWindow::connectPersistedSettingSignals() {
     };
     for (auto *field : {outputUrlInput_, outputSecretInput_, outputStreamIdInput_})
         connect(field, &QLineEdit::textChanged, this, saveNow);
-    for (auto *field : {outputLatencySpin_, aacBitrateSpin_})
+    connect(outputWhipRedCheck_, &QCheckBox::toggled, this, saveNow);
+    for (auto *field : {outputLatencySpin_, aacBitrateSpin_, outputWhipPlayoutSpin_, outputWhipHistorySpin_})
         connect(field, QOverload<int>::of(&QSpinBox::valueChanged), this, saveNow);
 
     if (streamIdInput_) {
@@ -1907,6 +1919,25 @@ void MainWindow::setupUI() {
     outputLatencySpin_->setRange(20, 8000); outputLatencySpin_->setValue(200); outputLatencySpin_->setSuffix(" ms");
     installSpinWheelGuard(outputLatencySpin_);
     outputForm_->addRow("SRT latency", outputLatencySpin_);
+    outputWhipPlayoutSpin_ = new QSpinBox(this);
+    outputWhipPlayoutSpin_->setObjectName("outputWhipPlayoutSpin");
+    outputWhipPlayoutSpin_->setAccessibleName(studioText("WHIP playback smoothing"));
+    outputWhipPlayoutSpin_->setRange(0, 1000); outputWhipPlayoutSpin_->setSingleStep(10); outputWhipPlayoutSpin_->setValue(500); outputWhipPlayoutSpin_->setSuffix(" ms");
+    outputWhipPlayoutSpin_->setSpecialValueText(studioText("Receiver default"));
+    outputWhipPlayoutSpin_->setToolTip(studioText("Request a minimum video playback buffer to allow loss recovery before display. Default 500 ms favors smooth playback; 0 leaves timing to the receiver. Only applies when the receiver accepts the playout-delay extension, and remains a hint."));
+    installSpinWheelGuard(outputWhipPlayoutSpin_);
+    outputForm_->addRow(studioText("WHIP playback smoothing"), outputWhipPlayoutSpin_);
+    outputWhipHistorySpin_ = new QSpinBox(this);
+    outputWhipHistorySpin_->setObjectName("outputWhipHistorySpin");
+    outputWhipHistorySpin_->setAccessibleName(studioText("WHIP retransmission history"));
+    outputWhipHistorySpin_->setRange(250, 3000); outputWhipHistorySpin_->setValue(1500); outputWhipHistorySpin_->setSuffix(" ms");
+    outputWhipHistorySpin_->setToolTip(studioText("How long to keep video packets for receiver NACK requests. Automatic retransmission; default 1500 ms. Bounded to 4096 packets / 8 MiB. This does not set receiver latency or guarantee late packets can be recovered."));
+    installSpinWheelGuard(outputWhipHistorySpin_);
+    outputForm_->addRow(studioText("WHIP retransmission history"), outputWhipHistorySpin_);
+    outputWhipRedCheck_ = new QCheckBox(studioText("Offer audio redundancy (RED)"), this);
+    outputWhipRedCheck_->setObjectName("outputWhipRedCheck"); outputWhipRedCheck_->setChecked(true);
+    outputWhipRedCheck_->setToolTip(studioText("Automatically offer one previous Opus packet as repair data. Uses up to twice the audio payload bandwidth when the receiver selects RED; otherwise sends ordinary Opus. Video FEC and Opus in-band FEC are not enabled."));
+    outputForm_->addRow(outputWhipRedCheck_);
     outputSrtMode_ = new QComboBox(this); outputSrtMode_->setObjectName("outputSrtMode");
     outputSrtMode_->setAccessibleName(studioText("SRT connection mode"));
     for (const auto &mode : {"caller", "listener"}) outputSrtMode_->addItem(mode, mode);
@@ -3768,6 +3799,9 @@ output::Config MainWindow::outputConfigFromUi() const {
     config.streamId = outputStreamIdInput_->text().toStdString();
     config.latencyMs = outputLatencySpin_->value();
     config.aacBitrateKbps = aacBitrateSpin_->value();
+    config.whipPlayoutMs = outputWhipPlayoutSpin_->value();
+    config.whipHistoryMs = outputWhipHistorySpin_->value();
+    config.whipAudioRed = outputWhipRedCheck_->isChecked();
     return config;
 }
 
@@ -3794,6 +3828,8 @@ void MainWindow::switchOutputProtocol() {
     outputStreamIdInput_->setText(QString::fromStdString(config.streamId));
     outputLatencySpin_->setValue(config.latencyMs);
     aacBitrateSpin_->setValue(config.aacBitrateKbps);
+    outputWhipPlayoutSpin_->setValue(config.whipPlayoutMs); outputWhipHistorySpin_->setValue(config.whipHistoryMs);
+    outputWhipRedCheck_->setChecked(config.whipAudioRed);
     switchingOutput_ = false;
     updateOutputControls();
     syncCodecUiState();
@@ -3821,6 +3857,9 @@ void MainWindow::updateOutputControls() {
     setFormRowVisible(outputForm_, outputStreamIdInput_, srt);
     setFormRowVisible(outputForm_, outputLatencySpin_, srt);
     setFormRowVisible(outputForm_, outputSrtMode_, srt);
+    setFormRowVisible(outputForm_, outputWhipPlayoutSpin_, whip);
+    setFormRowVisible(outputForm_, outputWhipHistorySpin_, whip);
+    setFormRowVisible(outputForm_, outputWhipRedCheck_, whip);
     outputSecretLabel_->setText(whip ? "Bearer token" : srt ? "Passphrase" : "Stream key");
     outputSecretInput_->setAccessibleName(whip ? "WHIP bearer token" : srt ? "SRT passphrase" : "RTMP stream key");
     outputSecretInput_->setPlaceholderText("Optional");
@@ -4229,6 +4268,11 @@ void MainWindow::updateOperatorHealthUi(const versus::app::ConnectionHealth &hea
                 .arg(health.width).arg(health.height).arg(health.frameRate, 0, 'f', 1)
                 .arg(audioEnabled ? (aac ? "AAC audio" : "Opus audio") : "No audio")
                 .arg(audioEnabled && aac ? QString(" (%1 kbps target)").arg(config.aacBitrateKbps) : QString()));
+            if (!aac) connectionMediaLabel_->setText(connectionMediaLabel_->text() +
+                QString(" | Recovery: %1 | Audio RED: %2 | Retransmitted: %3 | Cache misses: %4 | Playback hint: %5 ms")
+                    .arg(QString(status.videoNack ? "NACK" : "NACK unavailable") + (status.videoRtx ? " + RTX" : "") + (status.videoPli ? " / PLI" : " / PLI unavailable"))
+                    .arg(status.audioRed ? "active" : config.whipAudioRed ? "not selected by receiver" : "off")
+                    .arg(status.retransmitted).arg(status.repairMisses).arg(status.videoPlayoutMs));
         }
     }
 }
@@ -4248,7 +4292,7 @@ void MainWindow::syncMixerCaptureControls() {
 void MainWindow::setConfigControlsEnabled(bool enabled) {
     configControlsEnabled_ = enabled;
     for (QWidget *field : std::initializer_list<QWidget *>{outputSelect_, outputUrlInput_, outputSecretInput_,
-            outputSecretRevealButton_, outputStreamIdInput_, outputLatencySpin_, outputSrtMode_, aacBitrateSpin_})
+            outputSecretRevealButton_, outputStreamIdInput_, outputLatencySpin_, outputSrtMode_, aacBitrateSpin_, outputWhipPlayoutSpin_, outputWhipHistorySpin_, outputWhipRedCheck_})
         if (field) field->setEnabled(enabled);
     if (!enabled && outputSecretRevealButton_) outputSecretRevealButton_->setChecked(false);
 

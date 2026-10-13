@@ -22,6 +22,9 @@ struct Config {
     std::string passphrase;
     int latencyMs = 200;
     int aacBitrateKbps = 192;
+    int whipHistoryMs = 1500;
+    int whipPlayoutMs = 500;
+    bool whipAudioRed = true;
 };
 
 // Errors and destination labels never include URL paths, query strings or keys.
@@ -31,6 +34,7 @@ std::string destinationUrl(const Config &config);
 
 struct MediaConfig {
     int width = 1920, height = 1080, fps = 60;
+    int videoBitrateKbps = 6000;
     int audioChannels = 2;
     bool audioEnabled = true;
     std::vector<std::string> audioTrackNames; // Recording only; track 0 is Program.
@@ -48,6 +52,9 @@ struct Status {
     int64_t receiverReportAgeMs = -1, receiverReportTimeoutMs = 0;
     uint64_t receiverReports = 0;
     std::string icePath;
+    int videoPlayoutMs = 0;
+    bool videoNack = false, videoPli = false, videoRtx = false, audioRed = false;
+    uint64_t retransmitted = 0, repairMisses = 0;
 };
 
 // One destination per capture session. Network and muxer work run on an owned

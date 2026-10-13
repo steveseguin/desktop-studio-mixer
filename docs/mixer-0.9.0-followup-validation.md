@@ -414,3 +414,224 @@ byte-for-byte, the default show's original hash matched, and the original
 Game Capture checkout was unchanged. Syntax/whitespace checks are gates;
 the recorded packaged-app workflows above are the testing, with the stated
 quality failures still open.
+
+## Publishing recovery implementation and receiver cross-checks
+
+This follow-up adds native WHIP video RTX, bounded retransmission history,
+packet pacing, negotiated playback-delay hints and audio RED, plus a bounded
+fresh-session retry for stale SRT startup. The controls and protocol limits are
+described in [Publishing recovery](../README.md#publishing-recovery), with
+automation fields in [the API documentation](mixer-automation.md).
+This is an unreleased 0.9.0 development build; it does not close every receiver
+compatibility finding above.
+
+WHIP offers NACK/PLI and RTX and uses what the SDP answer accepts. RTX packets
+have an independent SSRC and sequence space, retain the original media clock,
+and carry the original sequence number after the complete RTP header, including
+extensions. RTCP sender-report octet counts exclude extensions and padding.
+An actual-browser trial exposed an extension-offset error in the first RTX
+implementation; the corrected layout has a regression gate using the real H264
+packetizer. There is no change to ordinary VDO.Ninja transport negotiation.
+
+History defaults to 1500 ms, capped at 4096 packets / 8 MiB. A feedback batch
+can request at most 512 distinct packets. Repeat repairs for one packet are
+suppressed for 50 ms, without delaying its first repair. Repairs have a per-second
+payload budget of half the configured video bitrate, with a 64 KiB floor and
+2 MiB ceiling. These bounds limit excessive feedback; a cache-miss count does
+not include requests suppressed by the repeat/rate limits. PLI-triggered
+keyframes are limited to one per 250 ms. Primary video is paced at 1.25 times
+the configured bitrate; an 8 MiB / 750 ms queue bound fails the destination
+instead of retaining unbounded old media. Repairs, audio and RTCP bypass that
+queue. The retransmission counter measures repairs handed to the transport,
+not confirmed receiver delivery.
+This is pacing and recovery, not adaptive congestion control.
+
+Playback smoothing defaults to a best-effort 500 ms minimum, requested only
+when the answer accepts the playout-delay extension. The sender does not force
+an uncooperative receiver to buffer. Earlier 150 ms browser trials decoded
+frames but displayed substantial late-frame drops; 300 ms improved playback
+but did not pass every repeat. A 500 ms hint delivered approximately 30 fps
+through both RED-on/off loss/jitter cases in the follow-up described below.
+RED offers one previous Opus packet, bounded by the 1200-byte combined payload
+limit. At configured audio bitrates above 448 kbps, the publisher selects 5 ms
+Opus packets so both copies fit; ordinary settings retain 10 ms packets.
+Neither video parity FEC nor Opus in-band FEC has been added. A receiver's
+`useinbandfec=1` answer is not evidence that this sender generates it.
+
+Private reports, clips, raw H264, SDP answers and screenshots are retained under
+`native-qt/e2e/reports/studio-090-recovery-fixes/`. All network impairment is
+confined to private QA relays; no firewall or machine networking is modified.
+
+### SRT outage recovery
+
+`srt-refresh-2` uses a packaged executable with SHA-256
+`80b47fb2f7b88dd5295daae68099f4ffeb84e0a832f8b7a9ce4d4cb320f47019`.
+The first attempt, checking media age alone, did not clear the persistent delay.
+The implemented check also measures elapsed FFmpeg startup time. If the first
+output progress arrives too late, it refreshes the session once using current
+media. Consecutive refreshes are prohibited, including with intentionally high
+SRT latency settings. Normal reconnect backoff remains in place for failures.
+
+With the same loss/jitter/outage workflow, final-picture age was 600 ms at
+baseline, 633 ms under moderate impairment, 600 ms after automatic outage
+recovery, and 633 ms after another 30 seconds of settling. A manual clean
+restart also measured 633 ms. All five receiver clips decoded cleanly at about
+30 fps, maximum video timestamp interval 34 ms, maximum measured A/V offset
+21 ms. This resolves the retained 3.5-second delay in this reproduction.
+
+Independent recording decoded 5,219 frames at 30.000 fps, maximum measured
+A/V offset 21 ms. Recording drops remained 9 to 9. API p95/maximum was
+23.7/29.4 ms; process-tree private memory ranged from 380.1 to 414.8 MiB.
+Average sampled CPU was 0.188 logical cores for the main app, 0.108 for media,
+0.326 for both encoders, 0.034 for output workers and 0.047 for FFmpeg.
+This is simultaneous recording/publishing, not a controlled optimization
+benchmark or a long-term memory-leak assessment.
+
+### WHIP receiver limits and timestamp attribution
+
+The unmodified MediaMTX 1.21.2 receiver still produced H264 corruption under
+1% loss with the new sender. A private diagnostic build changing only the
+WebRTC inbound RTP reorder capacity from 64 to 512 packets passed separate
+loss-only and jitter-only reception at approximately 30 fps with clean full
+decode (`receiver-buffer512`). It did not negotiate RED or the playback-delay
+hint. This supports a receiver-buffer limitation: increasing the sender cache
+cannot recover a packet after the receiver has already discarded its frame.
+The modified receiver is diagnostic only, is not shipped, and is not a claim
+that the unmodified server passes. The default-size source is linked in the
+previous section; `writeQueueSize` is not this inbound RTP reorder capacity.
+
+The intermittent startup timestamp finding remains open in the MediaMTX-to-
+FFmpeg RTSP recording path. Twelve clean starts in `startup-aligned` yielded
+nine failed clips; six more with MediaMTX `useAbsoluteTimestamp: true` yielded
+four failed clips (`startup-absolute`). Therefore that setting is not a verified
+workaround. The retained sender-side primary RTP frame markers increase
+monotonically, while the recorded RTSP timeline can move backward when initial
+RTCP timing arrives. The aiortc receiver retained increasing video timestamps.
+A later Chromium trial also observed one 5 ms backward adjustment in HTML video
+`mediaTime` after network restoration, while the source frame number advanced;
+this is a separate receiver-timeline finding from the RTSP startup failure.
+The browser fixture now retains RTP timestamps as well as `mediaTime` to help
+distinguish sender timestamps from receiver mapping. These observations are
+not proof that every interoperability case is solved. Do not hide failed clips
+by relaxing timestamp/decode checks.
+
+The independent aiortc receiver retains the assembled H264 bitstream before
+decoding, so a decoder's concealment cannot make corrupted input look like a
+clean decode. In `reference-final`, 1% loss alone remained at about 30 fps and
+the entire raw stream decoded cleanly, but combined loss/jitter fell to 27.13 fps
+with a 267 ms maximum gap; that run failed. After increasing repeat-request
+suppression to 50 ms, `reference-repeat-bound` passed: baseline/loss-only/
+combined/restored reception measured 30.07/29.97/28.57/30.07 fps, maximum gap
+133 ms, no backward timestamps and clean full H264 decode. Recording decoded
+2,282 frames at 30.001 fps, maximum measured A/V offset 10.4 ms, drops 12 to 12.
+This receiver did not select RED or the playback-delay hint. The comparison is
+not a deterministic benchmark: packet timing and loss selection vary with
+actual encoder output and scheduling.
+
+Actual Chromium playback is checked separately with frame callbacks, audio
+levels, negotiated codec stats and retained screenshots. At 300 ms smoothing,
+`browser-final` passed with RED on/off at 28.20/29.01 displayed fps during
+combined impairment. A later `browser-repeat-bound` run failed at 27.53/27.19 fps
+and 300/267 ms gaps. These failures remain recorded. Increasing the playback
+hint to 500 ms in `browser-500ms` produced the following observed rates:
+
+| Audio mode | Clean | 1% loss + 0-25 ms jitter | Restored | Largest impaired gap |
+|---|---:|---:|---:|---:|
+| Negotiated RED | 30.03 fps | 29.96 fps | 29.91 fps | 34 ms |
+| Ordinary Opus | 29.91 fps | 30.00 fps | 30.02 fps | 34 ms |
+
+Both modes retained audible audio and increasing video timestamps. This is why
+the default favors 500 ms for publishing; operators can choose a smaller hint
+in Advanced. It does not change guest-call buffering, force a server's timing,
+or guarantee smooth playback on every link. Browser displayed-frame counts are
+separate from decoder counts; neither proves perfect source cadence.
+
+`browser-high-audio` also exercised 510 kbps Opus with negotiated RED and
+approximately 200 audio packets/second, confirming the 5 ms high-bitrate path.
+Audio remained audible through loss/jitter. Its independent recording decoded
+1,343 frames at 29.999 fps, maximum measured A/V offset 4 ms and drops 9 to 9.
+This audio check measures successful browser reception, not perceptual audio
+quality or a physical speaker-to-picture lip-sync measurement.
+
+Further repeats did not consistently reproduce the clean 500 ms browser result.
+`browser-shipped` retained an 800 ms impaired gap and the HTML `mediaTime`
+adjustment noted above. A trial that paced repairs separately also failed the
+browser and aiortc quality limits (`browser-paced-repairs` and
+`reference-paced-repairs`); it was removed. An experimental queue delaying
+initial audio until the first video keyframe was also removed because it did
+not resolve startup timestamp conversion. The final code retains immediate
+bounded repairs and the original audio startup behavior. A single passing
+receiver run must not be described as universally reliable loss recovery.
+
+### Desktop controls and packaging
+
+`ui-persisted` used actual GUI clicks and keyboard entry to set history to
+2000 ms, playback smoothing to 250 ms and RED off; start/stop WHIP; verify that
+the controls disable while live; quit; and reopen with the same values.
+Screenshots were inspected. Invalid API history/delay values and a string in
+place of the RED boolean returned 400 without changing the configured profile.
+The earlier `ui-final` reopen assertion was a fixture error: explicit
+`--studio-show` intentionally disables publisher-preference persistence.
+The corrected test selects a private active project and uses normal GUI launch.
+
+Packet parsing, negotiation, RTX wrap/layout, malformed feedback, history/rate
+bounds, pacer backpressure/shutdown and shared-clock checks are unit gates.
+Packaged GUI and actual received/recorded media workflows are the testing.
+
+### Final artifact closeout
+
+The final portable executable has SHA-256
+`0ed93fe9a171fa3fec6bcd8ffc7826d7d4b155e2774f5641849194acd44d7bac`.
+The preceding experiment reports retain their own executable hashes; they are
+not silently relabeled as results for this artifact.
+
+`browser-closeout` uses ordinary combined A/V playback in one HTML video
+element, with the final default 500 ms hint. RED-on baseline/impaired/restored
+rates were 29.91/30.04/30.01 fps, with a maximum impaired gap of 34 ms. RED-off
+rates were 30.07/29.88/29.98 fps, with a maximum impaired gap of 100 ms. Both
+had audible audio, no backward `mediaTime` and zero Chromium-reported dropped
+video frames. The independent recording decoded 2,682 frames at 30.000 fps,
+maximum measured A/V offset 15 ms. Earlier browser cases used separate audio
+and video elements; their variable playback results remain relevant to such
+receiver implementations and are not erased by this combined-playback pass.
+
+`reference-closeout` independently passed strict full decoding of the received
+raw H264, at 29.94 fps clean, 29.89 fps with 1% loss alone, 28.70 fps with loss
+plus jitter, and 30.24 fps after restoration. The maximum impaired timestamp gap
+was 133 ms; no backward timestamps were observed. Recording decoded 2,285
+frames at 30.000 fps with maximum measured A/V offset 15 ms, and recording
+drops stayed 9 to 9. This receiver's lack of RED/playout-delay negotiation also
+checks that plain-Opus and receiver-default timing remain usable.
+
+`udp-closeout` repeated the full SRT/WHIP impairment and outage workflow on this
+same artifact, including the extra SRT settling and clean-restart observations.
+SRT's moderate/restored/settled/restarted picture ages were 600/667/667/633 ms,
+with clean decode for those four clips. Its baseline RTSP clip failed on
+duplicate DTS near two seconds. Thus the remaining timestamp-conversion
+finding is also reproducible with an SRT publisher, not just WHIP. WHIP's clean
+baseline passed; its impaired MediaMTX clip still contained H264 errors and its
+restored RTSP clip had duplicate DTS. The overall UDP workflow correctly exits
+with failure. SRT freshness is fixed in this reproduction; MediaMTX loss and
+RTSP timestamp compatibility are not declared fixed.
+
+The independent recording decoded 8,479 frames at 30.000 fps, maximum measured
+A/V offset 21.4 ms, with recording drops unchanged at 9. The source/recorder
+workers were not replaced during publishing failures. API p95/maximum was
+23.3/27.7 ms; process-tree private memory ranged from 380.6 to 414.3 MiB.
+Sampled CPU averaged 0.202 logical cores for the main app, 0.112 for media,
+0.303 for both encoders, 0.041 for output workers and 0.036 for FFmpeg.
+
+`ui-closeout` passed normal GUI configuration, live control disabling, invalid
+API input and reopen/persistence checks on the final build; screenshots were
+inspected. `installed-closeout` installed into a fresh private directory, ran
+CLI/MCP control and twelve portrait screenshots during recording, decoded the
+recording with a maximum frame gap of 35 ms, and uninstalled. Portable, ZIP and
+installed executable hashes matched. All owned descendants exited.
+
+Original preferences were restored byte-for-byte and the original user-show
+hash matched. The Game Capture checkout was unchanged. Build, syntax,
+whitespace and transport regression gates passed. No GitHub release was
+published; the updated installer and portable archive are local development
+artifacts. Remaining work is receiver interoperability, broader real-network
+conditions and long-running A/V drift; these short fault runs do not establish
+universal loss-free playback or long-term leak freedom.

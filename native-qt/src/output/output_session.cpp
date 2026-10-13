@@ -22,6 +22,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <thread>
+#include "versus/webrtc/media_clock.h"
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -32,8 +33,9 @@ using Clock = std::chrono::steady_clock;
 constexpr size_t kMaximumQueueBytes = 8 * 1024 * 1024;
 constexpr int64_t kMaximumQueueAge100ns = 10000000;
 struct OutputError : std::runtime_error {
-    bool permanent;
-    OutputError(const char *message, bool permanent = false) : std::runtime_error(message), permanent(permanent) {}
+    bool permanent, fresh;
+    OutputError(const char *message, bool permanent = false, bool fresh = false)
+        : std::runtime_error(message), permanent(permanent), fresh(fresh) {}
 };
 struct Packet {
     enum class Kind { Video, Opus, Pcm } kind;
@@ -224,6 +226,9 @@ struct Session::Impl {
             webrtc::PeerConfig peer;
             peer.enableDataChannel = false; peer.initialVideo = true; peer.initialAudio = media.audioEnabled;
             peer.audioChannels = media.audioChannels;
+            peer.audioRed = config.whipAudioRed;
+            peer.videoBitrateKbps = media.videoBitrateKbps;
+            peer.recoveryHistoryMs = config.whipHistoryMs; peer.playoutDelayMs = config.whipPlayoutMs;
             peer.iceMode = media.iceMode;
             peer.videoWidth = media.width; peer.videoHeight = media.height; peer.videoFps = media.fps;
             peer.iceServers = iceServers(options.links);
@@ -307,6 +312,10 @@ struct Session::Impl {
                     {
                         std::lock_guard lock(mutex);
                         current.receiverReports = feedback.reports;
+                        current.videoPlayoutMs = feedback.videoPlayoutMs;
+                        current.videoNack = feedback.videoNack; current.videoPli = feedback.videoPli;
+                        current.videoRtx = feedback.videoRtx; current.audioRed = feedback.audioRed;
+                        current.retransmitted = feedback.retransmitted; current.repairMisses = feedback.repairMisses;
                         current.receiverReportAgeMs = feedback.ageMs;
                         current.receiverReportTimeoutMs = feedback.timeoutMs;
                         current.icePath = webrtc::selectedIcePathName(client.selectedIcePath());
@@ -337,7 +346,7 @@ struct Session::Impl {
         } catch (...) { cleanup(); throw; }
     }
 
-    void runMux() {
+    void runMux(bool allowStartupRefresh) {
         QProcess process;
         bool launched = false;
 #ifdef _WIN32
@@ -397,6 +406,7 @@ struct Session::Impl {
                 if (QUrl(QString::fromStdString(config.url)).scheme() == "rtmps") args << "-tls_verify" << "1";
             }
             args << QString::fromStdString(destinationUrl(config));
+            const auto muxStarted = Clock::now();
             process.start(QString::fromStdString(media.ffmpegPath), args, QIODevice::ReadWrite);
             if (!process.waitForStarted(2000)) throw OutputError("Output FFmpeg could not start. Check the FFmpeg path.", true);
             launched = true;
@@ -418,6 +428,7 @@ struct Session::Impl {
             write(mux.video(units, first.pts - epoch, true)); count(first);
             auto lastProgress = Clock::now(), lastVideoInput = Clock::now();
             qint64 lastFrame = 0, lastOutputTime = -1;
+            bool checkedStartup = false;
             QByteArray progress;
             while (!stopping.load()) {
                 // This worker has no Qt event loop. Pump the child's output
@@ -439,6 +450,18 @@ struct Session::Impl {
                         const auto time = line.mid(12).toLongLong(&valid);
                         advanced = valid && time > lastOutputTime && lastFrame > 0;
                         if (valid) lastOutputTime = std::max(lastOutputTime, time);
+                    }
+                    if (!checkedStartup && line.startsWith("progress=") && lastFrame > 0 && lastOutputTime >= 0) {
+                        checkedStartup = true;
+                        const auto ageMs = (webrtc::mediaTime100ns() - epoch - lastOutputTime*10)/10000;
+                        const auto startupMs = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now()-muxStarted).count();
+                        // A blocked SRT handshake can anchor the receiver to old
+                        // input even after FFmpeg catches up. Establish a fresh
+                        // session once the endpoint is reachable. Limit this to
+                        // one refresh, including on deliberately high-latency links.
+                        if (config.protocol == Protocol::Srt && allowStartupRefresh &&
+                            std::max(ageMs, int64_t(startupMs)) > std::max(1500, config.latencyMs + 750))
+                            throw OutputError("SRT connected with stale startup media; refreshing the live session.", false, true);
                     }
                     if (advanced) {
                         lastProgress = Clock::now();
@@ -469,14 +492,16 @@ struct Session::Impl {
     void run() {
         if (!mixer::ProcessWorker::inWorker()) { runIsolated(); return; }
         int attempt = 0;
+        bool freshRetry = false;
         while (!stopping.load()) {
             clearQueue(); restartRequested.store(false);
             setState(attempt ? State::Reconnecting : State::Connecting,
                      std::string(attempt ? "Reconnecting to " : "Connecting to ") + destinationLabel(config));
             try {
-                if (config.protocol == Protocol::Whip) runWhip(); else runMux();
+                if (config.protocol == Protocol::Whip) runWhip(); else runMux(!freshRetry);
             } catch (const OutputError &error) {
                 if (stopping.load()) break;
+                freshRetry = error.fresh;
                 if (error.permanent || config.protocol == Protocol::Recording) {
                     bool alreadyFailed = false;
                     { std::lock_guard lock(mutex); alreadyFailed = current.state == State::Error; }
@@ -489,13 +514,14 @@ struct Session::Impl {
             } catch (...) {
                 if (stopping.load()) break;
                 if (config.protocol == Protocol::Recording) { setState(State::Error, "Recording failed. Check the destination and available disk space."); clearQueue(); return; }
+                freshRetry = false;
                 // Library exception messages may contain a destination URL.
                 setState(State::Reconnecting, "Output failed; reconnecting with fresh media.");
             }
             if (stopping.load()) break;
             { std::lock_guard lock(mutex); ++current.reconnects; }
             ++attempt; clearQueue();
-            if (!pause(std::min(attempt, 5) * 1000)) break;
+            if (!pause(freshRetry ? 0 : std::min(attempt, 5) * 1000)) break;
         }
         clearQueue();
         { std::lock_guard lock(mutex); if (current.state != State::Error) { current.state = State::Stopped; current.message = "Output stopped"; } }
@@ -510,6 +536,7 @@ struct Session::Impl {
                 {"bearer", QString::fromStdString(config.bearerToken)}, {"key", QString::fromStdString(config.streamKey)},
                 {"streamId", QString::fromStdString(config.streamId)}, {"passphrase", QString::fromStdString(config.passphrase)},
                 {"latency", config.latencyMs}, {"aac", config.aacBitrateKbps}, {"width", media.width}, {"height", media.height},
+                {"whipPlayout", config.whipPlayoutMs}, {"whipHistory", config.whipHistoryMs}, {"whipRed", config.whipAudioRed}, {"videoBitrate", media.videoBitrateKbps},
                 {"fps", media.fps}, {"channels", media.audioChannels}, {"audio", media.audioEnabled},
                 {"ice", int(media.iceMode)}, {"ffmpeg", QString::fromStdString(media.ffmpegPath)}};
             QJsonArray trackNames; for (const auto &name : media.audioTrackNames) trackNames.append(QString::fromStdString(name)); command["audioTrackNames"] = trackNames;
@@ -533,6 +560,10 @@ struct Session::Impl {
                         current.audioBytes = state["audioBytes"].toInteger(); current.processId = state["processId"].toInteger();
                         current.receiverReportAgeMs = state["rrAge"].toInteger(); current.receiverReportTimeoutMs = state["rrTimeout"].toInteger();
                         current.receiverReports = state["rrCount"].toInteger(); current.icePath = state["icePath"].toString().toStdString();
+                        current.videoPlayoutMs = state["videoPlayout"].toInt();
+                        current.videoNack = state["videoNack"].toBool(); current.videoPli = state["videoPli"].toBool();
+                        current.videoRtx = state["videoRtx"].toBool(); current.audioRed = state["audioRed"].toBool();
+                        current.retransmitted = state["retransmitted"].toInteger(); current.repairMisses = state["repairMisses"].toInteger();
                         if (current.state == State::Error) { permanentError = true; break; }
                     }
                     Packet packet; if (!pop(packet, 10)) continue;

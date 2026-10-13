@@ -43,6 +43,8 @@ std::string validateConfig(const Config &config) {
         return "Enter a complete output URL without a fragment.";
     const auto scheme = url.scheme().toLower();
     if (config.protocol == Protocol::Whip) {
+        if (config.whipPlayoutMs < 0 || config.whipPlayoutMs > 1000) return "WHIP playback smoothing must be 0 to 1000 ms.";
+        if (config.whipHistoryMs < 250 || config.whipHistoryMs > 3000) return "WHIP retransmission history must be 250 to 3000 ms.";
         if (scheme != "https" && scheme != "http") return "WHIP needs an https:// or http:// endpoint.";
         if (!url.userInfo().isEmpty()) return "Use the WHIP bearer token field for authentication.";
         if (config.bearerToken.find_first_of("\r\n") != std::string::npos || config.bearerToken.size() > 16384)

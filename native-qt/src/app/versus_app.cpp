@@ -1355,12 +1355,29 @@ bool VersusApp::goLive(const StartOptions &options) {
         const auto videoState = videoStateSnapshot();
         if (!error.empty() || videoState.config.codec != video::VideoCodec::H264 || videoState.config.enableAlpha ||
             pcmAudio_.load() || audioRed_.load()) {
-            emitRuntimeEvent(error.empty() ? "External outputs require H.264 video and Opus/AAC audio without alpha or RED." : error, true);
+            emitRuntimeEvent(error.empty() ? "External outputs require H.264 without alpha and the destination's audio settings." : error, true);
             stopLive(); return false;
+        }
+        // Capture is initialized before goLive receives this destination's
+        // settings. Shorten high-bitrate RED packets here so two copies fit
+        // within 1200 bytes; ordinary bitrates retain efficient 10 ms packets.
+        if (options.output.protocol == output::Protocol::Whip && options.output.whipAudioRed &&
+            configuredAudioBitrateKbps_.load(std::memory_order_relaxed) > 448) {
+            bool initialized = false;
+            {
+                std::lock_guard<std::mutex> encodeLock(audioEncodeMutex_);
+                audio::AudioEncoderConfig audioConfig;
+                audioConfig.bitrate = configuredAudioBitrateKbps_.load(std::memory_order_relaxed);
+                audioConfig.outputChannels = audioOutputChannels_.load(std::memory_order_relaxed);
+                audioConfig.packetDurationMs = 5;
+                initialized = opusEncoder_.initialize(audioConfig);
+            }
+            if (!initialized) { emitRuntimeEvent("WHIP audio encoder could not start.", true); stopLive(); return false; }
         }
         const auto lifecycle = lifecycleStateSnapshot();
         output::MediaConfig media;
         media.width = videoState.config.width; media.height = videoState.config.height; media.fps = videoState.config.frameRate;
+        media.videoBitrateKbps = videoState.config.bitrate;
         media.audioChannels = audioOutputChannels_.load();
         media.audioEnabled = lifecycle.videoSourceMode == VideoSourceMode::Mixer || lifecycle.audioSourceMode != AudioSourceMode::None || lifecycle.includeMicrophone;
         media.iceMode = options.iceMode;
@@ -2484,7 +2501,11 @@ std::string VersusApp::buildDiagnosticsJson() const {
             {"receiver_report_age_ms", status.receiverReportAgeMs},
             {"receiver_report_timeout_ms", status.receiverReportTimeoutMs},
             {"audio_codec", audioEnabled ? (external->usesPcmInput() ? "AAC" : "Opus") : "none"},
-            {"configured_aac_bitrate_kbps", config.aacBitrateKbps}};
+            {"configured_aac_bitrate_kbps", config.aacBitrateKbps},
+            {"video_nack", status.videoNack}, {"video_pli", status.videoPli},
+            {"video_playout_ms", status.videoPlayoutMs}, {"video_rtx", status.videoRtx}, {"audio_red", status.audioRed},
+            {"retransmitted_packets", status.retransmitted}, {"repair_cache_misses", status.repairMisses},
+            {"whip_playout_ms", config.whipPlayoutMs}, {"whip_history_ms", config.whipHistoryMs}, {"whip_audio_red_requested", config.whipAudioRed}};
     }
     return root.dump(2);
 }

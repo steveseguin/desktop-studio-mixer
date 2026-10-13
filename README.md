@@ -79,6 +79,27 @@ The original controls remain in **Capture & output**: standalone window/camera/S
 - Browser audio is routed from Web Audio/media streams to the native mixer. Browser speaker sessions are silenced; only enabled native monitoring plays locally. Ordinary Web Audio and WebRTC receivers are supported. Protected media, cross-origin media without CORS permission, and unusual page audio graphs may not expose audio; check the channel meter before going live. Chat overlays are visual sources.
 - Application/desktop loopback audio needs Windows build 20348 or newer. Camera/mic capture and the browser audio bridge do not use that process-loopback API. Avoid capturing the same game's audio both individually and via Desktop audio.
 
+## Publishing recovery
+
+WHIP uses WebRTC media negotiation; it has no universal error-correction percentage. Desktop Studio offers recovery automatically and uses the mechanisms accepted by the destination. **Output settings > Advanced** exposes the following controls; stop publishing before changing them. Output profiles remember them.
+
+| Mechanism | Behavior and control |
+|---|---|
+| **NACK** | The receiver asks for missing video packets. The sender retains **1500 ms** of history by default, adjustable **250-3000 ms**, with hard limits of 4096 packets / 8 MiB. Increasing history gives late requests more time; it does not increase the receiver's own buffer. |
+| **RTX** | Offered automatically. When accepted, repairs have a separate RTP sequence space and SSRC. Otherwise negotiated NACK uses original-packet retransmission. |
+| **PLI** | The receiver requests a fresh keyframe when it cannot recover a picture. Requests are limited to one every 250 ms to prevent a keyframe storm. |
+| **Playback smoothing** | Requests a **500 ms** minimum video playback delay, allowing time for repairs before display. Adjustable **0-1000 ms**; **0 / Receiver default** omits the hint. Only sent when the receiver accepts the playout-delay extension. This is a best-effort receiver hint, not a guarantee of end-to-end latency. |
+| **Audio RED** | **On by default as an offer.** When selected by the receiver, each Opus packet includes one previous packet when both fit within 1200 bytes. This can nearly double audio payload bandwidth; it does not double video bandwidth. Disable the offer in Advanced if necessary. Unsupported destinations receive plain Opus. |
+| **Video FEC / Opus in-band FEC** | Not implemented in this sender. RED provides redundant audio, but there is no video parity/FlexFEC/ULPFEC or adjustable FEC percentage. An SDP answer advertising Opus `useinbandfec=1` does not mean this encoder generates it. |
+
+Video packets are paced to reduce bursts. Repairs bypass that queue, with a bounded repair budget and duplicate-request suppression. A stalled pacing queue reconnects only that destination. Recovery status shows negotiated NACK/RTX/PLI, RED selection, playback hint, retransmission count and cache misses. The retransmission counter counts repairs handed to the transport; it does not prove the destination recovered them. The receiving service still determines its NACK timing, reorder window, decoding and final playback buffer.
+
+These controls do not implement automatic bitrate adaptation. Leave upload headroom for repairs; increasing redundancy on a saturated connection can make loss worse. A larger sender history cannot fix a receiver that discards repairs before they arrive. The [recovery validation notes](docs/mixer-0.9.0-followup-validation.md#publishing-recovery-implementation-and-receiver-cross-checks) distinguish browser/independent-receiver results from the remaining MediaMTX loss and RTSP startup-timestamp issues.
+
+SRT's latency control sets its retransmission window. After a prolonged connection setup or reconnect, Studio refreshes a stale media session once to avoid carrying several seconds of old video into the recovered stream. This retry is bounded; independent recording continues through it. No transport can recover an arbitrarily long outage without interruption.
+
+Protocol references: [WHIP](https://www.rfc-editor.org/rfc/rfc9725.html), [NACK/PLI](https://www.rfc-editor.org/rfc/rfc4585.html), [RTX](https://www.rfc-editor.org/rfc/rfc4588.html), [audio RED](https://www.rfc-editor.org/rfc/rfc2198.html), and [playout-delay guidance](https://webrtc.googlesource.com/src/+/refs/heads/main/docs/native-code/rtp-hdrext/playout-delay/).
+
 ## Browser runtime
 
 Uses **Microsoft Edge WebView2 Evergreen**. No Chromium engine is bundled. Microsoft's runtime updates separately; users install it if missing. The SDK/loader is a build dependency, not the browser engine. [Microsoft distribution guidance](https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution).

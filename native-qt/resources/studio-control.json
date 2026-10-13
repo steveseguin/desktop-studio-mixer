@@ -680,6 +680,22 @@
           "type": "integer",
           "minimum": 500,
           "maximum": 50000
+        },
+        "whip_playout_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Minimum video playback delay hint in ms; default 500, 0 uses receiver default. Only when negotiated; receiver may ignore it."
+        },
+        "whip_history_ms": {
+          "type": "integer",
+          "minimum": 250,
+          "maximum": 3000,
+          "description": "Video retransmission history in ms; default 1500. Receiver controls NACK requests and its own playout buffer."
+        },
+        "whip_audio_red": {
+          "type": "boolean",
+          "description": "Offer one redundant Opus packet; default true. Used only if accepted by the receiver."
         }
       },
       "required": [

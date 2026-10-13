@@ -593,6 +593,9 @@ int ProcessWorker::run(int argc, char **argv) {
                     config.bearerToken = c["bearer"].toString().toStdString(); config.streamKey = c["key"].toString().toStdString();
                     config.streamId = c["streamId"].toString().toStdString(); config.passphrase = c["passphrase"].toString().toStdString();
                     config.latencyMs = c["latency"].toInt(); config.aacBitrateKbps = c["aac"].toInt();
+                    config.whipPlayoutMs = c["whipPlayout"].toInt(500);
+                    config.whipHistoryMs = c["whipHistory"].toInt(1500); config.whipAudioRed = c["whipRed"].toBool(true);
+                    media.videoBitrateKbps = c["videoBitrate"].toInt(6000);
                     media.width = c["width"].toInt(); media.height = c["height"].toInt(); media.fps = c["fps"].toInt();
                     media.audioChannels = c["channels"].toInt(); media.audioEnabled = c["audio"].toBool();
                     for (const auto &name : c["audioTrackNames"].toArray()) media.audioTrackNames.push_back(name.toString().left(256).toStdString());
@@ -707,6 +710,10 @@ int ProcessWorker::run(int argc, char **argv) {
             state["videoBytes"] = qint64(s.videoBytes); state["audioBytes"] = qint64(s.audioBytes); state["queuedBytes"] = qint64(s.queuedBytes);
             state["processId"] = qint64(s.processId); state["rrAge"] = qint64(s.receiverReportAgeMs); state["rrTimeout"] = qint64(s.receiverReportTimeoutMs);
             state["rrCount"] = qint64(s.receiverReports); state["icePath"] = QString::fromStdString(s.icePath); state["keyframes"] = keyframes.load();
+            state["videoPlayout"] = s.videoPlayoutMs;
+            state["videoNack"] = s.videoNack; state["videoPli"] = s.videoPli;
+            state["videoRtx"] = s.videoRtx; state["audioRed"] = s.audioRed;
+            state["retransmitted"] = qint64(s.retransmitted); state["repairMisses"] = qint64(s.repairMisses);
         }
         publishState();
     });

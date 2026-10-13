@@ -163,6 +163,22 @@ credentials in command history. The live schema describes exact fields and limit
 | `workspace.set` | Single/Studio mode and workspace layout |
 | `preferences.set` | Theme and next-launch language |
 
+For WHIP, `output.configure` also accepts `whip_history_ms` (250-3000,
+default 1500), `whip_playout_ms` (0-1000, default 500; 0 uses receiver timing),
+and `whip_audio_red` (boolean, default true). Configuration describes a complete
+destination: omitted recovery fields take these defaults. The same controls
+appear in Output settings > Advanced and persist in output profiles.
+
+`state.output` reports `video_nack`, `video_pli`, `video_rtx`, `audio_red`,
+`video_playout_ms`, `retransmitted_packets`, and `repair_cache_misses`.
+Negotiated values appear after connection feedback is sampled. The requested
+values are `whip_history_ms`, `whip_playout_ms`, and `whip_audio_red_requested`.
+Counters belong to the current WebRTC connection and reset on reconnect;
+retransmitted packets are not proof of successful receiver repair. A zero
+`video_playout_ms` means no negotiated hint, not zero network latency.
+See [publishing recovery](../README.md#publishing-recovery) for mechanisms,
+bandwidth costs, receiver dependencies and FEC limitations.
+
 Source locators/URLs and output credentials are omitted from state. Show exports
 contain private source/invitation URLs. Source changes affect all scenes using it.
 In Studio mode, take sources off Program before deleting them. Scene selection

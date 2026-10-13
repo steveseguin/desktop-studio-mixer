@@ -8,6 +8,8 @@ STUDIO_UDP_PROTOCOLS defaults to srt,whip. STUDIO_UDP_DIAGNOSTIC=1 isolates
 packet loss from jitter. A receiver decode failure keeps the run red and saves
 the remaining clip analyses; transport survival alone is not a quality pass.
 STUDIO_UDP_RECOVERY=1 also checks settled SRT reception and a clean restart.
+STUDIO_UDP_STARTUPS=N repeats clean WHIP starts; STUDIO_MTX_ABSOLUTE=1
+cross-checks the receiver's absolute-timestamp setting without changing defaults.
 """
 from pathlib import Path
 exec(Path(__file__).with_name('mixer-automation-e2e.py').read_text(encoding='utf-8').split('\ntry:\n    target=')[0])
@@ -25,18 +27,25 @@ root = mtx = log = relay = signal_server = None
 receivers = []; initial_workers = set(); started = time.monotonic(); cpu_previous = {}
 
 def port():
-    with socket.socket() as sock: sock.bind(('127.0.0.1', 0)); return sock.getsockname()[1]
+    # Windows reserves different UDP/TCP ranges; check both before using a port.
+    for _ in range(100):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+            udp.bind(('127.0.0.1', 0)); candidate = udp.getsockname()[1]
+            with socket.socket() as tcp:
+                try: tcp.bind(('127.0.0.1', candidate)); return candidate
+                except OSError: pass
+    raise RuntimeError('No private UDP/TCP port available')
 
 class UdpRelay:
-    def __init__(self, upstream, inspect_rtp=False):
+    def __init__(self, upstream, inspect_rtp=False, back_host="127.0.0.1"):
         self.front = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); self.front.bind(('127.0.0.1', 0))
-        self.back = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); self.back.bind(('127.0.0.1', 0))
+        self.back = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); self.back.bind((back_host, 0))
         self.upstream = ('127.0.0.1', upstream); self.client = None
         self.lock = threading.Lock(); self.stop = threading.Event(); self.queue = []; self.serial = 0
         self.random = random.Random(72941); self.mode = 'clean'; self.loss = 0; self.jitter = 0
         self.counts = collections.defaultdict(collections.Counter); self.last_sent = {}; self.errors = []
         self.inspect_rtp = inspect_rtp; self.rtp_seen = {}; self.high_sequence = {}
-        self.rtp_dropped = {}; self.retransmissions = []
+        self.rtp_dropped = {}; self.retransmissions = []; self.rtp_frames = []
         self.thread = threading.Thread(target=self.loop, daemon=True); self.thread.start()
 
     def configure(self, mode, loss=0, jitter_ms=0):
@@ -49,7 +58,7 @@ class UdpRelay:
         with self.lock:
             return {'profiles': {k: dict(v) for k,v in self.counts.items()},
                     'queuePackets': len(self.queue), 'errors': list(self.errors),
-                    'retransmissions': list(self.retransmissions)}
+                    'retransmissions': list(self.retransmissions), 'rtpFrames': list(self.rtp_frames)}
 
     def loop(self):
         while not self.stop.is_set():
@@ -72,6 +81,9 @@ class UdpRelay:
                         key = (int.from_bytes(data[8:12], 'big'), int.from_bytes(data[2:4], 'big'))
                         rtp_key = key
                         now = time.monotonic()
+                        if data[1] == 224 and now-self.rtp_seen.get(key, 0) >= 2 and len(self.rtp_frames) < 3000:
+                            self.rtp_frames.append({'seconds': now-started, 'sequence': key[1],
+                                                    'timestamp': int.from_bytes(data[4:8], 'big')})
                         if now-self.rtp_seen.get(key, 0) < 2: count['rtpRepeatedSequences'] += 1
                         self.rtp_seen[key] = now
                         high = self.high_sequence.get(key[0], key[1])
@@ -111,16 +123,16 @@ class UdpRelay:
     def close(self):
         self.stop.set(); self.thread.join(timeout=3); self.front.close(); self.back.close()
 
-def rewrite_candidates(body, destination):
+def rewrite_candidates(body, destination, address="127.0.0.1"):
     lines = body.decode().splitlines(); found = 0; out = []
     for line in lines:
         if line.startswith('a=candidate:'):
             fields = line.split()
             if fields[2].lower() != 'udp': continue
-            fields[4] = '127.0.0.1'; fields[5] = str(destination)
+            fields[4] = address; fields[5] = str(destination)
             # Remove related/TCP candidate attributes after the host type.
             fields[7] = 'host'; line = ' '.join(fields[:8]); found += 1
-        elif line.startswith('c=IN '): line = 'c=IN IP4 127.0.0.1'
+        elif line.startswith('c=IN '): line = 'c=IN IP4 '+address
         out.append(line)
     assert found, 'WHIP fixture received no UDP ICE candidates'
     return ('\r\n'.join(out)+'\r\n').encode(), found
@@ -133,12 +145,18 @@ class Signaling(http.server.BaseHTTPRequestHandler):
             entry = {'method': self.command, 'path': self.path, 'seconds': time.monotonic()-started}
             if self.command == 'POST':
                 (report/f'offer-{len(results["http"])}.sdp').write_bytes(body)
-                body, entry['offerCandidates'] = rewrite_candidates(body, relay.back.getsockname()[1])
+                body, entry['offerCandidates'] = rewrite_candidates(body, relay.back.getsockname()[1], relay.back.getsockname()[0])
             headers = {k:v for k,v in self.headers.items() if k.lower() not in ('host', 'connection', 'content-length')}
             headers['Content-Length'] = str(len(body))
             connection.request(self.command, self.path, body=body, headers=headers)
             response = connection.getresponse(); data = response.read(); entry['status'] = response.status
             if response.status == 201:
+                if os.environ.get('STUDIO_WHIP_REFERENCE'):
+                    candidates = re.findall(rb'a=candidate:[^\r\n]*? udp [0-9]+ ([0-9.]+) ([0-9]+)', data, re.I)
+                    local = {'127.0.0.1'} | {a.address for addresses in psutil.net_if_addrs().values() for a in addresses if a.family == socket.AF_INET}
+                    candidates = [(address.decode(), int(number)) for address,number in candidates if address.decode() in local]
+                    assert candidates, 'Reference receiver has no local IPv4 candidate'
+                    relay.upstream = next((c for c in candidates if c[0]=='127.0.0.1'), candidates[0])
                 (report/f'answer-{len(results["http"])}.sdp').write_bytes(data)
                 data, entry['answerCandidates'] = rewrite_candidates(data, relay.front.getsockname()[1])
             results['http'].append(entry); self.send_response(response.status)
@@ -222,6 +240,8 @@ try:
     rtsp_port, srt_port, whip_port, udp_port = [port() for _ in range(4)]
     config = report/'mediamtx.yml'
     config.write_text(f'logLevel: warn\nrtspAddress: 127.0.0.1:{rtsp_port}\nrtspTransports: [tcp]\nrtmp: false\nwebrtcAddress: 127.0.0.1:{whip_port}\nwebrtcLocalUDPAddress: 127.0.0.1:{udp_port}\nwebrtcLocalTCPAddress: ""\nwebrtcIPsFromInterfaces: false\nwebrtcAdditionalHosts: [127.0.0.1]\nwebrtcICEServers2: []\nsrtAddress: 127.0.0.1:{srt_port}\nhls: false\nmoq: false\npaths:\n  all_others:\n')
+    if os.environ.get('STUDIO_MTX_ABSOLUTE'):
+        config.write_text(config.read_text()+'pathDefaults:\n  useAbsoluteTimestamp: true\n')
     log = (report/'mediamtx.log').open('wb'); mtx = subprocess.Popen([args.mediamtx,str(config)],stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)
     time.sleep(.8); assert mtx.poll() is None
     target = cli_call('launch','--headless','--show',str(show)); root = psutil.Process(target['pid']); owned.append(root)
@@ -246,6 +266,12 @@ try:
         receive(protocol,'baseline')
         profiles = [('moderate',.01,25,8,True),('severe',.10,100,20,False),
                     ('blackout',1,0,20,False),('restored',0,0,15,True)]
+        if os.environ.get('STUDIO_UDP_STARTUPS'):
+            profiles = []
+            for index in range(1, int(os.environ['STUDIO_UDP_STARTUPS'])):
+                command('output.stop'); until(lambda: not state()['output']['active'] and not state()['output']['stopping'], 'stop for startup probe')
+                command('output.start'); until(lambda: state()['output']['live'], 'startup probe live', 50)
+                receive(protocol, f'startup-{index}')
         if os.environ.get('STUDIO_UDP_DIAGNOSTIC'):
             profiles = [('loss-only',.01,0,5,True),('restored-between',0,0,5,False),
                         ('jitter-only',0,25,5,True),('restored',0,0,5,True)]
@@ -262,7 +288,7 @@ try:
         command('output.stop'); until(lambda: not state()['output']['active'] and not state()['output']['stopping'],'stop '+protocol)
         details['relay'] = relay.snapshot(); assert not details['relay']['errors'], details['relay']
         assert not any(p.get('queueOverflow', 0) or p.get('sendErrors', 0) for p in details['relay']['profiles'].values()), details['relay']
-        if not os.environ.get('STUDIO_UDP_DIAGNOSTIC'):
+        if not os.environ.get('STUDIO_UDP_DIAGNOSTIC') and not os.environ.get('STUDIO_UDP_STARTUPS'):
             assert details['relay']['profiles']['blackout'].get('upSent',0) == 0 and details['relay']['profiles']['blackout'].get('downSent',0) == 0
             assert details['relay']['profiles']['moderate'].get('upDropped',0)>0 and details['relay']['profiles']['moderate'].get('upReordered',0)>0
         relay.close(); relay = None

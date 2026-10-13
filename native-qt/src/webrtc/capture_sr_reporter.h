@@ -47,8 +47,17 @@ class CaptureSrReporter final : public rtc::MediaHandler {
             if (message->type == rtc::Message::Control || message->size() < sizeof(rtc::RtpHeader)) continue;
             const auto *header = reinterpret_cast<const rtc::RtpHeader *>(message->data());
             if (header->ssrc() != config_->ssrc || header->getSize() > message->size()) continue;
+            auto headerSize = header->getSize();
+            if (header->extension()) {
+                if (headerSize+4 > message->size()) continue;
+                headerSize += header->getExtensionHeaderSize();
+                if (headerSize > message->size()) continue;
+            }
+            const auto *data = reinterpret_cast<const uint8_t *>(message->data());
+            const size_t padding = header->padding() ? data[message->size()-1] : 0;
+            if (padding > message->size()-headerSize) continue;
             ++packets_;
-            octets_ += static_cast<uint32_t>(message->size() - header->getSize());
+            octets_ += static_cast<uint32_t>(message->size() - headerSize - padding);
             sentMedia = true;
         }
         const auto now = mediaTime100ns();
