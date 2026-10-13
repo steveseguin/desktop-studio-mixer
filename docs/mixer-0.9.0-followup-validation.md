@@ -300,3 +300,117 @@ slow/disconnected/network storage; and real GPU/device/reset, sleep and RDP
 transitions. Maximum retained crash-artifact storage, worker minidumps and
 broader secret-redaction cases also remain follow-up work. The clean-machine
 check remains deferred. No software fault injection proves power-loss safety.
+
+## UDP loss, reordering and outage pass
+
+Private evidence is under `native-qt/e2e/reports/studio-090-udp-faults/`.
+`mixer-udp-fault-e2e.py` runs the packaged executable above, records Program
+independently, and publishes through a bidirectional loopback UDP relay to
+MediaMTX 1.21.2. It uses the same frame-number/audio-identity clock as the
+previous quality workflow. SRT and WHIP request Auto hardware encoding at
+3,500 kbit/s; both report H264 Encoder MFT (Hardware). SRT requests 300 ms
+latency. WHIP offer/answer ICE candidates are rewritten only by the private
+fixture so media cannot bypass impairment. No firewall settings or machine
+network configuration change.
+
+Each protocol gets a clean baseline, 1% independent packet loss plus uniformly
+distributed 0-25 ms delay, 10% loss plus 0-100 ms delay, a 20-second complete
+bidirectional outage, and restored connectivity. Per-packet delay deliberately
+reorders bursts. The fixture retains received MKVs before/during moderate
+impairment and after restoration, plus Program screenshots, relay counters,
+API latency, recording drops and process memory. Severe impairment/outage
+exercise containment and recovery; they do not have receiver quality clips.
+The source and recorder workers must retain their PIDs, recording must stay
+active, and all received clips must decode and meet the existing timing limits.
+Decode failures stay failures even when transport and the app remain alive.
+
+The first full run found a reproducible WHIP quality gap. Independent recording
+decoded 6,481 frames at 29.999 fps with maximum measured A/V offset 24.3 ms,
+maximum timestamp gap 51 ms and longest repeated picture 77 ms. All three SRT
+clips decoded cleanly, including the moderate impairment clip. WHIP's baseline
+decoded cleanly, but its moderate impairment clip contained H264 macroblock
+errors. The app, source worker and recorder survived the entire sequence.
+
+A separate WHIP run isolated 1% loss from 0-25 ms jitter. Loss alone reproduced
+the H264 corruption; jitter/reordering alone decoded cleanly at 29.999 fps,
+maximum measured A/V offset 48 ms. Restored reception also decoded cleanly.
+The relay observed repeated RTP sequence numbers during both impaired phases,
+and SDP negotiated video NACK/PLI: retransmission was active. The independent
+recording decoded 2,392 frames at 29.998 fps with maximum measured A/V offset
+29 ms. Recording queue drops remained at the startup count of ten; API
+p95/maximum was 26.9/31.9 ms. Process-tree private memory ranged from 382.0 to
+395.3 MiB. These short observations do not establish long-term leak freedom.
+
+Receiver behavior is relevant to diagnosis: MediaMTX uses the default
+[64-packet reorder buffer](https://github.com/bluenviron/gortsplib/blob/v5.6.7/pkg/rtpreceiver/receiver.go),
+while its Pion dependency's default
+[NACK interval is 100 ms](https://github.com/pion/interceptor/blob/v0.1.49/pkg/nack/generator_interceptor.go).
+Delayed retransmissions can therefore outlive that buffer at this packet rate.
+This is a supported hypothesis, not proof that the receiver is the sole cause.
+Cross-checking another WHIP receiver and evaluating pacing/recovery behavior
+remain necessary before choosing a production change. No production bitrate,
+quality, buffering or security settings were weakened to make this pass green.
+
+The full repeat retained 146 observations of dropped RTP packets being
+retransmitted during WHIP's moderate phase; 66 were at least 64 sequence numbers
+behind the latest packet when they returned to the relay. That is evidence of
+late recovery, not proof those packets were accepted by the receiver. WHIP's
+moderate clip again had H264 errors. Its restored clip decoded cleanly with
+maximum measured A/V offset 46 ms, and its final picture was 233 ms behind
+Program. This repeat's WHIP baseline also failed the strict decode gate on
+duplicate video timestamps around two seconds; the two preceding baselines
+passed. The intermittent timestamp issue remains open separately from loss.
+
+SRT's repeat baseline and moderate clips decoded cleanly, at approximately
+30 fps and maximum measured A/V offsets 39.2 and 32 ms. Its restored clip
+decoded cleanly with maximum measured A/V offset 34 ms, but its final picture
+was 3.20 seconds behind Program, exceeding the 3-second freshness limit.
+The first full run's corresponding age was 2.77 seconds, compared with
+baseline/moderate ages of 0.57/0.73 seconds. This is a recovery-latency finding;
+clean decode and an active publishing indicator do not clear it.
+
+Independent recording in the repeat decoded 6,495 frames at 30.000 fps,
+maximum measured A/V offset 20 ms, maximum timestamp gap 51 ms, and longest
+repeated picture 93 ms. There were 429 repeated and 425 skipped source
+pictures, so nominal frame rate does not imply perfect source cadence.
+Recording queue drops stayed at the startup count of nine. API p95/maximum
+was 26.9/31.6 ms. Process-tree private memory ranged from 381.4 to 414.3 MiB;
+handles started/ended at 3,435/3,104. Average sampled CPU was 0.22 logical cores
+for the main app, 0.08 for media, 0.35 for both encoders, 0.04 for output workers
+and 0.04 for FFmpeg. This workload includes simultaneous recording/publishing,
+and newly started processes enter CPU accounting after their first sample.
+It is not a before/after optimization benchmark.
+
+At the half-second sampling cadence, SRT/WHIP first reported live again
+1.11/4.25 seconds after connectivity returned in the repeat. Those are status
+observations, not first-decoded-frame times. The source/recorder workers did
+not restart. The freshness assertion originally interrupted offline analysis
+at the SRT clip; the remaining retained clips were then analyzed separately
+in `final/udp-fault-analysis.json`. The fixture now retains freshness failures
+per clip and continues the remaining analyses without making the run pass.
+
+The final SRT-only diagnostic adds another 30-second settling interval and
+received clip, followed by stopping/restarting publishing on the clean path.
+Baseline/moderate final-picture ages were 700/633 ms. After automatic outage
+recovery, age was 3.60 seconds; after settling it remained 3.47 seconds. A
+clean publishing restart restored 633 ms. All five clips decoded cleanly at
+approximately 30 fps, with maximum measured A/V offsets 28/33/37/25/43 ms.
+Thus extra settling time did not clear the delay; a fresh publishing session
+did. Receiver versus publisher buffering still needs separate attribution.
+Independent recording decoded 5,250 frames at 30.002 fps, maximum measured
+A/V offset 15 ms and maximum timestamp gap 51 ms. Recording queue drops
+remained at the startup count of twelve. This diagnostic also exits with a
+failure result for the two stale recovered clips.
+
+This pass changes the reusable QA fixture and validation notes only. The
+remaining software priorities are persistent SRT recovery delay, WHIP video
+quality under modest loss, and the intermittent WHIP startup timestamp
+duplicate. A second receiver implementation should be part of those fixes'
+validation. Guest WebRTC impairment and long device-clock drift remain
+untested by this fixture. No GitHub release was published for this pass.
+
+All owned app/receiver processes exited. User preferences were restored
+byte-for-byte, the default show's original hash matched, and the original
+Game Capture checkout was unchanged. Syntax/whitespace checks are gates;
+the recorded packaged-app workflows above are the testing, with the stated
+quality failures still open.
