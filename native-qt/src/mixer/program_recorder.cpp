@@ -15,7 +15,7 @@ QString ProgramRecorder::status() const {
     }
     std::lock_guard lock(mutex_); return status_;
 }
-bool ProgramRecorder::start(const QString &path, int width, int height, int fps) {
+bool ProgramRecorder::start(const QString &path, int width, int height, int fps, const QStringList &extraAudioTracks) {
     if (busy_) return false;
     if (worker_.joinable()) worker_.join();
     output::Config config; config.protocol = output::Protocol::Recording; config.url = path.toStdString();
@@ -25,7 +25,7 @@ bool ProgramRecorder::start(const QString &path, int width, int height, int fps)
       status_ = "Starting recording..."; path_ = path; pending_ = {}; }
     remainingSeconds_ = -1;
     running_ = true; busy_ = true; dropped_ = 0;
-    worker_ = std::thread([this, config, width, height, fps, path] {
+    worker_ = std::thread([this, config, width, height, fps, path,extraAudioTracks] {
         const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         auto setStatus = [this](const QString &text) { std::lock_guard lock(mutex_); status_ = text; };
         video::VideoEncoder encoder;
@@ -40,6 +40,8 @@ bool ProgramRecorder::start(const QString &path, int width, int height, int fps)
             setStatus("Recording encoder could not start."); running_ = false;
         } else {
             output::MediaConfig media; media.width = width; media.height = height; media.fps = fps;
+            media.audioTrackNames.push_back("Program");
+            for (const auto &name : extraAudioTracks) media.audioTrackNames.push_back(name.toStdString());
             media.ffmpegPath = video::VideoEncoder::resolveFfmpegPath("");
             std::atomic<bool> keyframe{true};
             auto session = std::make_shared<output::Session>(config, media, [&keyframe] { keyframe = true; });
@@ -65,7 +67,7 @@ bool ProgramRecorder::start(const QString &path, int width, int height, int fps)
                         if (!directory.endsWith('\\')) directory += '\\';
                         ULARGE_INTEGER available{};
                         const bool haveSpace = GetDiskFreeSpaceExW(directory.toStdWString().c_str(), &available, nullptr, nullptr);
-                        remainingSeconds_ = haveSpace ? int64_t(available.QuadPart > 128*1024*1024 ? (available.QuadPart-128*1024*1024)*8/(uint64_t(settings.bitrate+256)*1000) : 0) : -1;
+                        remainingSeconds_ = haveSpace ? int64_t(available.QuadPart > 128*1024*1024 ? (available.QuadPart-128*1024*1024)*8/(uint64_t(settings.bitrate+256*media.audioTrackNames.size())*1000) : 0) : -1;
                         if (haveSpace && available.QuadPart < 128*1024*1024) {
                             setStatus("Recording stopped: less than 128 MB disk space remains."); running_ = false; break;
                         }
@@ -112,7 +114,7 @@ void ProgramRecorder::submit(const QImage &image, int64_t timestamp) {
     { std::lock_guard lock(mutex_); if (!pending_.isNull()) ++dropped_; pending_ = image; timestamp_ = timestamp; }
     wake_.notify_one();
 }
-void ProgramRecorder::audio(const std::vector<float> &samples, int64_t timestamp) {
-    if (auto session = session_.load(); running_ && session && session->wantsAudio()) session->sendPcm(samples, timestamp);
+void ProgramRecorder::audio(const std::vector<float> &samples, int64_t timestamp, int track) {
+    if (auto session = session_.load(); running_ && session && session->wantsAudio()) session->sendPcm(samples, timestamp,track);
 }
 }

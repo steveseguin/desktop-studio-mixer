@@ -28,6 +28,7 @@ public:
     QJsonObject status() const;
     QString error() const;
     static bool inWorker();
+    static QJsonObject browserBudgetState();
     static int run(int argc, char **argv);
 private:
     struct Impl;

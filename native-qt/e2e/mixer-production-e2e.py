@@ -240,7 +240,7 @@ try:
     receiver=subprocess.Popen([str(ffmpeg),'-hide_banner','-y','-i',f'srt://127.0.0.1:{port}?mode=listener&latency=120000',
         '-t','10','-map','0','-c','copy',str(received)],stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)
     children.append(receiver); time.sleep(1)
-    configure('SRT (caller)',f'srt://127.0.0.1:{port}'); press('studioStartOutput'); wait_output(True)
+    configure('SRT',f'srt://127.0.0.1:{port}'); press('studioStartOutput'); wait_output(True)
     receiver.wait(timeout=35); press('studioStartOutput'); wait_output(False); log.close()
     assert receiver.returncode==0 and received.stat().st_size>10000,(receiver.returncode,received)
     meta=subprocess.run([str(ffmpeg),'-hide_banner','-i',str(received)],capture_output=True,text=True).stderr

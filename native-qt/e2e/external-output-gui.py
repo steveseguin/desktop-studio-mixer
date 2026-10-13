@@ -77,7 +77,7 @@ def main():
             pick_source()
             if not named('advancedToggle').get_toggle_state():reveal(named('advancedToggle'));named('advancedToggle').click_input()
             for cycle,(protocol,label,url,key) in enumerate([('whip','WHIP','http://127.0.0.1:18889/gui-whip/whip',''),
-                    ('srt','SRT (caller)','srt://127.0.0.1:18890',''),('rtmp','RTMP / RTMPS','rtmp://127.0.0.1:19350/live','gui-secret-key')]*a.cycles):
+                    ('srt','SRT','srt://127.0.0.1:18890',''),('rtmp','RTMP / RTMPS','rtmp://127.0.0.1:19350/live','gui-secret-key')]*a.cycles):
                 select('outputSelect',label)
                 ice_controls=[c for c in window.descendants() if (c.element_info.automation_id or '').endswith('.iceModeSelect')]
                 assert any(c.is_visible() for c in ice_controls)==(protocol=='whip'),'Incorrect ICE control visibility'

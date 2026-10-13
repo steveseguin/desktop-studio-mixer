@@ -62,6 +62,16 @@ if late:
         'p95StateAndProcessSamplingMs':float(np.percentile([s['apiLatencyMs'] for s in late],95)),
         'recordingDroppedAtStart':late[0]['recording']['dropped_frames'],
         'recordingDroppedAtEnd':late[-1]['recording']['dropped_frames']}
+    roles=sorted({role for sample in late for role in sample.get('roles',{})})
+    results['last20Minutes']['processRoles']={}
+    for role in roles:
+        observed=[sample for sample in late if role in sample.get('roles',{})]
+        memory=[sample['roles'][role]['privateMiB'] for sample in observed]
+        cpu=[(b['roles'][role]['cpuSeconds']-c['roles'][role]['cpuSeconds'])/(b['seconds']-c['seconds'])*100
+             for c,b in zip(observed,observed[1:]) if b['roles'][role]['cpuSeconds']>=c['roles'][role]['cpuSeconds']]
+        results['last20Minutes']['processRoles'][role]={'medianPrivateMiB':float(np.median(memory)),
+            'privateMiBPerMinuteSlope':float(np.polyfit([s['seconds']/60 for s in observed],memory,1)[0]),
+            'medianCpuPercentOneCore':float(np.median(cpu)) if cpu else None}
 results['passed']=bool(results['avDriftWithin100ms'] and pts[-1]>3500)
 (report/'analysis.json').write_text(json.dumps(results,indent=2));print(json.dumps(results,indent=2))
 assert results['passed'],results

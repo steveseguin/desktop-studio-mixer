@@ -33,6 +33,7 @@ struct MediaConfig {
     int width = 1920, height = 1080, fps = 60;
     int audioChannels = 2;
     bool audioEnabled = true;
+    std::vector<std::string> audioTrackNames; // Recording only; track 0 is Program.
     webrtc::IceMode iceMode = webrtc::IceMode::All;
     std::string ffmpegPath;
 };
@@ -64,7 +65,7 @@ class Session {
     bool usesPcmInput() const;
     bool sendVideo(const webrtc::EncodedVideoPacket &packet, int width, int height);
     bool sendOpus(const webrtc::EncodedAudioPacket &packet);
-    bool sendPcm(const std::vector<float> &stereo48k, int64_t pts);
+    bool sendPcm(const std::vector<float> &stereo48k, int64_t pts, int track = 0);
     Status status() const;
   private:
     struct Impl;

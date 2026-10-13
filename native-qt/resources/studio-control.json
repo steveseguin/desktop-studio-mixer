@@ -441,7 +441,7 @@
       ]
     },
     "media.set": {
-      "description": "Control a media source.",
+      "description": "Control a media source. Seek in milliseconds; paused video updates its still picture without resuming playback.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -464,6 +464,11 @@
         },
         "restartOnTake": {
           "type": "boolean"
+        },
+        "seekMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
         }
       },
       "required": [
@@ -472,7 +477,7 @@
       ]
     },
     "record.start": {
-      "description": "Start independent Program recording to a new absolute .mkv path. Never overwrite.",
+      "description": "Start independent Program recording to a new absolute .mkv path. Never overwrite. Optional audioSources adds named tracks in Program MKV; isoSources creates separate source MKVs alongside it. Off-screen sources record; mute, On air, backstage and private break still protect audio. Backstage/private break hide ISO video.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -483,6 +488,26 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 4096
+        },
+        "audioSources": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "isoSources": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
         }
       },
       "required": [
@@ -534,6 +559,9 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 4096
+        },
+        "activate": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -860,6 +888,75 @@
       "required": [
         "command",
         "input",
+        "path"
+      ]
+    },
+    "local.set": {
+      "description": "Enable isolated Spout/virtual-camera Program outputs or unregister the camera for this Windows account. Camera registration is asynchronous; poll local_outputs.configuring. Outputs start off each launch.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": { "const": "local.set" },
+        "spout": { "type": "boolean" },
+        "virtualCamera": { "type": "boolean" },
+        "unregisterCamera": { "type": "boolean" }
+      },
+      "required": ["command"]
+    },
+    "show.saveAs": {
+      "description": "Save a show and make it the active autosave project.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "show.saveAs"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "command",
+        "path"
+      ]
+    },
+    "show.collect": {
+      "description": "Copy this show and its local assets into a new absolute folder, in the background. Poll show_collection. Existing folders are refused.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "show.collect"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "command",
+        "path"
+      ]
+    },
+    "show.relink": {
+      "description": "Relink missing image/media files by exact filename inside an existing absolute folder. Returns relinked count.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "show.relink"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "command",
         "path"
       ]
     }

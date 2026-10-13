@@ -65,13 +65,17 @@ def replacement(victim,kind):
 
 def evidence():
     data=state();total={'cpuSeconds':0,'privateMiB':0,'handles':0,'processes':0}
+    roles={}
     for p in [root,*root.children(recursive=True)]:
         try:
             c=p.cpu_times();total['cpuSeconds']+=c.user+c.system;total['privateMiB']+=p.memory_info().private/2**20
             total['handles']+=p.num_handles();total['processes']+=1
+            args=p.cmdline();role='app' if p.pid==root.pid else args[args.index('--studio-worker')+1] if '--studio-worker' in args else p.name()
+            entry=roles.setdefault(role,{'privateMiB':0,'cpuSeconds':0});entry['privateMiB']+=p.memory_info().private/2**20;entry['cpuSeconds']+=c.user+c.system
         except psutil.Error:pass
     total.update(seconds=round(time.monotonic()-started,2),system=data.get('system'),
         recording=data['recording'],output=data['output'],sources=[{k:s[k] for k in ('id','kind','frames','peak','error','starting')} for s in data['sources']])
+    total['roles']=roles
     return total
 
 def save():
@@ -137,7 +141,8 @@ paths:
         picture=int(elapsed//300)
         if picture!=last_picture:
             cli_call('screenshot','program','--out',str(report/f'program-{picture:02d}.png'), '--width','640');last_picture=picture
-        for at,kind in [(300,'browser'),(600,'microphone'),(900,'camera'),(1200,'publish-encoder'),(1500,'network'),(1800,'record-encoder'),(2100,'browser-hang')]:
+        faults=[] if os.environ.get('STUDIO_SOAK_NO_FAULTS')=='1' else [(300,'browser'),(600,'microphone'),(900,'camera'),(1200,'publish-encoder'),(1500,'network'),(1800,'record-encoder'),(2100,'browser-hang')]
+        for at,kind in faults:
             if elapsed<at or kind in done:continue
             event={'kind':kind,'seconds':round(elapsed,2)};done.add(kind);event_start=time.monotonic()
             try:

@@ -1,6 +1,6 @@
 # Desktop Studio automation and workspace preferences
 
-Version 0.7 adds a local mixer API, a JSON CLI, and a stdio MCP server (32 tools in 0.7.3).
+Version 0.7 adds a local mixer API, a JSON CLI, and a stdio MCP server (40 tools in 0.9.0).
 They control the same mixer and isolated workers as the UI. Automation is opt-in
 and does not start publishing or recording by itself.
 
@@ -64,6 +64,38 @@ and `browserHeight`. `media.set` adds `restartOnTake`; source state includes
 `recording.export_status`. Export is isolated, preserves the original and does
 not re-encode. The packaged CLI/MCP tools discover these additions from schema.
 
+Version 0.9 adds `media.set.seekMs` (nonnegative integer milliseconds), including
+paused picture cueing. `record.start` accepts optional unique `audioSources`
+(up to 16 IDs) and `isoSources` (up to four video-source IDs); omitting them uses
+the show's saved recording selections, while empty arrays request Program only.
+Named audio tracks obey the source's privacy/mute controls and are pre-master.
+Separate recordings stay active off-screen; see the README for routing details.
+`recording.active`/`busy` aggregate all recordings; `program_active` identifies
+Program alone. `audio_sources` and `separate_videos` identify the frozen recording
+plan, including each source file's path, status and active/busy flags.
+
+`show.saveAs` saves and activates an absolute `.mixer.json` path. `show.open` adds
+`activate:true` for the same active-project behavior as the visible Open command;
+without it, the original import-into-workspace behavior is retained. `show.collect`
+takes a new absolute folder under an existing parent and copies local image/media
+assets asynchronously; poll `show_collection.busy` and `status`. `show.relink`
+takes an existing absolute folder and returns the number of missing local assets
+relinked by exact filename. `project_path` reports the active autosave target.
+Another Studio instance cannot save over an active project. Collection is a
+snapshot and does not switch the active file.
+
+SRT accepts `?mode=caller` (default) or `?mode=listener`; rendezvous is rejected.
+`browser_resource_budget` reports whether the shared browser job is active, its
+CPU allowance in logical cores and its committed-memory limit/peak in MiB.
+
+`local.set` controls `spout` and `virtualCamera` independently and accepts
+`unregisterCamera:true` to stop/remove the per-user camera. Enabling and
+unregistering in the same request is rejected before changes. Registration is
+asynchronous: poll `local_outputs.configuring` before the next camera command.
+`local_outputs.spout`, `virtual_camera` and `status` show the requested states
+and producer errors. They work in a windowless Windows user session and start
+off on each launch. These are video outputs; choose audio separately in consumers.
+
 To automate a visible app, launch it with `--local-control-port=0`. Its default
 discovery file is `%LOCALAPPDATA%\VideoMixer\control.json`. CLI/MCP launches return
 a unique discovery path. Select it using `--discovery`, `DESKTOP_STUDIO_DISCOVERY`,
@@ -120,12 +152,14 @@ credentials in command history. The live schema describes exact fields and limit
 | `audio.set` | Gain, mute, on-air and channel routing, monitoring, delay, effects and master gain |
 | `guest.invite/set` | Private invitations, admission/backstage and guest returns |
 | `production.set` | Private break, all-microphone mute, talkback and guest-return switch |
-| `media.set` | Pause, loop, restart and restart when entering Program |
+| `media.set` | Pause, seek, loop, restart and restart when entering Program |
 | `canvas.set` | Resolution/frame-rate preset and CPU/GPU compositor |
-| `record.start/stop` | Independent Program recording to a new absolute MKV path |
+| `local.set` | Isolated Spout/virtual-camera producers and per-user camera registration |
+| `record.start/stop` | Program MKV with optional named audio tracks and separate source MKVs |
 | `record.export` | Remux a completed MKV to a new MP4 |
-| `output.configure/start/stop` | VDO.Ninja, RTMP/RTMPS, SRT caller, WHIP, or file output; SRT listener/rendezvous are rejected |
-| `show.save/open` | Explicit absolute `.mixer.json` paths |
+| `output.configure/start/stop` | VDO.Ninja, RTMP/RTMPS, SRT caller/listener, WHIP, or file output |
+| `show.save/saveAs/open` | Snapshot export, active Save As, or load an absolute `.mixer.json` path |
+| `show.collect/relink` | Copy assets into a new folder or relink missing local assets |
 | `workspace.set` | Single/Studio mode and workspace layout |
 | `preferences.set` | Theme and next-launch language |
 
@@ -153,8 +187,9 @@ Start/stop operations are asynchronous. Poll `output.state`, `output.live`, pack
 counters and `recording.status`; acceptance is not proof of receiver playback.
 `output.active` includes reconnecting sessions. Wait for `recording.busy=false`
 before opening a recording. Recording and CLI screenshot files are never
-overwritten. `show.open` loads into the current session; autosave continues at
-the session's original show path. `show.save` exports to an explicit path.
+overwritten. Without `activate:true`, `show.open` loads into the current session
+and retains its autosave target. `show.save` exports to an explicit path without
+changing that target.
 
 Screenshots capture Program, Preview, or the app's widget tree, without OS desktop
 capture. Program includes transitions without editing handles. Hidden canvases

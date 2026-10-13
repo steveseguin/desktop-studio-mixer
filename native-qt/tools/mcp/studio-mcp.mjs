@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { readFile } from 'node:fs/promises';
 import { discovery, defaultDiscovery, request, launch, screenshot } from './studio-client.mjs';
 
-const server=new McpServer({name:'desktop-studio',version:'0.7.4'});
+const server=new McpServer({name:'desktop-studio',version:'0.9.0'});
 let selected=defaultDiscovery;
 let queue=Promise.resolve();
 const text=value=>({content:[{type:'text',text:JSON.stringify(value)}],structuredContent:value});
@@ -46,6 +46,7 @@ const contract=JSON.parse(contractFile);
 function field(rule){
   if(rule.enum)return z.enum(rule.enum);
   if(rule.type==='boolean')return z.boolean();
+  if(rule.type==='array')return z.array(field(rule.items)).max(rule.maxItems);
   if(rule.type==='number' || rule.type==='integer'){
     let v=z.number();if(rule.type==='integer')v=v.int();return v.min(rule.minimum).max(rule.maximum);
   }

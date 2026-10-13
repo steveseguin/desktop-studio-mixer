@@ -178,6 +178,7 @@ class MainWindow : public QMainWindow {
     QPushButton *outputSecretRevealButton_ = nullptr;
     QLineEdit *outputStreamIdInput_ = nullptr;
     QSpinBox *outputLatencySpin_ = nullptr;
+    QComboBox *outputSrtMode_ = nullptr;
     QSpinBox *aacBitrateSpin_ = nullptr;
     QString previousOutput_ = QStringLiteral("vdo");
     bool switchingOutput_ = false;

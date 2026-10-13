@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QStandardPaths>
+#include <QSettings>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLockFile>
@@ -12,6 +13,7 @@
 #include <QTimer>
 #include <QUuid>
 #include "versus/mixer/isolated_source.h"
+#include "versus/mixer/show_files.h"
 #ifdef _WIN32
 #include <windows.h>
 #include <shellapi.h>
@@ -1057,17 +1059,19 @@ int main(int argc, char *argv[]) {
     }
 
     // Normal GUI mode
-    const auto showPath = studioShow.isEmpty()
+    auto showPath = studioShow.isEmpty()
         ? QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)).filePath("VideoMixer/studio.mixer.json")
         : QFileInfo(studioShow).absoluteFilePath();
-    QDir().mkpath(QFileInfo(showPath).absolutePath());
-    QLockFile showLock(showPath+".lock");
-    if (!showLock.tryLock(0)) {
-        spdlog::error(showLock.error() == QLockFile::LockFailedError
-            ? "This show is already open in another Desktop Studio instance. Use --studio-show for a separate show."
-            : "Could not create a show lock. Check the show path and folder permissions.");
+    if (studioShow.isEmpty()) {
+        const auto active = QSettings("VDO.Ninja","Video Mixer").value("mixer/activeProject").toString();
+        if (QFileInfo(active).isAbsolute() && QFileInfo(active).isFile()) showPath = active;
+    }
+    auto showLease = versus::mixer::showFileAccess().reserve(showPath);
+    if (!showLease.allowed) {
+        spdlog::error("This show is already open in another Desktop Studio instance, or its folder cannot be locked. Use --studio-show for a separate writable show.");
         return 2;
     }
+    versus::mixer::showFileAccess().activate(std::move(showLease));
     versus::ui::MainWindow::RuntimeOptions runtime;
     runtime.systemIntegrationsEnabled = !studioHeadless;
     runtime.mixerEnabled = true;

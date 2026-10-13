@@ -31,6 +31,8 @@ public:
     void setPaused(bool paused);
     void setLoop(bool loop);
     void restart();
+    void seek(int64_t milliseconds);
+    void onDiscontinuity(std::function<void()> callback) { discontinuity_ = std::move(callback); }
     bool ended() const;
     bool hasVideo() const;
     int64_t positionMs() const;
@@ -46,6 +48,7 @@ private:
     std::function<void(video::CapturedFrame)> frame_;
     std::function<void(QImage)> image_;
     audio::WindowAudioCaptureCore::StreamCallback audio_;
+    std::function<void()> discontinuity_;
     std::atomic<bool> running_{false};
     std::atomic<bool> failed_{false};
     mutable std::mutex mutex_;

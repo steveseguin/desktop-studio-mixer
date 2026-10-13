@@ -2,7 +2,9 @@
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import assert from 'node:assert/strict';
-import {writeFile} from 'node:fs/promises';
+import {writeFile,stat} from 'node:fs/promises';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 import path from 'node:path';
 const [packageRoot,discovery,report]=process.argv.slice(2);
 const client=new Client({name:'studio-packaged-e2e',version:'1.0'});
@@ -11,6 +13,13 @@ async function call(name,args={}){
  const r=await client.callTool({name:'desktop_studio_'+name,arguments:args},undefined,{timeout:45000});
  assert(!r.isError,JSON.stringify(r.content));return r;
 }
+async function waitState(check){
+ for(let n=0;n<200;n++){
+  const state=(await call('status')).structuredContent;if(check(state))return state;
+  await new Promise(resolve=>setTimeout(resolve,100));
+ }
+ assert.fail('Timed out waiting for the packaged app');
+}
 try {
  await client.connect(transport);
  const listed=await client.listTools();assert(listed.tools.length>=30);
@@ -18,7 +27,12 @@ try {
  const state=(await call('status')).structuredContent;assert(state.headless);
  assert(!JSON.stringify(state).includes('Bearer '));
  assert(listed.tools.some(t=>t.name==='desktop_studio_monitor_set'));
- for(const name of ['production_set','guest_invite','guest_set','record_export'])assert(listed.tools.some(t=>t.name==='desktop_studio_'+name));
+ for(const name of ['production_set','guest_invite','guest_set','record_export','show_saveAs','show_collect','show_relink','local_set'])assert(listed.tools.some(t=>t.name==='desktop_studio_'+name));
+ const recordTool=listed.tools.find(t=>t.name==='desktop_studio_record_start');
+ assert.equal(recordTool.inputSchema.properties.audioSources.type,'array');
+ assert.equal(recordTool.inputSchema.properties.isoSources.type,'array');
+ await call('local_set',{spout:false,virtualCamera:false});
+ assert(!(await call('status')).structuredContent.local_outputs.spout);
  await call('production_set',{privateBreak:true,microphonesMuted:true,privateTalkback:true});
  let production=(await call('status')).structuredContent;
  assert(production.private_break&&production.microphones_muted&&production.private_talkback);
@@ -30,6 +44,19 @@ try {
  production=(await call('status')).structuredContent;
  const caller=production.sources.find(s=>s.id===guest.id);assert(caller.admitted&&!caller.programAudio&&caller.channelMode===2);
  assert(!JSON.stringify(production).includes(guest.invite));
+ const recording=path.join(report,'mcp-tracks.mkv');
+ const invalidArray=await client.callTool({name:'desktop_studio_record_start',arguments:{path:recording,audioSources:[false]}});assert(invalidArray.isError);
+ const duplicateArray=await client.callTool({name:'desktop_studio_record_start',arguments:{path:recording,audioSources:[guest.id,guest.id]}});assert(duplicateArray.isError);
+ await call('record_start',{path:recording,audioSources:[guest.id],isoSources:[guest.id]});
+ await waitState(s=>s.recording.status.startsWith('Recording:')&&s.recording.separate_videos[0].status.startsWith('Recording:'));
+ await new Promise(resolve=>setTimeout(resolve,3000));await call('record_stop');
+ const recorded=(await waitState(s=>!s.recording.busy)).recording;
+ assert.deepEqual(recorded.audio_sources,[guest.id]);
+ for(const file of [recording,recorded.separate_videos[0].path]){
+  assert((await stat(file)).size>1000);
+  const decoded=await promisify(execFile)(path.join(packageRoot,'ffmpeg/bin/ffmpeg.exe'),['-v','error','-i',file,'-map','0','-fps_mode:v','passthrough','-enc_time_base:v','1:1000000','-f','null','-'],{windowsHide:true,timeout:30000});
+  assert.equal(decoded.stderr,'');
+ }
  await call('guest_set',{id:guest.id,admitted:false});await call('source_remove',{id:guest.id});
  await call('monitor_set',{refresh:true});
  let monitoring;
@@ -64,5 +91,5 @@ try {
  const resource=await client.readResource({uri:'studio://state'});assert(JSON.parse(resource.contents[0].text).scenes.some(s=>s.id===added.id));
  await call('scene_select',{id:state.preview});await call('scene_remove',{id:added.id});
  const invalid=await client.callTool({name:'desktop_studio_audio_set',arguments:{source:'missing',gain:100}});assert(invalid.isError);
- await writeFile(path.join(report,'mcp.json'),JSON.stringify({tools:listed.tools.length,imageBytes:pixels.length,resource:true,invalidRejected:true,monitorDeviceAndGain:true,monitorRefresh:true,missingMonitorRejected:true,portraitPresetsAndScreenshot:true,invalidFormatRejected:true,guestAndProductionControls:true,audioChannelRouting:true},null,2));
+ await writeFile(path.join(report,'mcp.json'),JSON.stringify({tools:listed.tools.length,imageBytes:pixels.length,resource:true,invalidRejected:true,monitorDeviceAndGain:true,monitorRefresh:true,missingMonitorRejected:true,portraitPresetsAndScreenshot:true,invalidFormatRejected:true,guestAndProductionControls:true,audioChannelRouting:true,typedRecordingArrays:true,separateRecordingsDecoded:true,invalidAndDuplicateArraysRejected:true,localOutputsControl:true},null,2));
 } finally { await client.close(); }

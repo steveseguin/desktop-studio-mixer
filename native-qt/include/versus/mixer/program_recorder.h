@@ -1,6 +1,7 @@
 #pragma once
 #include <QImage>
 #include <QString>
+#include <QStringList>
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
@@ -13,12 +14,12 @@ namespace versus::mixer {
 class ProgramRecorder {
 public:
     ~ProgramRecorder();
-    bool start(const QString &path, int width, int height, int fps);
+    bool start(const QString &path, int width, int height, int fps, const QStringList &extraAudioTracks = {});
     void stop();
     void requestStop();
     bool busy() const { return busy_; }
     void submit(const QImage &image, int64_t timestamp);
-    void audio(const std::vector<float> &samples, int64_t timestamp);
+    void audio(const std::vector<float> &samples, int64_t timestamp, int track = 0);
     bool active() const { return running_; }
     QString status() const;
     QString path() const { std::lock_guard lock(mutex_); return path_; }

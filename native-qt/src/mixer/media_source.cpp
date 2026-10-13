@@ -67,9 +67,12 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                     auto origin = Clock::now(); std::set<DWORD> finished;
                     LONGLONG lastSampleEnd = 0;
                     uint64_t cycleAudioFrames = 0;
+                    LONGLONG cue = 0;
+                    bool previewPending = false;
+                    bool decodedCueFrame = false;
                     video::CapturedFrame captured;
                     while (running_) {
-                        if (paused_) {
+                        if (paused_ && !previewPending) {
                             const auto pauseStart = Clock::now(); std::unique_lock lock(mutex_);
                             wake_.wait(lock, [this] { return !running_ || !paused_ || seek_; });
                             origin += Clock::now()-pauseStart; if (!running_) break;
@@ -80,11 +83,14 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                             // so a later loop cannot inherit stale EOS state.
                             hr = reader->Flush(MF_SOURCE_READER_ALL_STREAMS);
                             if (FAILED(hr)) { fail("Could not reset media playback."); break; }
-                            PROPVARIANT position{}; InitPropVariantFromInt64(0, &position);
+                            cue = std::clamp<int64_t>(seekMs_.load(), 0, std::max<int64_t>(0,durationMs_.load()-1))*10000;
+                            PROPVARIANT position{}; InitPropVariantFromInt64(cue, &position);
                             hr = reader->SetCurrentPosition(GUID_NULL, position); PropVariantClear(&position);
                             if (FAILED(hr)) { fail("This file cannot seek or loop."); break; }
-                            origin = Clock::now(); finished.clear(); ended_ = false; lastSampleEnd = 0; cycleAudioFrames = 0;
-                            positionMs_ = 0;
+                            origin = Clock::now()-std::chrono::nanoseconds(cue*100);
+                            finished.clear(); ended_ = false; lastSampleEnd = cue; cycleAudioFrames = uint64_t(cue)*48000/10000000;
+                            positionMs_ = cue/10000; previewPending = paused_ && hasVideo_; decodedCueFrame = false;
+                            if (paused_ && !hasVideo_) continue;
                         }
                         DWORD stream = 0, flags = 0; LONGLONG pts = 0; ComPtr<IMFSample> sample;
                         // Keep decoder streams selected for their whole lifetime.
@@ -103,6 +109,12 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                             stride = LONG(MFGetAttributeUINT32(type.Get(), MF_MT_DEFAULT_STRIDE, width*4));
                         }
                         if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+                            // A cue between the final frame and the duration has
+                            // no later video sample. Show the last decoded frame
+                            // instead of leaving an unrelated pre-seek picture.
+                            if (stream == videoStream && previewPending && decodedCueFrame) {
+                                frame(captured); previewPending = false;
+                            }
                             finished.insert(stream);
                             if ((videoStream == DWORD(-1) || finished.contains(videoStream)) && (audioStream == DWORD(-1) || finished.contains(audioStream))) {
                                 if (loop_) {
@@ -114,28 +126,34 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                                     std::unique_lock lock(mutex_);
                                     wake_.wait_until(lock, end, [this] { return !running_ || paused_ || seek_; });
                                     if (!running_) break;
-                                    if (!paused_) seek_ = true;
+                                    if (!paused_) { seekMs_ = 0; seek_ = true; }
                                 }
                                 else { ended_ = true; paused_ = true; if (durationMs_ > 0) positionMs_ = durationMs_.load(); }
+                                previewPending = false;
                             }
                             continue;
                         }
                         if (!sample) continue;
                         LONGLONG duration = 0; sample->GetSampleDuration(&duration);
+                        // MF may seek to an earlier keyframe. Decode/discard up
+                        // to the requested cue; never show that earlier picture.
+                        const bool beforeCue = pts < cue;
+                        if (beforeCue && stream != videoStream) continue;
+                        if (previewPending && stream != videoStream) continue;
                         lastSampleEnd = std::max(lastSampleEnd, std::max<LONGLONG>(0, pts)+std::max<LONGLONG>(0, duration));
                         const auto deadline = origin + std::chrono::nanoseconds(std::max<LONGLONG>(0, pts)*100);
                         { std::unique_lock lock(mutex_); wake_.wait_until(lock, deadline, [this] { return !running_ || paused_ || seek_; }); }
                         if (!running_) break;
                         if (seek_) continue;
                         // Preserve this sample while paused; do not consume media off the clock.
-                        if (paused_) {
+                        if (paused_ && !previewPending) {
                             const auto pauseStart = Clock::now(); std::unique_lock lock(mutex_);
                             wake_.wait(lock, [this] { return !running_ || !paused_ || seek_; });
                             origin += Clock::now()-pauseStart;
                             if (!running_) break; if (seek_) continue;
                         }
                         const auto timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count()/100;
-                        positionMs_ = std::max<int64_t>(0,pts/10000);
+                        if (!beforeCue) positionMs_ = std::max<int64_t>(0,pts/10000);
                         ComPtr<IMFMediaBuffer> buffer; if (FAILED(sample->ConvertToContiguousBuffer(&buffer))) continue;
                         BYTE *bytes = nullptr; DWORD length = 0;
                         if (FAILED(buffer->Lock(&bytes, nullptr, &length))) continue;
@@ -158,7 +176,11 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                                     std::memcpy(out+col*4, in+col*4, 4); out[col*4+3] = 255;
                                 }
                             }
-                            frame(captured);
+                            decodedCueFrame = true;
+                            if (!beforeCue) {
+                                frame(captured);
+                                if (previewPending) { previewPending = false; origin = Clock::now()-std::chrono::nanoseconds(std::max<LONGLONG>(0,pts)*100); }
+                            }
                         } else if (stream == audioStream && length%8 == 0) {
                             // Some readers omit duration. PCM length still gives the
                             // complete interval at our negotiated 48 kHz stereo rate.

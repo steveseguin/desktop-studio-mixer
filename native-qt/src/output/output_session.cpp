@@ -41,6 +41,7 @@ struct Packet {
     int64_t pts = 0;
     int width = 0, height = 0;
     bool keyframe = false;
+    int audioTrack = 0;
 };
 bool sameOrigin(const QUrl &a, const QUrl &b) {
     return a.scheme() == b.scheme() && a.host().compare(b.host(), Qt::CaseInsensitive) == 0 &&
@@ -368,7 +369,7 @@ struct Session::Impl {
                 if (!pop(first)) continue;
                 if (first.kind == Packet::Kind::Pcm) {
                     initialAudio.push_back(first);
-                    while (initialAudio.size() > 30) initialAudio.pop_front();
+                    while (initialAudio.size() > 30*std::max<size_t>(1,media.audioTrackNames.size())) initialAudio.pop_front();
                 } else if (first.kind == Packet::Kind::Video && first.keyframe) {
                     units = detail::MatroskaStream::nals(std::vector<uint8_t>(first.data.begin(), first.data.end()));
                     codec = detail::MatroskaStream::codecPrivate(units);
@@ -381,7 +382,7 @@ struct Session::Impl {
             if (!initialAudio.empty()) epoch = std::min(epoch, initialAudio.front().pts);
             QStringList args{"-hide_banner", "-loglevel", "error", "-nostdin", "-probesize", "65536", "-analyzeduration", "100000",
                 "-f", "matroska", "-i", "pipe:0", "-map", "0:v:0", "-c:v", "copy"};
-            if (media.audioEnabled) args << "-map" << "0:a:0" << "-c:a" << "aac" << "-b:a"
+            if (media.audioEnabled) args << "-map" << (config.protocol == Protocol::Recording ? "0:a" : "0:a:0") << "-c:a" << "aac" << "-b:a"
                 << QString::number(config.aacBitrateKbps) + 'k' << "-ar" << "48000" << "-ac" << QString::number(media.audioChannels);
             else args << "-an";
             args << "-max_interleave_delta" << "100000" << "-flush_packets" << "1" << "-stats_period" << "0.5"
@@ -409,8 +410,8 @@ struct Session::Impl {
                 // of application logs and drain it to prevent buffer growth.
                 process.readAllStandardError();
             };
-            write(mux.header(codec, first.width, first.height, media.fps, media.audioChannels, media.audioEnabled));
-            for (const auto &audio : initialAudio) { write(mux.audio(audio.data, audio.pts - epoch)); count(audio); }
+            write(mux.header(codec, first.width, first.height, media.fps, media.audioChannels, media.audioEnabled,media.audioTrackNames));
+            for (const auto &audio : initialAudio) { write(mux.audio(audio.data, audio.pts - epoch,audio.audioTrack)); count(audio); }
             write(mux.video(units, first.pts - epoch, true)); count(first);
             auto lastProgress = Clock::now(), lastVideoInput = Clock::now();
             qint64 lastFrame = 0, lastOutputTime = -1;
@@ -418,7 +419,10 @@ struct Session::Impl {
             while (!stopping.load()) {
                 // This worker has no Qt event loop. Pump the child's output
                 // explicitly, including when the input pipe drains instantly.
-                process.waitForReadyRead(1);
+                // PCM contributes 100 packets/second per track. Sleeping even
+                // 1 ms for every packet throttles a 17-track recording below
+                // real time. Pump without waiting; pop() sleeps when idle.
+                process.waitForReadyRead(0);
                 progress += process.readAllStandardOutput();
                 if (progress.size() > 65536) throw OutputError("Output FFmpeg returned excessive progress data.");
                 for (qsizetype end; (end = progress.indexOf('\n')) >= 0;) {
@@ -451,7 +455,7 @@ struct Session::Impl {
                     if (!nextCodec.isEmpty() && nextCodec != codec) throw OutputError("Video configuration changed; reconnecting output.");
                     write(mux.video(units, packet.pts - epoch, packet.keyframe));
                     lastVideoInput = Clock::now();
-                } else if (packet.kind == Packet::Kind::Pcm) write(mux.audio(packet.data, packet.pts - epoch));
+                } else if (packet.kind == Packet::Kind::Pcm) write(mux.audio(packet.data, packet.pts - epoch,packet.audioTrack));
                 else continue;
                 count(packet);
             }
@@ -505,6 +509,7 @@ struct Session::Impl {
                 {"latency", config.latencyMs}, {"aac", config.aacBitrateKbps}, {"width", media.width}, {"height", media.height},
                 {"fps", media.fps}, {"channels", media.audioChannels}, {"audio", media.audioEnabled},
                 {"ice", int(media.iceMode)}, {"ffmpeg", QString::fromStdString(media.ffmpegPath)}};
+            QJsonArray trackNames; for (const auto &name : media.audioTrackNames) trackNames.append(QString::fromStdString(name)); command["audioTrackNames"] = trackNames;
             bool started = process.start("output") && process.call(command)["ok"].toBool();
             if (started) { clearQueue(); restartRequested = false; requestKeyframe(); }
             qint64 keyframes = -1;
@@ -531,7 +536,7 @@ struct Session::Impl {
                     QJsonArray packets; QByteArray bytes;
                     do {
                         packets.append(QJsonObject{{"kind", int(packet.kind)}, {"pts", qint64(packet.pts)}, {"width", packet.width},
-                            {"height", packet.height}, {"keyframe", packet.keyframe}, {"offset", bytes.size()}, {"size", packet.data.size()}});
+                            {"height", packet.height}, {"keyframe", packet.keyframe}, {"offset", bytes.size()}, {"size", packet.data.size()}, {"audioTrack",packet.audioTrack}});
                         bytes.append(packet.data);
                     } while (packets.size() < 64 && bytes.size() < 512*1024 && pop(packet, 0));
                     const auto result = process.call({{"op", "packets"}, {"packets", packets}}, bytes.constData(), bytes.size());
@@ -567,6 +572,9 @@ Session::Session(Config config, MediaConfig media, std::function<void()> request
     : impl_(std::make_unique<Impl>(std::move(config), std::move(media), std::move(requestKeyframe))) {}
 Session::~Session() { stop(); }
 bool Session::start() {
+    if (impl_->media.audioTrackNames.size() > 17 || (impl_->config.protocol != Protocol::Recording && impl_->media.audioTrackNames.size() > 1)) {
+        impl_->setState(State::Error,"Separate audio tracks are limited to 16 recording sources."); return false;
+    }
     const auto error = validateConfig(impl_->config);
     if (!error.empty()) { impl_->setState(State::Error, error); return false; }
     if (impl_->config.protocol == Protocol::VdoNinja) return false;
@@ -596,15 +604,16 @@ bool Session::sendOpus(const webrtc::EncodedAudioPacket &packet) {
     if (usesPcmInput() || packet.pcm) return false;
     return impl_->push({Packet::Kind::Opus, QByteArray(reinterpret_cast<const char *>(packet.data.data()), packet.data.size()), packet.pts});
 }
-bool Session::sendPcm(const std::vector<float> &stereo48k, int64_t pts) {
+bool Session::sendPcm(const std::vector<float> &stereo48k, int64_t pts, int track) {
     if (!usesPcmInput() || !impl_->media.audioEnabled) return false;
+    if (track < 0 || size_t(track) >= std::max<size_t>(1,impl_->media.audioTrackNames.size())) return false;
     QByteArray bytes;
     if (impl_->media.audioChannels == 1 && mixer::ProcessWorker::inWorker()) {
         std::vector<float> mono(stereo48k.size() / 2);
         for (size_t i = 0; i < mono.size(); ++i) mono[i] = (stereo48k[i * 2] + stereo48k[i * 2 + 1]) * 0.5f;
         bytes = QByteArray(reinterpret_cast<const char *>(mono.data()), mono.size() * sizeof(float));
     } else bytes = QByteArray(reinterpret_cast<const char *>(stereo48k.data()), stereo48k.size() * sizeof(float));
-    return impl_->push({Packet::Kind::Pcm, std::move(bytes), pts});
+    return impl_->push({Packet::Kind::Pcm, std::move(bytes), pts,0,0,false,track});
 }
 Status Session::status() const {
     std::lock_guard lock(impl_->mutex);

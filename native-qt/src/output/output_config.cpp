@@ -51,12 +51,14 @@ std::string validateConfig(const Config &config) {
         if (scheme != "rtmp" && scheme != "rtmps") return "RTMP needs an rtmp:// or rtmps:// server URL.";
         if (url.path().isEmpty() || url.path() == "/") return "Include the RTMP application path in the server URL.";
     } else if (config.protocol == Protocol::Srt) {
-        if (scheme != "srt" || url.port() <= 0) return "SRT caller needs an srt://host:port URL.";
+        if (scheme != "srt" || url.port() <= 0) return "SRT needs an srt://host:port URL.";
         if (!url.userInfo().isEmpty() || (!url.path().isEmpty() && url.path() != "/"))
             return "Use the SRT stream ID and passphrase fields instead of a URL path or user name.";
         const QUrlQuery query(url);
         const auto mode = query.queryItemValue("mode");
-        if (!mode.isEmpty() && mode != "caller") return "Only SRT caller mode is supported.";
+        if (mode == "rendezvous") return "SRT rendezvous is not available with this output backend. Use caller or listener.";
+        if (!mode.isEmpty() && mode != "caller" && mode != "listener") return "SRT mode must be caller or listener.";
+        if (query.allQueryItemValues("mode").size() > 1) return "Specify one SRT connection mode.";
         const auto passphrase = config.passphrase.empty()
             ? query.queryItemValue("passphrase", QUrl::FullyDecoded).toUtf8() : QByteArray::fromStdString(config.passphrase);
         if (!passphrase.isEmpty() && (passphrase.size() < 10 || passphrase.size() > 79))
@@ -101,7 +103,8 @@ std::string destinationUrl(const Config &config) {
         const auto set = [&](const QString &name, const QString &value) {
             query.removeAllQueryItems(name); query.addQueryItem(name, encode(value));
         };
-        set("mode", "caller"); set("transtype", "live");
+        const auto mode = query.queryItemValue("mode");
+        set("mode", mode.isEmpty() ? "caller" : mode); set("transtype", "live");
         set("latency", QString::number(config.latencyMs * 1000));
         set("pkt_size", "1316");
         if (!config.streamId.empty()) set("streamid", QString::fromStdString(config.streamId));

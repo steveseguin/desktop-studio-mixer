@@ -123,7 +123,7 @@ paths:
     log = (report/'server.log').open('w')
     mtx = subprocess.Popen([os.environ['MEDIAMTX_PATH'],str(config)],stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW); children.append(mtx)
     protocols = [('RTMP / RTMPS',f'rtmp://127.0.0.1:{rtmp}/qa-rtmp','qa-rtmp'),
-                 ('SRT (caller)',f'srt://127.0.0.1:{srt}?streamid=publish:qa-srt','qa-srt'),
+                 ('SRT',f'srt://127.0.0.1:{srt}?streamid=publish:qa-srt','qa-srt'),
                  ('WHIP',f'http://127.0.0.1:{whip}/qa-whip/whip','qa-whip')]
     results['protocolFailures'] = {}
     def receive(name,label):

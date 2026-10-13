@@ -58,7 +58,7 @@ try:
     with socket.socket() as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
     received=report/'encrypted-srt.mkv';log=(report/'srt.log').open('w')
     receiver=subprocess.Popen([str(ffmpeg),'-hide_banner','-y','-i',f'srt://127.0.0.1:{port}?mode=listener&latency=120000&passphrase={secret}&pbkeylen=16','-t','6','-map','0','-c','copy',str(received)],stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)
-    configure('SRT (caller)',f'srt://127.0.0.1:{port}');press('mixerOutput');control('outputSecretInput').set_edit_text(secret);control('outputStreamIdInput').set_edit_text('');window.child_window(title='Studio',control_type='TabItem').click_input()
+    configure('SRT',f'srt://127.0.0.1:{port}');press('mixerOutput');control('outputSecretInput').set_edit_text(secret);control('outputStreamIdInput').set_edit_text('');window.child_window(title='Studio',control_type='TabItem').click_input()
     press('studioStartOutput');wait_output(True);assert receiver.wait(timeout=40)==0
     press('studioStartOutput');wait_output(False);log.close();results['encryptedSrt']=decode(received)
     assert control('studioRecord').window_text()=='Stop recording';press('studioRecord');until(lambda:'saved' in control('recordingStatus').window_text().lower(),'recording finalization');results['independentRecording']=decode(path)

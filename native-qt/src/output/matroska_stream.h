@@ -7,6 +7,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <vector>
+#include <string>
 
 namespace versus::output::detail {
 
@@ -51,7 +52,7 @@ class MatroskaStream {
         return out;
     }
 
-    QByteArray header(const QByteArray &avcc, int width, int height, int fps, int channels, bool audio) {
+    QByteArray header(const QByteArray &avcc, int width, int height, int fps, int channels, bool audio, const std::vector<std::string> &names = {}) {
         QByteArray ebml = integer(0x4286, 1) + integer(0x42f7, 1) + integer(0x42f2, 4) + integer(0x42f3, 8)
             + element(0x4282, "matroska") + integer(0x4287, 4) + integer(0x4285, 2);
         QByteArray out = element(0x1a45dfa3, ebml);
@@ -67,7 +68,9 @@ class MatroskaStream {
             const double sampleRate = 48000.0;
             uint64_t bits; std::memcpy(&bits, &sampleRate, sizeof(bits));
             QByteArray rate; appendBig(rate, bits, 8);
-            tracks += element(0xae, integer(0xd7, 2) + integer(0x73c5, 2) + integer(0x83, 2) + integer(0x9c, 0)
+            for (size_t track=0; track<std::max<size_t>(1,names.size()); ++track)
+            tracks += element(0xae, integer(0xd7, 2+track) + integer(0x73c5, 2+track) + integer(0x83, 2) + integer(0x9c, 0)
+                + integer(0x88,track == 0 ? 1 : 0) + element(0x536e,track < names.size() ? QByteArray::fromStdString(names[track]) : QByteArray("Program"))
                 + element(0x86, "A_PCM/FLOAT/IEEE")
                 + element(0xe1, element(0xb5, rate) + integer(0x9f, channels) + integer(0x6264, 32)));
         }
@@ -81,7 +84,7 @@ class MatroskaStream {
         for (const auto &nal : units) { appendBig(payload, uint64_t(nal.size()), 4); payload += nal; }
         return block(1, relativePts100ns, keyframe, payload);
     }
-    QByteArray audio(const QByteArray &pcm, int64_t relativePts100ns) { return block(2, relativePts100ns, true, pcm); }
+    QByteArray audio(const QByteArray &pcm, int64_t relativePts100ns, int track = 0) { return block(2+track, relativePts100ns, true, pcm); }
 
   private:
     static void appendBig(QByteArray &out, uint64_t value, int bytes) {

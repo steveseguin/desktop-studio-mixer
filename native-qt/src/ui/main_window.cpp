@@ -1868,7 +1868,7 @@ void MainWindow::setupUI() {
     outputSelect_->setAccessibleName(studioText("Output destination"));
     outputSelect_->addItem(studioText("VDO.Ninja (default)"), "vdo");
     outputSelect_->addItem(studioText("WHIP"), "whip");
-    outputSelect_->addItem(studioText("SRT (caller)"), "srt");
+    outputSelect_->addItem(studioText("SRT"), "srt");
     outputSelect_->addItem(studioText("RTMP / RTMPS"), "rtmp");
     outputSelect_->addItem(studioText("Record to file (MKV)"), "file");
     installComboWheelGuard(outputSelect_);
@@ -1907,6 +1907,21 @@ void MainWindow::setupUI() {
     outputLatencySpin_->setRange(20, 8000); outputLatencySpin_->setValue(200); outputLatencySpin_->setSuffix(" ms");
     installSpinWheelGuard(outputLatencySpin_);
     outputForm_->addRow("SRT latency", outputLatencySpin_);
+    outputSrtMode_ = new QComboBox(this); outputSrtMode_->setObjectName("outputSrtMode");
+    outputSrtMode_->setAccessibleName(studioText("SRT connection mode"));
+    for (const auto &mode : {"caller", "listener"}) outputSrtMode_->addItem(mode, mode);
+    outputForm_->addRow("SRT mode", outputSrtMode_);
+    connect(outputSrtMode_, &QComboBox::currentIndexChanged, this, [this] {
+        if (outputSelect_->currentData() != "srt") return;
+        QUrl url(outputUrlInput_->text()); QUrlQuery query(url);
+        query.removeAllQueryItems("mode"); query.addQueryItem("mode",outputSrtMode_->currentData().toString());
+        url.setQuery(query); outputUrlInput_->setText(url.toString(QUrl::FullyEncoded));
+    });
+    connect(outputUrlInput_, &QLineEdit::textChanged, this, [this] {
+        const QSignalBlocker block(outputSrtMode_);
+        const auto mode = QUrlQuery(QUrl(outputUrlInput_->text())).queryItemValue("mode");
+        outputSrtMode_->setCurrentIndex(std::max(0,outputSrtMode_->findData(mode)));
+    });
     outputHelp_ = new QLabel(this); outputHelp_->setWordWrap(true);
     outputForm_->addRow(outputHelp_);
     advancedForm->addRow(outputPanel_);
@@ -3805,13 +3820,14 @@ void MainWindow::updateOutputControls() {
         : "Auto allows host, STUN/direct, and TURN relay candidates. ICE selects the working path automatically.");
     setFormRowVisible(outputForm_, outputStreamIdInput_, srt);
     setFormRowVisible(outputForm_, outputLatencySpin_, srt);
+    setFormRowVisible(outputForm_, outputSrtMode_, srt);
     outputSecretLabel_->setText(whip ? "Bearer token" : srt ? "Passphrase" : "Stream key");
     outputSecretInput_->setAccessibleName(whip ? "WHIP bearer token" : srt ? "SRT passphrase" : "RTMP stream key");
     outputSecretInput_->setPlaceholderText("Optional");
     outputUrlInput_->setPlaceholderText(whip ? "https://server.example/live/whip" :
         srt ? "srt://server.example:8890" : "rtmps://server.example/live");
     outputHelp_->setText(whip ? "H.264 video and 48 kHz Opus audio. Enter the complete WHIP publishing endpoint."
-        : srt ? "H.264 video and 48 kHz AAC audio. Caller mode connects to a listening receiver. Higher latency allows more time to recover lost packets."
+        : srt ? "H.264/AAC. Caller connects to a receiver. Listener binds the URL address and waits for a receiver to connect; use a passphrase for private feeds. Higher latency helps recover lost packets."
         : "H.264 video and 48 kHz AAC audio. Enter a server URL and stream key, or paste the complete publishing URL. RTMPS encrypts the connection.");
     if (protocol == "file") {
         outputUrlInput_->setPlaceholderText("C:/Users/You/Videos/show.mkv");
@@ -4232,7 +4248,7 @@ void MainWindow::syncMixerCaptureControls() {
 void MainWindow::setConfigControlsEnabled(bool enabled) {
     configControlsEnabled_ = enabled;
     for (QWidget *field : std::initializer_list<QWidget *>{outputSelect_, outputUrlInput_, outputSecretInput_,
-            outputSecretRevealButton_, outputStreamIdInput_, outputLatencySpin_, aacBitrateSpin_})
+            outputSecretRevealButton_, outputStreamIdInput_, outputLatencySpin_, outputSrtMode_, aacBitrateSpin_})
         if (field) field->setEnabled(enabled);
     if (!enabled && outputSecretRevealButton_) outputSecretRevealButton_->setChecked(false);
 

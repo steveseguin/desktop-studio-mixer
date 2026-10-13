@@ -105,8 +105,8 @@ try:
         assert 'CPU limit active' in health,health
         results['cpuStress']={'treeCpuPercentOneCore':round(usage,2),'nominalCpuCapOneCore':expected,'uiMaxMs':round(max(latencies),2),'uiP95Ms':round(float(np.percentile(latencies,95)),2),'health':health}
         print('CPU stress:',json.dumps(results['cpuStress']),flush=True)
-        # Several independently capped pages can still create substantial
-        # aggregate load. Keep the healthy video/audio recording throughout.
+        # The parent job caps several busy pages together. Keep the healthy
+        # video/audio recording throughout and verify the aggregate allowance.
         extra=[]
         for index in range(2):
             name='QA concurrent browser '+str(index);add_source('Browser /',name,url+'/fault?peer='+str(index),transparent=None)
@@ -117,10 +117,11 @@ try:
         time.sleep(3);busy=[worker,*[p for _,_,p in extra]];initial=sum(cpu(p) for p in busy);begin=time.perf_counter();latencies=[]
         for _ in range(75):time.sleep(.2);latencies.append(responsive())
         aggregate=(sum(cpu(p) for p in busy)-initial)/(time.perf_counter()-begin)*100
-        assert aggregate>expected*1.5 and aggregate<expected*3*1.3,aggregate
+        aggregate_cap=min(8,psutil.cpu_count()*.5)*100
+        assert aggregate>aggregate_cap*.6 and aggregate<aggregate_cap*1.25,(aggregate,aggregate_cap)
         assert worker_for(hardware_id).pid==healthy_pid
         window.capture_as_image().save(str(report/'three-busy-browsers.png'))
-        results['concurrentCpuStress']={'pages':3,'treeCpuPercentOneCore':round(aggregate,2),'uiMaxMs':round(max(latencies),2),'healthyBrowserUnchanged':True}
+        results['concurrentCpuStress']={'pages':3,'treeCpuPercentOneCore':round(aggregate,2),'aggregateCapOneCore':aggregate_cap,'uiMaxMs':round(max(latencies),2),'healthyBrowserUnchanged':True}
         print('Concurrent CPU stress:',json.dumps(results['concurrentCpuStress']),flush=True)
         for name,other,_ in extra:
             other.evaluate('loadWorkers.forEach(w=>w.terminate())');source_row(name).select();press('removeSource')

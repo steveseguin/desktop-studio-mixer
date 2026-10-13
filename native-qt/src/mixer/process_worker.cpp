@@ -3,6 +3,7 @@
 #include "versus/mixer/browser_source.h"
 #include "versus/mixer/media_source.h"
 #include "versus/mixer/audio_monitor.h"
+#include "versus/mixer/local_outputs.h"
 #include "versus/video/camera_capture.h"
 #include "versus/video/spout_capture.h"
 #include "versus/video/video_encoder.h"
@@ -32,6 +33,52 @@ constexpr size_t BlobCapacity = 8192ull * 8192 * 4;
 constexpr size_t JsonCapacity = 65536;
 constexpr size_t AudioCapacity = 19200; // 200 ms of stereo 48 kHz
 bool workerProcess = false;
+DWORD browserAggregateCpuRate() {
+    return std::max<DWORD>(1,std::min<DWORD>(5000,80000/std::max<DWORD>(1,GetActiveProcessorCount(ALL_PROCESSOR_GROUPS))));
+}
+struct BrowserBudget {
+    HANDLE job = nullptr;
+    SIZE_T memoryLimit = 0;
+    std::mutex mutex;
+    std::vector<HANDLE> children;
+    bool rebalance() {
+        const auto processors = std::max<DWORD>(1,GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
+        const auto sourceRate = std::max<DWORD>(1,std::min<DWORD>(5000,40000/processors))*10000/browserAggregateCpuRate();
+        JOBOBJECT_CPU_RATE_CONTROL_INFORMATION cpu{};
+        cpu.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
+        // The sum stays below the parent cap, so a busy page cannot consume
+        // the parent's scheduling interval and halt a healthy sibling's video.
+        cpu.CpuRate = std::clamp<DWORD>(std::min<DWORD>(sourceRate,9000/std::max<size_t>(1,children.size())),1,10000);
+        bool applied = true;
+        for (auto child : children) applied &= bool(SetInformationJobObject(child,JobObjectCpuRateControlInformation,&cpu,sizeof(cpu)));
+        return applied;
+    }
+    bool add(HANDLE child) { std::lock_guard lock(mutex); children.push_back(child); return rebalance(); }
+    void remove(HANDLE child) { std::lock_guard lock(mutex); std::erase(children,child); rebalance(); }
+    BrowserBudget() {
+        job = CreateJobObjectW(nullptr,nullptr); if (!job) return;
+        JOBOBJECT_CPU_RATE_CONTROL_INFORMATION cpu{};
+        cpu.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
+        cpu.CpuRate = browserAggregateCpuRate();
+        MEMORYSTATUSEX memory{sizeof(memory)};
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_JOB_MEMORY;
+        const bool haveMemory = GlobalMemoryStatusEx(&memory);
+        memoryLimit = SIZE_T(std::clamp<ULONGLONG>(memory.ullTotalPhys/3,2ull<<30,8ull<<30));
+        limits.JobMemoryLimit = memoryLimit;
+        if (!haveMemory || !SetInformationJobObject(job,JobObjectCpuRateControlInformation,&cpu,sizeof(cpu)) ||
+            !SetInformationJobObject(job,JobObjectExtendedLimitInformation,&limits,sizeof(limits))) { CloseHandle(job); job = nullptr; }
+    }
+    ~BrowserBudget() { if (job) CloseHandle(job); }
+};
+std::mutex browserBudgetMutex;
+std::weak_ptr<BrowserBudget> sharedBrowserBudget;
+std::shared_ptr<BrowserBudget> browserBudget(bool create) {
+    std::lock_guard lock(browserBudgetMutex);
+    auto budget = sharedBrowserBudget.lock();
+    if (!budget && create) { budget = std::make_shared<BrowserBudget>(); sharedBrowserBudget = budget; }
+    return budget;
+}
 struct Shared {
     uint32_t magic, commandSize, replySize, inputSize, outputSize;
     char command[JsonCapacity], reply[JsonCapacity];
@@ -79,6 +126,7 @@ QJsonObject settingsJson(const video::CameraSettings &s) {
 struct ProcessWorker::Impl {
     HANDLE mapping = nullptr, request = nullptr, response = nullptr, mutex = nullptr, mediaReady = nullptr;
     HANDLE process = nullptr, job = nullptr;
+    std::shared_ptr<BrowserBudget> browserBudget;
     Shared *shared = nullptr;
     uint64_t serial = 0;
     uint64_t imageContentSerial = 0;
@@ -90,6 +138,7 @@ struct ProcessWorker::Impl {
     QString kind;
     ~Impl() {
         // Closing the job also removes orphaned FFmpeg/WebView2 descendants.
+        if (browserBudget) browserBudget->remove(job);
         close(job); close(process);
         if (shared) UnmapViewOfFile(shared);
         close(mapping); close(request); close(response); close(mutex); close(mediaReady);
@@ -98,6 +147,17 @@ struct ProcessWorker::Impl {
 ProcessWorker::ProcessWorker() : impl_(std::make_unique<Impl>()) {}
 ProcessWorker::~ProcessWorker() { stop(); }
 bool ProcessWorker::inWorker() { return workerProcess; }
+QJsonObject ProcessWorker::browserBudgetState() {
+    auto budget = browserBudget(false);
+    QJsonObject state{{"active",bool(budget && budget->job)}, {"cpu_limit_cores",browserAggregateCpuRate()/10000.0*GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)}};
+    if (budget && budget->job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        QueryInformationJobObject(budget->job,JobObjectExtendedLimitInformation,&limits,sizeof(limits),nullptr);
+        state["memory_limit_mib"] = qint64(budget->memoryLimit/(1024*1024));
+        state["peak_committed_mib"] = qint64(limits.PeakJobMemoryUsed/(1024*1024));
+    }
+    return state;
+}
 bool ProcessWorker::alive() const { return impl_->process && WaitForSingleObject(impl_->process, 0) == WAIT_TIMEOUT; }
 void ProcessWorker::terminate() { if (impl_->job) TerminateJobObject(impl_->job, 1); }
 QString ProcessWorker::error() const { return impl_->error; }
@@ -105,7 +165,7 @@ bool ProcessWorker::start(const QString &kind) {
     stop(); impl_ = std::make_unique<Impl>(); auto &s = *impl_;
     s.kind = kind;
     SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-    s.blobCapacity = kind == "encoder" ? BlobCapacity : kind == "output" ? 8*1024*1024 : kind == "monitor" ? 960*sizeof(float) : 0;
+    s.blobCapacity = (kind == "encoder" || kind == "spout-output" || kind == "virtual-output") ? BlobCapacity : kind == "output" ? 8*1024*1024 : kind == "monitor" ? 960*sizeof(float) : 0;
     s.pixelCapacity = (kind == "camera" || kind == "window" || kind == "spout" || kind == "media" || kind == "browser") ? BlobCapacity : 0;
     const auto mappingSize = sizeof(Shared)+s.blobCapacity+s.pixelCapacity;
     // Reserve an address range; commit only the media bytes actually used.
@@ -125,13 +185,18 @@ bool ProcessWorker::start(const QString &kind) {
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     if (kind == "browser") {
+        s.browserBudget = browserBudget(true);
+        if (!s.browserBudget->job) { s.error = "Could not apply the combined browser resource limit."; return false; }
         // Bound the complete source tree, including Chromium workers/GPU/audio
         // children. Keep at least half the machine available to the mixer and
         // other sources; a single page never gets more than four logical CPUs.
         const DWORD processors = std::max<DWORD>(1, GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
         JOBOBJECT_CPU_RATE_CONTROL_INFORMATION cpu{};
         cpu.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
-        cpu.CpuRate = std::max<DWORD>(1, std::min<DWORD>(5000, 40000 / processors));
+        const auto systemRate = std::max<DWORD>(1, std::min<DWORD>(5000, 40000 / processors));
+        // A nested job's rate is relative to its parent's quota, not the whole
+        // machine. Preserve the existing per-source allowance under the cap.
+        cpu.CpuRate = std::clamp<DWORD>(systemRate*10000/browserAggregateCpuRate(),1,10000);
         if (!SetInformationJobObject(s.job, JobObjectCpuRateControlInformation, &cpu, sizeof(cpu))) {
             s.error = "Could not apply browser CPU protection."; return false;
         }
@@ -165,7 +230,11 @@ bool ProcessWorker::start(const QString &kind) {
     for (auto handle : handles) SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
     if (!created) { s.error = "Could not launch isolated worker."; return false; }
     s.process = process.hProcess;
+    if (s.browserBudget && !AssignProcessToJobObject(s.browserBudget->job,s.process)) {
+        TerminateProcess(s.process,1); CloseHandle(process.hThread); s.error = "Could not contain the browser in its shared resource budget."; return false;
+    }
     if (!AssignProcessToJobObject(s.job, s.process)) { TerminateProcess(s.process, 1); CloseHandle(process.hThread); s.error = "Could not isolate worker process."; return false; }
+    if (s.browserBudget && !s.browserBudget->add(s.job)) { TerminateProcess(s.process,1); CloseHandle(process.hThread); s.error = "Could not balance browser resource limits."; return false; }
     ResumeThread(process.hThread); CloseHandle(process.hThread);
     const HANDLE waits[]{s.response, s.process};
     if (WaitForMultipleObjects(2, waits, FALSE, 15000) != WAIT_OBJECT_0) { s.error = "Worker did not start."; TerminateJobObject(s.job, 1); return false; }
@@ -314,6 +383,8 @@ int ProcessWorker::run(int argc, char **argv) {
     std::unique_ptr<audio::WindowAudioCaptureCore> captureAudio;
     std::unique_ptr<MediaSource> media;
     std::unique_ptr<AudioMonitor> monitor;
+    std::unique_ptr<LocalOutputs> localOutput;
+    QImage localOutputFrame;
     std::vector<float> monitorSamples(960);
     std::unique_ptr<BrowserSource> browser;
     std::unique_ptr<video::VideoEncoder> encoder;
@@ -330,9 +401,10 @@ int ProcessWorker::run(int argc, char **argv) {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
         if (QueryInformationJobObject(nullptr, JobObjectCpuRateControlInformation, &cpu, sizeof(cpu), nullptr) &&
             QueryInformationJobObject(nullptr, JobObjectExtendedLimitInformation, &limits, sizeof(limits), nullptr)) {
-            state["cpuLimitPercent"] = cpu.CpuRate / 100.0;
+            const double effectiveRate = cpu.CpuRate/10000.0*browserAggregateCpuRate();
+            state["cpuLimitPercent"] = effectiveRate / 100.0;
             state["memoryLimitMiB"] = qint64(limits.JobMemoryLimit / (1024 * 1024));
-            browserCpuCores = cpu.CpuRate / 10000.0 * GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+            browserCpuCores = effectiveRate / 10000.0 * GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
             browserCpuAt.start();
         }
     }
@@ -375,6 +447,29 @@ int ProcessWorker::run(int argc, char **argv) {
                 if (output) {
                     output->stop(); const auto final = output->status();
                     result["state"] = int(final.state); result["message"] = QString::fromStdString(final.message);
+                }
+            }
+            else if (kind == "local-registration" && op == "register") {
+                const auto error = LocalOutputs::registerCamera(c["install"].toBool());
+                result = {{"ok",error.isEmpty()},{"error",error}};
+            }
+            else if (kind == "spout-output" || kind == "virtual-output") {
+                if (op == "start") {
+                    const int fps = c["fps"].toInt();
+                    if (fps >= 1 && fps <= 120) {
+                        localOutput = std::make_unique<LocalOutputs>();
+                        localOutput->configure(kind == "spout-output",kind == "virtual-output",fps);
+                        result["ok"] = true; state["active"] = true;
+                    }
+                } else if (op == "frame" && localOutput) {
+                    const int width = c["width"].toInt(), height = c["height"].toInt(), stride = c["stride"].toInt();
+                    if (width>0 && height>0 && width<=8192 && height<=8192 && !(width%2) && !(height%2) && stride>=width*4 && uint64_t(stride)*height==shared->inputSize && shared->inputSize<=shared->blobCapacity) {
+                        const QImage view(blobData(shared),width,height,stride,QImage::Format_RGB32);
+                        localOutputFrame = view.copy();
+                        localOutput->submit(localOutputFrame,c["timestamp"].toInteger()); result["ok"] = true;
+                    }
+                } else if (op == "repeat" && localOutput && !localOutputFrame.isNull()) {
+                    localOutput->submit(localOutputFrame,c["timestamp"].toInteger()); result["ok"] = true;
                 }
             }
             else if (kind == "monitor") {
@@ -431,7 +526,9 @@ int ProcessWorker::run(int argc, char **argv) {
                 }, audio); result["ok"] = true; state["active"] = true;
             } else if (op == "media" && media) {
                 if (c["restart"].toBool()) media->restart();
+                if ((c.contains("seekMs") || c["restart"].toBool()) && lock(handles[3],100)) { shared->audioSize = 0; ReleaseMutex(handles[3]); }
                 if (c.contains("paused")) media->setPaused(c["paused"].toBool());
+                if (c.contains("seekMs")) media->seek(c["seekMs"].toInteger());
                 if (c.contains("loop")) media->setLoop(c["loop"].toBool());
                 result["ok"] = true;
             } else if (op == "start" && kind == "browser") {
@@ -473,6 +570,7 @@ int ProcessWorker::run(int argc, char **argv) {
                     config.latencyMs = c["latency"].toInt(); config.aacBitrateKbps = c["aac"].toInt();
                     media.width = c["width"].toInt(); media.height = c["height"].toInt(); media.fps = c["fps"].toInt();
                     media.audioChannels = c["channels"].toInt(); media.audioEnabled = c["audio"].toBool();
+                    for (const auto &name : c["audioTrackNames"].toArray()) media.audioTrackNames.push_back(name.toString().left(256).toStdString());
                     media.iceMode = webrtc::IceMode(c["ice"].toInt()); media.ffmpegPath = c["ffmpeg"].toString().toStdString();
                     output = std::make_unique<output::Session>(config, media, [&] { ++keyframes; }); result["ok"] = output->start();
                     // Worker startup uses anonymous memory rather than placing
@@ -494,7 +592,7 @@ int ProcessWorker::run(int argc, char **argv) {
                             if (!output->sendOpus(packet)) result["ok"] = false;
                         } else if (size % sizeof(float) == 0 && size <= AudioCapacity*sizeof(float)) {
                             std::vector<float> samples(size/sizeof(float)); memcpy(samples.data(), data, size);
-                            if (!output->sendPcm(samples, pts)) result["ok"] = false;
+                            if (!output->sendPcm(samples, pts,p["audioTrack"].toInt())) result["ok"] = false;
                         }
                     }
                 }
@@ -556,8 +654,15 @@ int ProcessWorker::run(int argc, char **argv) {
         if (spout) state["active"] = spout->isCapturing();
         if (captureAudio) state["active"] = captureAudio->IsCapturing();
         if (media) { state["error"] = media->error(); state["ended"] = media->ended(); state["hasVideo"] = media->hasVideo(); state["positionMs"] = qint64(media->positionMs()); state["durationMs"] = qint64(media->durationMs()); }
+        if (localOutput) { state["error"] = localOutput->status(); state["completedFrames"] = qint64(localOutput->completedFrames()); }
         if (browser) {
             if (browserCpuAt.isValid() && browserCpuAt.elapsed() >= 1000) {
+                JOBOBJECT_CPU_RATE_CONTROL_INFORMATION cpu{};
+                if (QueryInformationJobObject(nullptr,JobObjectCpuRateControlInformation,&cpu,sizeof(cpu),nullptr)) {
+                    const double rate = cpu.CpuRate/10000.0*browserAggregateCpuRate();
+                    state["cpuLimitPercent"] = rate/100.0;
+                    browserCpuCores = rate/10000.0*GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+                }
                 JOBOBJECT_BASIC_ACCOUNTING_INFORMATION usage{};
                 if (QueryInformationJobObject(nullptr, JobObjectBasicAccountingInformation, &usage, sizeof(usage), nullptr)) {
                     const auto ticks = usage.TotalKernelTime.QuadPart + usage.TotalUserTime.QuadPart;
@@ -582,7 +687,7 @@ int ProcessWorker::run(int argc, char **argv) {
     });
     health.start(250); SetEvent(handles[2]);
     const int result = application.exec();
-    monitor.reset(); output.reset(); browser.reset(); media.reset(); captureAudio.reset(); spout.reset(); window.reset(); camera.reset(); encoder.reset();
+    localOutput.reset(); monitor.reset(); output.reset(); browser.reset(); media.reset(); captureAudio.reset(); spout.reset(); window.reset(); camera.reset(); encoder.reset();
     UnmapViewOfFile(shared); for (auto &handle : handles) close(handle);
     if (SUCCEEDED(apartment)) CoUninitialize();
     if (preciseClock) timeEndPeriod(1);

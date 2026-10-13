@@ -136,7 +136,7 @@ try:
         rx=subprocess.Popen([str(ffmpeg),'-hide_banner','-y','-i',f'srt://127.0.0.1:{port}?mode=listener&latency=120000',
             '-t','8','-map','0','-c','copy',str(received)],stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)
         children.append(rx);time.sleep(1)
-        configure('SRT (caller)',f'srt://127.0.0.1:{port}');press('studioStartOutput');wait_output(True)
+        configure('SRT',f'srt://127.0.0.1:{port}');press('studioStartOutput');wait_output(True)
         # Pump the browser event loop while the native app publishes the mix.
         director.wait_for_timeout(15000);rx.wait(timeout=20);press('studioStartOutput');wait_output(False);log.close()
         assert rx.returncode==0 and combined.stat().st_size>10000 and received.stat().st_size>10000

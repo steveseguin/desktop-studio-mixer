@@ -37,6 +37,16 @@ inline QString validateStudioRequest(const QJsonObject &value, const QJsonObject
             if (type == "integer") valid &= std::floor(n) == n;
             valid &= n >= rule["minimum"].toDouble() && n <= rule["maximum"].toDouble();
         }
+        if (type == "array") {
+            const auto array = v.toArray();
+            if (!v.isArray() || array.size() > rule["maxItems"].toInt()) return "Invalid field: " + it.key();
+            QJsonArray seen;
+            for (const auto &entry : array) {
+                if (rule["uniqueItems"].toBool() && seen.contains(entry)) valid = false;
+                seen.append(entry);
+                valid &= validateStudioRequest(QJsonObject{{"item",entry}},QJsonObject{{"properties",QJsonObject{{"item",rule["items"]}}}}).isEmpty();
+            }
+        }
         if (rule.contains("enum")) valid &= rule["enum"].toArray().contains(v);
         if (!valid) return "Invalid field: " + it.key();
     }

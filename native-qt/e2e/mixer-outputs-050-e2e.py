@@ -53,7 +53,7 @@ try:
     receiver=subprocess.Popen([str(ffmpeg),'-hide_banner','-y','-i',f'srt://127.0.0.1:{port}?mode=listener&latency=120000','-t','22','-map','0','-c','copy',str(received)],stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)
     first=report/'before-and-during-stream.mkv';second=report/'during-and-after-stream.mkv'
     record(first);time.sleep(3)
-    configure('SRT (caller)',f'srt://127.0.0.1:{port}');press('studioStartOutput');wait_output(True)
+    configure('SRT',f'srt://127.0.0.1:{port}');press('studioStartOutput');wait_output(True)
     time.sleep(6);press('studioRecord');recording(False)
     assert control('studioStartOutput').window_text()=='STOP'
     record(second);receiver.wait(timeout=45);press('studioStartOutput');wait_output(False)

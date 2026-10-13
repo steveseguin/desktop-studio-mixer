@@ -8,11 +8,16 @@
 #include "versus/mixer/audio_processor.h"
 #include "versus/mixer/guest_return.h"
 #include "versus/mixer/global_hotkeys.h"
+#include "versus/mixer/show_files.h"
+#include <QDateTime>
 #include <QKeySequenceEdit>
 #include <QProcess>
 #include <QMenu>
+#include <QToolButton>
 #include "versus/video/video_encoder.h"
 #include <QThreadPool>
+#include <QFutureWatcher>
+#include <QtConcurrent/QtConcurrentRun>
 #include "versus/mixer/audio_level_meter.h"
 #include "versus/app/versus_app.h"
 #include <QApplication>
@@ -246,6 +251,13 @@ struct MixerWidget::Impl {
     int Width = 1280, Height = 720, canvasFps = 30;
     int64_t nextRender = 0;
     ProgramRecorder recorder;
+    struct RecordingPlan {
+        QStringList audioIds;
+        struct Iso { QString id; std::shared_ptr<ProgramRecorder> recorder; QSize size; };
+        std::vector<Iso> isos;
+    };
+    QStringList recordAudioSources, recordIsoSources;
+    std::atomic<std::shared_ptr<const RecordingPlan>> recordingPlan{std::make_shared<const RecordingPlan>()};
     LocalOutputs localOutputs;
     QCheckBox *spoutOutput = nullptr, *virtualCamera = nullptr, *guestReturnEnabled = nullptr;
     std::atomic<bool> privateTalkback{false};
@@ -332,14 +344,15 @@ struct MixerWidget::Impl {
     std::atomic<float> masterGain{1}, masterPeak{0};
     std::thread audioThread;
     QString projectPath;
+    QHash<QString,qint64> backupTimes;
+    bool collectionBusy = false;
+    QString collectionStatus;
+    std::shared_ptr<std::atomic<bool>> collectionCancelled = std::make_shared<std::atomic<bool>>(false);
     QPointer<QProcess> exportProcess;
     QString exportStatus, exportPath;
 
     Impl(MixerWidget *widget, app::VersusApp *appCore) : q(widget), core(appCore) {
-        projectPath = QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation))
-            .filePath("VideoMixer/studio.mixer.json");
-        if (!qApp->property("studioShow").toString().isEmpty())
-            projectPath = QFileInfo(qApp->property("studioShow").toString()).absoluteFilePath();
+        projectPath = showFileAccess().path();
         buildUi();
         if (!load(projectPath) && QFileInfo::exists(projectPath)) {
             // Preserve a damaged/unrecognized show before autosave creates a fresh one.
@@ -376,6 +389,7 @@ struct MixerWidget::Impl {
     void shutdown() {
         globalHotkeys.clear();
         if (!running.exchange(false)) return;
+        *collectionCancelled = true;
         if (exportProcess) {
             QObject::disconnect(exportProcess,nullptr,q,nullptr);
             exportProcess->kill(); exportProcess->waitForFinished(1000);
@@ -384,6 +398,7 @@ struct MixerWidget::Impl {
         videoTimer.stop(); saveTimer.stop(); save(projectPath);
         if (audioThread.joinable()) audioThread.join();
         recorder.stop();
+        for (const auto &iso : recordingPlan.load()->isos) iso.recorder->stop();
         for (const auto &item : sources) { if (auto output = item->guestReturn.exchange({})) QThreadPool::globalInstance()->start([output] { output->stop(); }); stopSource(item); }
         delete outputView.data();
         delete chatDock.data();
@@ -435,16 +450,78 @@ struct MixerWidget::Impl {
         rebuild(); changed(); updateAudioRouting(); refreshGuestReturns(); restoring = false;
         undoButton->setEnabled(historyIndex > 0); redoButton->setEnabled(historyIndex+1 < history.size());
     }
+    bool recordingBusy() const {
+        if (recorder.busy()) return true;
+        for (const auto &iso : recordingPlan.load()->isos) if (iso.recorder->busy()) return true;
+        return false;
+    }
+    bool recordingActive() const {
+        if (recorder.active()) return true;
+        for (const auto &iso : recordingPlan.load()->isos) if (iso.recorder->active()) return true;
+        return false;
+    }
+    void stopRecording() {
+        recorder.requestStop(); for (const auto &iso : recordingPlan.load()->isos) iso.recorder->requestStop();
+    }
+    QString startRecording(const QString &path, const QStringList &audioIds, const QStringList &isoIds) {
+        if (recordingBusy()) return "Recording is already active or finalizing.";
+        if (audioIds.size() > 16 || isoIds.size() > 4) return "Choose at most 16 separate audio tracks and four separate video recordings.";
+        auto plan = std::make_shared<RecordingPlan>(); QStringList names;
+        for (const auto &id : audioIds) {
+            auto item = source(id); if (!item || !item->hasAudio() || plan->audioIds.contains(id)) return "Choose unique existing audio sources.";
+            plan->audioIds.append(id); names.append(item->name);
+        }
+        for (const auto &id : isoIds) {
+            auto item = source(id); if (!item || !item->hasVideo()) return "Choose existing video sources for separate recordings.";
+            if (std::any_of(plan->isos.begin(),plan->isos.end(),[&](const auto &iso) { return iso.id == id; })) return "Choose each video source once.";
+            QSize size; { std::lock_guard lock(item->imageMutex); size = item->image.size(); }
+            if (size.isEmpty()) size = QSize(Width,Height);
+            size = QSize(std::max(2,size.width()/2*2),std::max(2,size.height()/2*2));
+            plan->isos.push_back({id,std::make_shared<ProgramRecorder>(),size});
+        }
+        auto isoPath = [&](const QString &id) { return QFileInfo(path).absoluteDir().filePath(QFileInfo(path).completeBaseName()+"-source-"+id+".mkv"); };
+        for (const auto &iso : plan->isos) if (QFileInfo::exists(isoPath(iso.id))) return "A separate source recording already exists. Choose a new recording name.";
+        // Publish the immutable mapping before audio begins. Missing/removed
+        // sources retain a silent track instead of changing track identity.
+        recordingPlan.store(plan);
+        if (!recorder.start(path,Width,Height,canvasFps,names)) return recorder.status();
+        for (const auto &iso : plan->isos) iso.recorder->start(isoPath(iso.id),iso.size.width(),iso.size.height(),canvasFps);
+        return {};
+    }
+    void recordingOptions() {
+        if (recordingBusy()) { message("Stop recording before changing its tracks."); return; }
+        QDialog dialog(q); dialog.setWindowTitle(studioText("Recording tracks")); auto *layout = new QVBoxLayout(&dialog);
+        auto *note = new QLabel(studioText("Program is always recorded. Add up to 16 named audio tracks inside its MKV and four separate source MKVs. Selected sources record even off-screen. Mute, On air, Backstage and Private break still protect audio; Backstage and Private break hide separate video. Extra videos each require an encoder."),&dialog);
+        note->setWordWrap(true); layout->addWidget(note);
+        auto *scroll = new QScrollArea(&dialog); scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::StyledPanel);
+        auto *contents = new QWidget; auto *form = new QFormLayout(contents); scroll->setWidget(contents); layout->addWidget(scroll);
+        std::vector<std::pair<QString,QCheckBox*>> audio,video;
+        for (const auto &item : sources) {
+            if (item->hasAudio()) { auto *check = new QCheckBox(studioText("Separate audio track")); check->setObjectName("record_audio_"+item->id); check->setAccessibleName(item->name+" separate audio track"); check->setChecked(recordAudioSources.contains(item->id)); form->addRow(item->name,check); audio.emplace_back(item->id,check); }
+            if (item->hasVideo()) { auto *check = new QCheckBox(studioText("Separate video file")); check->setObjectName("record_video_"+item->id); check->setAccessibleName(item->name+" separate video file"); check->setChecked(recordIsoSources.contains(item->id)); form->addRow(item->name,check); video.emplace_back(item->id,check); }
+        }
+        auto *feedback = new QLabel(&dialog); layout->addWidget(feedback);
+        QDialogButtonBox buttons(QDialogButtonBox::Save|QDialogButtonBox::Cancel); layout->addWidget(&buttons);
+        QObject::connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+        QObject::connect(&buttons,&QDialogButtonBox::accepted,&dialog,[&] {
+            QStringList a,v; for (const auto &[id,check] : audio) if (check->isChecked()) a.append(id); for (const auto &[id,check] : video) if (check->isChecked()) v.append(id);
+            if (a.size()>16 || v.size()>4) { feedback->setText(studioText("Choose at most 16 audio tracks and four video files.")); return; }
+            recordAudioSources=a; recordIsoSources=v; changed(); dialog.accept();
+        });
+        dialog.resize(540,480); dialog.exec();
+    }
     void record() {
-        if (recorder.active()) { recorder.requestStop(); return; }
-        if (recorder.busy()) return;
+        if (recordingActive()) { stopRecording(); return; }
+        if (recordingBusy()) return;
         const auto path = QFileDialog::getSaveFileName(q, "Record Program", QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)+"/Desktop Studio recording.mkv", "Matroska video (*.mkv)");
         if (path.isEmpty()) return;
-        recorder.start(path.endsWith(".mkv", Qt::CaseInsensitive) ? path : path+".mkv", Width, Height, canvasFps);
+        const auto error = startRecording(path.endsWith(".mkv", Qt::CaseInsensitive) ? path : path+".mkv",recordAudioSources,recordIsoSources);
+        if (!error.isEmpty()) message(error);
     }
     QString exportRecording(const QString &input, const QString &output) {
         if (exportProcess) return "A recording export is already running.";
         if (recorder.busy() && QFileInfo(input).absoluteFilePath() == QFileInfo(recorder.path()).absoluteFilePath()) return "Stop recording before exporting this file.";
+        for (const auto &iso : recordingPlan.load()->isos) if (iso.recorder->busy() && QFileInfo(input).absoluteFilePath() == QFileInfo(iso.recorder->path()).absoluteFilePath()) return "Stop recording before exporting this file.";
         if (!QFileInfo(input).isAbsolute() || !QFileInfo(input).isFile() || !input.endsWith(".mkv",Qt::CaseInsensitive)) return "Choose an existing absolute MKV recording path.";
         if (!QFileInfo(output).isAbsolute() || !output.endsWith(".mp4",Qt::CaseInsensitive) || QFileInfo::exists(output)) return "Choose a new absolute MP4 path; existing files are never overwritten.";
         const auto ffmpeg = QString::fromStdString(video::VideoEncoder::resolveFfmpegPath(""));
@@ -553,8 +630,9 @@ struct MixerWidget::Impl {
 
     void buildUi() {
         q->setMinimumSize(1100, 620);
-        q->setStyleSheet("QPushButton { background:#192b3d; color:#eaf4ff; border:1px solid #304358; border-radius:4px; padding:8px; }"
-            "QPushButton:hover { background:#253c52; } QPushButton#takeScene, QPushButton#mixerOutput { background:#00c2ff; color:#06131a; font-weight:700; }"
+        q->setStyleSheet("QPushButton, QToolButton#exportShow { background:#192b3d; color:#eaf4ff; border:1px solid #304358; border-radius:4px; padding:8px; }"
+            "QToolButton#exportShow { padding-right:20px; font-weight:700; } QToolButton#exportShow::menu-button { width:16px; border-left:1px solid #304358; }"
+            "QPushButton:hover, QToolButton#exportShow:hover { background:#253c52; } QPushButton#takeScene, QPushButton#mixerOutput { background:#00c2ff; color:#06131a; font-weight:700; }"
             "QListWidget::indicator { width:14px; height:14px; border:1px solid #647b91; border-radius:3px; }"
             "QListWidget::indicator:checked { background:#00c2ff; } QListWidget::indicator:unchecked { background:#101b27; }");
         auto *root = new QVBoxLayout(q); root->setContentsMargins(18, 14, 18, 14); root->setSpacing(12);
@@ -598,6 +676,7 @@ struct MixerWidget::Impl {
         QObject::connect(hotkeys, &QPushButton::clicked, q, [this] { configureHotkeys(true); });
         auto *recordingFiles = button("Recordings", "recordingFiles", outputBar, q);
         auto *recordingMenu = new QMenu(recordingFiles); recordingFiles->setMenu(recordingMenu);
+        recordingMenu->addAction(studioText("Recording tracks..."),q,[this] { recordingOptions(); });
         QObject::connect(recordingMenu->addAction(studioText("Open recording folder")), &QAction::triggered, q, [this] {
             QDesktopServices::openUrl(QUrl::fromLocalFile(recorder.path().isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::MoviesLocation) : QFileInfo(recorder.path()).absolutePath()));
         });
@@ -627,12 +706,23 @@ struct MixerWidget::Impl {
         QObject::connect(guestReturnEnabled, &QCheckBox::toggled, q, [this] { refreshGuestReturns(); changed(); });
         localBar->addStretch(); localBar->addWidget(hotkeys); localBar->addWidget(recordingFiles); root->addLayout(localBar);
         QObject::connect(spoutOutput, &QCheckBox::toggled, q, [this] { localOutputs.configure(spoutOutput->isChecked(), virtualCamera->isChecked(), canvasFps); });
-        QObject::connect(virtualCamera, &QCheckBox::toggled, q, [this](bool on) {
-            if (on) { const auto error = LocalOutputs::registerCamera(true); if (!error.isEmpty()) { message(error); const QSignalBlocker block(virtualCamera); virtualCamera->setChecked(false); return; } }
-            localOutputs.configure(spoutOutput->isChecked(), virtualCamera->isChecked(), canvasFps);
-            message(on ? "Select Desktop Studio Virtual Camera in another app. Camera output carries video; select your microphone there separately." : "Virtual camera stopped.");
+        const auto registerCamera = [this,removeCamera](bool install) {
+            virtualCamera->setEnabled(false); removeCamera->setEnabled(false);
+            auto *watcher = new QFutureWatcher<QString>(q);
+            QObject::connect(watcher,&QFutureWatcher<QString>::finished,q,[this,removeCamera,watcher,install] {
+                const auto error = watcher->result(); watcher->deleteLater();
+                virtualCamera->setEnabled(true); removeCamera->setEnabled(true);
+                if (!error.isEmpty()) { message(error); const QSignalBlocker block(virtualCamera); virtualCamera->setChecked(false); }
+                else message(install ? "Select Desktop Studio Virtual Camera in another app. Camera output carries video; select your microphone there separately." : "Virtual camera removed from this Windows account.");
+                localOutputs.configure(spoutOutput->isChecked(),virtualCamera->isChecked(),canvasFps);
+            });
+            watcher->setFuture(QtConcurrent::run([install] { return LocalOutputs::registerCamera(install); }));
+        };
+        QObject::connect(virtualCamera, &QCheckBox::toggled, q, [this,registerCamera](bool on) {
+            if (on) registerCamera(true);
+            else { localOutputs.configure(spoutOutput->isChecked(),false,canvasFps); message("Virtual camera stopped."); }
         });
-        QObject::connect(removeCamera, &QPushButton::clicked, q, [this] { virtualCamera->setChecked(false); const auto error = LocalOutputs::registerCamera(false); message(error.isEmpty() ? "Virtual camera removed from this Windows account." : error); });
+        QObject::connect(removeCamera, &QPushButton::clicked, q, [this,registerCamera] { virtualCamera->setChecked(false); registerCamera(false); });
         renderer = new QComboBox(q); renderer->setObjectName("compositorBackend"); renderer->addItems({"GPU composition", "CPU composition"}); outputBar->addWidget(renderer);
         // The default 720p mix is cheaper on CPU while outputs require readback.
         // Keep GPU available for workloads where its scaling/compositing wins.
@@ -641,7 +731,7 @@ struct MixerWidget::Impl {
         QObject::connect(canvasFormat, &QComboBox::currentIndexChanged, q, [this](int index) {
             if (loading || rebuilding) return;
             if (index < 0 || index >= int(CanvasFormats.size())) return;
-            if (core->isLive() || recorder.active()) { message("Stop streaming and recording before changing the canvas format."); return; }
+            if (core->isLive() || recordingBusy()) { message("Stop streaming and recording before changing the canvas format."); return; }
             const auto &format = CanvasFormats[index];
             Width = format.width; Height = format.height; canvasFps = format.fps;
             compositions = {}; nextRender = 0; videoTimer.setInterval(1000/canvasFps);
@@ -707,7 +797,21 @@ struct MixerWidget::Impl {
         auto *safeArea = new QCheckBox(studioText("Safe area"),q); safeArea->setObjectName("safeArea"); transport->addWidget(safeArea);
         safeArea->setToolTip(studioText("Show a generic 10% margin in the editing canvas only. Keep important text inside; platform controls may cover additional space. Guides are never recorded or streamed."));
         QObject::connect(safeArea,&QCheckBox::toggled,q,[this](bool enabled) { previewView->safeArea = enabled; previewView->update(); });
-        auto *exportShow = button("Save a copy...", "exportShow", transport, q);
+        auto *exportShow = new QToolButton(q); exportShow->setText(studioText("Save a copy...")); exportShow->setObjectName("exportShow");
+        exportShow->setAccessibleName(studioText("Save a copy")); exportShow->setPopupMode(QToolButton::MenuButtonPopup); transport->addWidget(exportShow);
+        auto *projectMenu = new QMenu(exportShow); exportShow->setMenu(projectMenu);
+        projectMenu->addAction(studioText("Save As active show..."),q,[this] {
+            const auto path = QFileDialog::getSaveFileName(q,"Save As active show",projectPath,"Mixer show (*.mixer.json)");
+            if (!path.isEmpty()) saveAs(path.endsWith(".mixer.json",Qt::CaseInsensitive) ? path : path+".mixer.json");
+        });
+        projectMenu->addAction(studioText("Collect show and assets..."),q,[this] {
+            const auto path = QFileDialog::getSaveFileName(q,"New folder for collected show",QFileInfo(projectPath).absolutePath()+"/Collected show");
+            if (!path.isEmpty()) { const auto error = collect(path); if (!error.isEmpty()) message(error); }
+        });
+        projectMenu->addAction(studioText("Relink missing assets from folder..."),q,[this] {
+            const auto path = QFileDialog::getExistingDirectory(q,"Folder containing missing assets");
+            if (!path.isEmpty()) message(QString("Relinked %1 missing assets by filename.").arg(relink(path)));
+        });
         exportShow->setToolTip(studioText("Export a show snapshot. Later edits continue autosaving in the current workspace; save another copy to update the exported file. Local assets inside the destination folder use relative paths."));
         auto *importShow = button("Open show...", "importShow", transport, q);
         QObject::connect(takeButton, &QPushButton::clicked, q, [this] { takeScene(false); });
@@ -726,15 +830,19 @@ struct MixerWidget::Impl {
             }
             outputView->show(); outputView->raise();
         });
-        QObject::connect(exportShow, &QPushButton::clicked, q, [this] {
+        QObject::connect(exportShow, &QToolButton::clicked, q, [this] {
             const auto path = QFileDialog::getSaveFileName(q, "Save show (includes source URLs and invite links)", {}, "Mixer show (*.mixer.json)");
             if (!path.isEmpty() && save(path)) message("Show copy saved. Later edits autosave in this workspace; save another copy to update that file.");
         });
         QObject::connect(importShow, &QPushButton::clicked, q, [this] {
-            if (core->isLive() || recorder.busy() || virtualCamera->isChecked() || spoutOutput->isChecked()) { message("Stop streaming, recording and local outputs before opening another show."); return; }
+            if (core->isLive() || recordingBusy() || virtualCamera->isChecked() || spoutOutput->isChecked()) { message("Stop streaming, recording and local outputs before opening another show."); return; }
             const auto path = QFileDialog::getOpenFileName(q, "Open show", {}, "Mixer show (*.mixer.json)");
             if (path.isEmpty()) return;
+            auto lease = showFileAccess().reserve(path);
+            if (!lease.allowed) { message("This show is open in another instance, or its folder cannot be locked."); return; }
+            if (!save(projectPath)) return;
             if (load(path)) {
+                activateProject(std::move(lease));
                 selectedScene = 0; selectedSource.clear(); program = scenes[0]; fading = false;
                 history.clear(); historyIndex = 0; rebuild(); updateAudioRouting(); changed();
             } else {
@@ -829,8 +937,19 @@ struct MixerWidget::Impl {
             onTake->setToolTip(studioText("Start from the beginning when the source changes from off-screen to visible in Program. Shared sources that remain visible keep playing."));
             QObject::connect(onTake,&QCheckBox::toggled,&dialog,[this,item](bool value) { item->mediaRestartOnTake = value; changed(); });
             auto *timeLabel = new QLabel(&dialog); timeLabel->setObjectName("mediaTime"); layout->addWidget(timeLabel);
-            QTimer clock; QObject::connect(&clock,&QTimer::timeout,&dialog,[item,timeLabel] {
-                if (item->media) timeLabel->setText(QString("%1 / %2 s  (%3 s remaining)").arg(item->media->positionMs()/1000.0,0,'f',1).arg(item->media->durationMs()/1000.0,0,'f',1).arg(std::max<int64_t>(0,item->media->durationMs()-item->media->positionMs())/1000.0,0,'f',1));
+            auto *seek = new QSlider(Qt::Horizontal,&dialog); seek->setObjectName("mediaSeek"); seek->setAccessibleName(studioText("Playback position"));
+            seek->setRange(0,int(std::min<int64_t>(INT_MAX,item->media->durationMs()))); seek->setSingleStep(1000); seek->setPageStep(5000); layout->addWidget(seek);
+            seek->setToolTip(studioText("Seek within the clip. A paused video shows the picture at the new position without resuming audio."));
+            QElapsedTimer cueIdle;
+            QObject::connect(seek,&QSlider::sliderReleased,&dialog,[item,seek,&cueIdle] { cueIdle.restart(); if (item->media) item->media->seek(seek->value()); });
+            QObject::connect(seek,&QSlider::valueChanged,&dialog,[item,seek,&cueIdle](int value) { cueIdle.restart(); if (!seek->isSliderDown() && item->media) item->media->seek(value); });
+            QTimer clock; QObject::connect(&clock,&QTimer::timeout,&dialog,[item,timeLabel,seek,&cueIdle] {
+                if (item->media) {
+                    timeLabel->setText(QString("%1 / %2 s  (%3 s remaining)").arg(item->media->positionMs()/1000.0,0,'f',1).arg(item->media->durationMs()/1000.0,0,'f',1).arg(std::max<int64_t>(0,item->media->durationMs()-item->media->positionMs())/1000.0,0,'f',1));
+                    // Worker position reports trail input. Do not overwrite a
+                    // keyboard repeat or rapid clicks with an older cue.
+                    if (!seek->isSliderDown() && (!cueIdle.isValid() || cueIdle.elapsed()>=500)) { const QSignalBlocker block(seek); seek->setMaximum(int(std::min<int64_t>(INT_MAX,item->media->durationMs()))); seek->setValue(int(item->media->positionMs())); }
+                }
             }); clock.start(200);
             QDialogButtonBox close(QDialogButtonBox::Close); layout->addWidget(&close); QObject::connect(&close, &QDialogButtonBox::rejected, &dialog, &QDialog::reject); dialog.exec();
         });
@@ -1495,6 +1614,9 @@ struct MixerWidget::Impl {
             });
         } else if (item->kind == "media") {
             item->media = std::make_unique<IsolatedSource>("media"); item->media->setLoop(item->mediaLoop);
+            item->media->onDiscontinuity([weak = std::weak_ptr<Source>(item)] {
+                if (auto source = weak.lock()) { std::lock_guard lock(source->audioMutex); source->samples.clear(); source->delayedSamples.clear(); source->appliedDelayMs = -1; }
+            });
             item->media->setImageCallback(imageFrame);
             item->media->setPaused(item->mediaPaused); item->media->start(item->locator, frame, audioChunk);
         } else if (item->kind == "browser" || item->kind == "guest" || item->kind == "wireless" || item->kind == "chat") {
@@ -1580,6 +1702,7 @@ struct MixerWidget::Impl {
         }
         for (auto &scene : scenes) std::erase_if(scene.layers, [&](const auto &layer) { return layer.source == item->id; });
         { std::lock_guard lock(sourcesMutex); std::erase(sources, item); }
+        recordAudioSources.removeAll(item->id); recordIsoSources.removeAll(item->id);
         // Destroy capture owners on the UI thread, including WebView2's apartment.
         item->onProgram = false;
         if (auto output = item->guestReturn.exchange({})) QThreadPool::globalInstance()->start([output] { output->stop(); });
@@ -1870,11 +1993,13 @@ struct MixerWidget::Impl {
         if (!nextRender || tick-nextRender > period*2) nextRender = tick;
         nextRender += period;
         videoTimer.setInterval(std::max(1, int((nextRender-tick+9999)/10000)));
-        recordOutput->setText(recorder.active() ? studioText("Stop recording") : studioText("Record..."));
+        recordOutput->setText(recordingActive() ? studioText("Stop recording") : studioText("Record..."));
         recordOutput->setAccessibleName(recordOutput->text());
         const auto remaining = recorder.remainingSeconds();
-        const auto recordingState = recorder.status();
-        const auto recordingText = recordingState + (recorder.active() && remaining >= 0 ? QString(" / ~%1 min disk remaining").arg(remaining/60) : QString());
+        auto recordingState = recorder.status();
+        const auto plan = recordingPlan.load();
+        for (const auto &iso : plan->isos) recordingState += " | "+iso.recorder->status();
+        const auto recordingText = recordingState + (recorder.active() && remaining >= 0 ? QString(" / ~%1 min disk remaining").arg(remaining/(60*(1+2*plan->isos.size()))) : QString());
         if (recordingStatus->text() != recordingText) {
             recordingStatus->setText(recordingText); recordingStatus->setVisible(!recordingText.isEmpty());
             // Disk estimates remain readable without repeatedly interrupting
@@ -1883,8 +2008,8 @@ struct MixerWidget::Impl {
                 announcedRecordingStatus = recordingState; announce(recordingStatus, recordingText);
             }
         }
-        canvasFormat->setEnabled(!core->isLive() && !recorder.busy() && !guestReturnEnabled->isChecked() && !virtualCamera->isChecked() && !spoutOutput->isChecked());
-        recordOutput->setEnabled(!recorder.busy() || recorder.active());
+        canvasFormat->setEnabled(!core->isLive() && !recordingBusy() && !guestReturnEnabled->isChecked() && !virtualCamera->isChecked() && !spoutOutput->isChecked());
+        recordOutput->setEnabled(!recordingBusy() || recordingActive());
         if (studioMode && previewView->isVisible()) {
             const auto item = source(selectedSource);
             const auto selection = item && item->hasVideo() && selectedLayer() ? selectedLayer()->rect : QRectF();
@@ -1900,6 +2025,13 @@ struct MixerWidget::Impl {
         }
         if (outputView) outputView->present(frame);
         recorder.submit(frame, tick);
+        for (const auto &iso : recordingPlan.load()->isos) if (iso.recorder->active()) {
+            QImage picture; auto item = source(iso.id);
+            if (item && item->admitted && !privateBreak) { std::lock_guard lock(item->imageMutex); picture = item->image; }
+            if (picture.isNull()) { picture = QImage(iso.size,QImage::Format_RGB32); picture.fill(Qt::black); }
+            else if (picture.size() != iso.size) picture = picture.scaled(iso.size,Qt::IgnoreAspectRatio,Qt::SmoothTransformation);
+            iso.recorder->submit(picture,tick);
+        }
         localOutputs.submit(frame, tick);
         for (const auto &item : sources) if (item->returnMode == "video") if (auto output = item->guestReturn.load()) output->video(frame, tick);
         const bool publishingProgram = core->isLive() && core->getSourceHealth().mode == app::VideoSourceMode::Mixer;
@@ -1962,6 +2094,10 @@ struct MixerWidget::Impl {
             const auto audioTime = next;
             next += std::chrono::milliseconds(10);
             audio::StreamChunk chunk; chunk.samples.assign(960, 0);
+            const auto recording = recordingPlan.load();
+            const bool separateAudio = recordingActive() && (!recording->audioIds.empty() || !recording->isos.empty());
+            std::vector<std::vector<float>> audioTracks,isoAudio;
+            if (separateAudio) { audioTracks.assign(recording->audioIds.size(),std::vector<float>(960,0)); isoAudio.assign(recording->isos.size(),std::vector<float>(960,0)); }
             // Each chunk contains exactly 10 ms of samples. After a scheduling
             // stall we can produce several catch-up chunks in one millisecond;
             // wall-clock stamping would overlap them and corrupt AAC timing.
@@ -2003,6 +2139,8 @@ struct MixerWidget::Impl {
                     processed[n] = processed[n+1] = mono;
                 }
                 item->processor.process(processed, item->noiseSuppression, item->noiseGate, item->compression);
+                std::vector<float> isolated;
+                if (separateAudio) isolated.resize(960);
                 for (size_t i = 0; i < chunk.samples.size(); ++i) {
                     const float gain = programAllowed ? audibleGain*(followsScene ? routeStart+routeStep*float(i/2) : 1.f) : 0;
                     const float conversationGain = conversationGuest ? sourceGain : gain;
@@ -2012,6 +2150,7 @@ struct MixerWidget::Impl {
                         item->delayedSamples.push_back(sample);
                         delayed = item->delayedSamples.front(); item->delayedSamples.pop_front();
                     }
+                    if (separateAudio) isolated[i] = !privateBreak && item->admitted && programAllowed && !talking ? delayed*sourceGain : 0.f;
                     chunk.samples[i] += delayed*gain;
                     conversationExtra[i] += delayed*(conversationGain-gain);
                     if (output) returns.back().own[i] = delayed*conversationGain;
@@ -2020,6 +2159,12 @@ struct MixerWidget::Impl {
                     if (listen) headphones[i] += sample*sourceGain;
                 }
                 item->peak = std::max(peak, item->peak.load()*0.92f);
+                if (separateAudio) {
+                    float isolatedPeak = 0; for (float sample : isolated) isolatedPeak = std::max(isolatedPeak,std::abs(sample));
+                    if (isolatedPeak > .98f) for (float &sample : isolated) sample *= .98f/isolatedPeak;
+                    const auto index = recording->audioIds.indexOf(item->id); if (index >= 0) audioTracks[index] = isolated;
+                    for (size_t n=0; n<recording->isos.size(); ++n) if (recording->isos[n].id == item->id) isoAudio[n] = isolated;
+                }
             }
             }
             for (auto &bus : returns) {
@@ -2048,17 +2193,19 @@ struct MixerWidget::Impl {
                 if (monitoring) monitor.write(headphones);
             } else if (openedDevice) { monitor.close(); openedDevice.reset(); }
             recorder.audio(chunk.samples, chunk.captureTime100ns);
+            for (size_t n=0; n<audioTracks.size(); ++n) recorder.audio(audioTracks[n],chunk.captureTime100ns,int(n)+1);
+            for (size_t n=0; n<isoAudio.size(); ++n) recording->isos[n].recorder->audio(isoAudio[n],chunk.captureTime100ns);
             if (core->isLive()) core->submitMixerAudio(std::move(chunk));
             if (next < std::chrono::steady_clock::now()-std::chrono::milliseconds(100)) next = std::chrono::steady_clock::now();
             std::this_thread::sleep_until(next);
         }
     }
 
-    bool save(const QString &path) {
+    QJsonObject showDocument(const QString &path, bool absoluteAssets = false) {
         QJsonArray jsonSources, jsonScenes;
         for (const auto &item : sources) {
             QString locator = item->locator;
-            if ((item->kind == "image" || item->kind == "media") && QDir::isAbsolutePath(locator)) {
+            if (!absoluteAssets && (item->kind == "image" || item->kind == "media") && QDir::isAbsolutePath(locator)) {
                 const auto relative = QFileInfo(path).absoluteDir().relativeFilePath(locator);
                 if (relative != ".." && !relative.startsWith("../") && !QDir::isAbsolutePath(relative)) locator = relative;
             }
@@ -2078,12 +2225,74 @@ struct MixerWidget::Impl {
                 {"cropX", layer.crop.x()}, {"cropY", layer.crop.y()}, {"cropW", layer.crop.width()}, {"cropH", layer.crop.height()}});
             jsonScenes.append(QJsonObject{{"id", scene.id}, {"name", scene.name}, {"background", scene.background.name(QColor::HexArgb)}, {"layers", layers}});
         }
-        QDir().mkpath(QFileInfo(path).absolutePath()); QSaveFile file(path);
-        if (!file.open(QIODevice::WriteOnly)) { message("Could not save show: " + file.errorString()); return false; }
-        const auto bytes = QJsonDocument(QJsonObject{{"version", 1}, {"sources", jsonSources}, {"scenes", jsonScenes},
-            {"room", room}, {"roomPassword", roomPassword}, {"guestReturns", guestReturnEnabled->isChecked()}, {"masterGain", masterGain.load()}, {"canvasFormat", canvasFormat->currentIndex()}, {"renderer", renderer->currentIndex()}}).toJson();
-        if (file.write(bytes) != bytes.size() || !file.commit()) { message("Could not save show: " + file.errorString()); return false; }
+        return {{"version", 1}, {"sources", jsonSources}, {"scenes", jsonScenes},
+            {"recordAudioSources",QJsonArray::fromStringList(recordAudioSources)}, {"recordIsoSources",QJsonArray::fromStringList(recordIsoSources)},
+            {"room", room}, {"roomPassword", roomPassword}, {"guestReturns", guestReturnEnabled->isChecked()}, {"masterGain", masterGain.load()}, {"canvasFormat", canvasFormat->currentIndex()}, {"renderer", renderer->currentIndex()}};
+    }
+    bool save(const QString &path) {
+        auto lease = showFileAccess().reserve(path);
+        if (!lease.allowed) { message("This show is open in another instance, or its folder cannot be locked."); return false; }
+        return saveDocument(path);
+    }
+    bool saveDocument(const QString &path) {
+        const auto bytes = QJsonDocument(showDocument(path)).toJson();
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QFile previous(path);
+        if (previous.exists() && previous.open(QIODevice::ReadOnly) && previous.size() <= 2*1024*1024) {
+            const auto old = previous.readAll(); previous.close();
+            if (old == bytes) return true;
+            const auto now = QDateTime::currentSecsSinceEpoch();
+            if (now-backupTimes.value(path) >= 60 && QJsonDocument::fromJson(old).object()["version"].toInt() == 1) {
+                const auto error = writeShowFile(path+".backup.mixer.json",old);
+                if (!error.isEmpty()) { message("Could not back up show: "+error); return false; }
+                backupTimes[path] = now;
+            }
+        }
+        const auto error = writeShowFile(path,bytes);
+        if (!error.isEmpty()) { message("Could not save show: "+error); return false; }
         return true;
+    }
+    bool saveAs(const QString &path) {
+        if (!QFileInfo(path).isAbsolute() || !path.endsWith(".mixer.json",Qt::CaseInsensitive)) { message("Use an absolute .mixer.json path."); return false; }
+        auto lease = showFileAccess().reserve(path);
+        if (!lease.allowed) { message("This show is open in another instance, or its folder cannot be locked."); return false; }
+        if (!save(projectPath) || !saveDocument(path)) return false;
+        activateProject(std::move(lease));
+        message("Active show: "+projectPath+". Later edits autosave here."); return true;
+    }
+    void activateProject(ShowFileAccess::Lease lease) {
+        showFileAccess().activate(std::move(lease));
+        projectPath = showFileAccess().path();
+        if (qApp->property("studioShow").toString().isEmpty()) QSettings("VDO.Ninja","Video Mixer").setValue("mixer/activeProject",projectPath);
+    }
+    QString collect(const QString &path) {
+        if (collectionBusy) return "A show collection is already running.";
+        if (!QFileInfo(path).isAbsolute() || QFileInfo::exists(path) || !QFileInfo(path).dir().exists()) return "Choose a new absolute folder inside an existing directory.";
+        collectionBusy = true; collectionStatus = "Collecting show and local assets..."; message(collectionStatus);
+        const auto document = showDocument(projectPath,true);
+        auto *watcher = new QFutureWatcher<QString>(q);
+        QObject::connect(watcher,&QFutureWatcher<QString>::finished,q,[this,watcher,path] {
+            const auto error = watcher->result(); watcher->deleteLater(); collectionBusy = false;
+            collectionStatus = error.isEmpty() ? "Collected show: "+QDir(path).filePath("show.mixer.json") : error;
+            message(collectionStatus);
+        });
+        // Future delivery is disconnected with the widget. The copy worker
+        // never dereferences a UI object racing application shutdown.
+        watcher->setFuture(QtConcurrent::run([document,path,cancelled=collectionCancelled] {
+            try { return collectShow(document,path,*cancelled); } catch (...) { return QString("Could not collect the show."); }
+        }));
+        return {};
+    }
+    int relink(const QString &folder) {
+        int count = 0;
+        for (auto &item : sources) {
+            if ((item->kind != "image" && item->kind != "media") || QFileInfo::exists(item->locator)) continue;
+            const auto replacement = QDir(folder).absoluteFilePath(QFileInfo(item->locator).fileName());
+            if (!QFileInfo(replacement).isFile()) continue;
+            stopSource(item); item->locator = replacement; startSource(item); ++count;
+        }
+        if (count) { rebuildSources(); changed(); }
+        return count;
     }
     bool load(const QString &path) {
         QFile file(path); if (!file.exists()) return false;
@@ -2147,6 +2356,9 @@ struct MixerWidget::Impl {
             incomingScenes.push_back(scene);
         }
         loading = true;
+        recordAudioSources.clear(); recordIsoSources.clear();
+        for (const auto &id : data["recordAudioSources"].toArray()) if (sourceIds.contains(id.toString()) && !recordAudioSources.contains(id.toString()) && recordAudioSources.size()<16) recordAudioSources.append(id.toString());
+        for (const auto &id : data["recordIsoSources"].toArray()) if (sourceIds.contains(id.toString()) && !recordIsoSources.contains(id.toString()) && recordIsoSources.size()<4) recordIsoSources.append(id.toString());
         const int format = std::clamp(data["canvasFormat"].toInt(), 0, int(CanvasFormats.size())-1);
         canvasFormat->setCurrentIndex(format);
         renderer->setCurrentIndex(std::clamp(data["renderer"].toInt(1), 0, 1));
@@ -2241,6 +2453,8 @@ QJsonObject MixerWidget::controlState() const {
         {"paused", s->mediaPaused}, {"loop", s->mediaLoop}, {"restartOnTake",s->mediaRestartOnTake},
         {"positionMs",s->media ? qint64(s->media->positionMs()) : 0}, {"durationMs",s->media ? qint64(s->media->durationMs()) : 0}});
     QJsonArray monitorDevices;
+    QJsonArray isoRecordings;
+    for (const auto &iso : i.recordingPlan.load()->isos) isoRecordings.append(QJsonObject{{"source",iso.id},{"active",iso.recorder->active()},{"busy",iso.recorder->busy()},{"status",iso.recorder->status()},{"path",iso.recorder->path()}});
     for (int n = 0; n < i.monitorDevice->count(); ++n) monitorDevices.append(QJsonObject{
         {"id", i.monitorDevice->itemData(n, Qt::UserRole+1).toString()}, {"name", i.monitorDevice->itemText(n)}, {"available", i.monitorDevice->itemData(n).toInt() >= -1}});
     return {{"scenes", scenes}, {"sources", sources}, {"preview", i.preview().id}, {"program", i.program.id},
@@ -2249,10 +2463,15 @@ QJsonObject MixerWidget::controlState() const {
         {"canvas", QJsonObject{{"width", i.Width}, {"height", i.Height}, {"fps", i.canvasFps},
             {"format", i.canvasFormat->currentIndex()}, {"renderer", i.renderer->currentIndex() == 0 ? "gpu" : "cpu"},
             {"active_renderer", i.programRenderer}, {"renderer_error", i.compositorError}}},
-        {"recording", QJsonObject{{"active", i.recorder.active()}, {"busy", i.recorder.busy()},
+        {"recording", QJsonObject{{"active", i.recordingActive()}, {"busy", i.recordingBusy()}, {"program_active",i.recorder.active()},
+            {"audio_sources",QJsonArray::fromStringList(i.recordingPlan.load()->audioIds)}, {"separate_videos",isoRecordings},
             {"status", i.recorder.status()}, {"dropped_frames", qint64(i.recorder.dropped())}, {"remaining_seconds_estimate",qint64(i.recorder.remainingSeconds())}, {"exporting",bool(i.exportProcess)}, {"export_status",i.exportStatus}}},
         {"monitor", QJsonObject{{"enabled", i.monitorEnable->isChecked()}, {"device", i.monitorDevice->currentData(Qt::UserRole+1).toString()}, {"gain", i.monitorGain.load()}, {"refreshing", i.monitorDevicesRefreshing}, {"devices", monitorDevices}}},
         {"private_break", i.privateBreak.load()}, {"microphones_muted", i.microphonesMuted.load()}, {"private_talkback", bool(i.privateTalkback || i.heldTalkback)},
+        {"project_path", i.projectPath}, {"show_collection",QJsonObject{{"busy",i.collectionBusy},{"status",i.collectionStatus}}},
+        {"browser_resource_budget",ProcessWorker::browserBudgetState()},
+        {"local_outputs",QJsonObject{{"spout",i.spoutOutput->isChecked()},{"virtual_camera",i.virtualCamera->isChecked()},
+            {"configuring",!i.virtualCamera->isEnabled()},{"status",i.localOutputs.status()}}},
         {"master_gain", i.masterGain.load()}, {"master_peak", i.masterPeak.load()}};
 }
 QJsonObject MixerWidget::controlCommand(const QJsonObject &c) {
@@ -2264,7 +2483,7 @@ QJsonObject MixerWidget::controlCommand(const QJsonObject &c) {
         for (int n = 0; n < int(i.scenes.size()); ++n) if (i.scenes[n].id == id) return n;
         return -1;
     };
-    const auto outputsBusy = [&] { return i.core->isLive() || i.recorder.busy() || i.spoutOutput->isChecked() ||
+    const auto outputsBusy = [&] { return i.core->isLive() || i.recordingBusy() || i.spoutOutput->isChecked() ||
         i.virtualCamera->isChecked() || i.guestReturnEnabled->isChecked(); };
     QJsonObject result{{"ok", true}, {"command", command}};
     if (command == "scene.add") {
@@ -2375,6 +2594,12 @@ QJsonObject MixerWidget::controlCommand(const QJsonObject &c) {
         if (c.contains("microphonesMuted")) i.microphonesButton->setChecked(c["microphonesMuted"].toBool());
         if (c.contains("privateTalkback")) findChild<QPushButton*>("guestTalkback")->setChecked(c["privateTalkback"].toBool());
         if (c.contains("guestReturns")) i.guestReturnEnabled->setChecked(c["guestReturns"].toBool());
+    } else if (command == "local.set") {
+        if ((c.contains("virtualCamera") || c["unregisterCamera"].toBool()) && !i.virtualCamera->isEnabled()) return fail("Virtual-camera registration is still running");
+        if (c["virtualCamera"].toBool() && c["unregisterCamera"].toBool()) return fail("Cannot enable and unregister the virtual camera together");
+        if (c.contains("spout")) i.spoutOutput->setChecked(c["spout"].toBool());
+        if (c.contains("virtualCamera")) i.virtualCamera->setChecked(c["virtualCamera"].toBool());
+        if (c["unregisterCamera"].toBool()) findChild<QPushButton*>("unregisterCamera")->click();
     } else if (command == "monitor.set") {
         if (c["refresh"].toBool()) i.refreshMonitorDevices();
         if (c.contains("device")) {
@@ -2408,23 +2633,38 @@ QJsonObject MixerWidget::controlCommand(const QJsonObject &c) {
         if (c.contains("paused")) { s->mediaPaused = c["paused"].toBool(); s->media->setPaused(s->mediaPaused); }
         if (c.contains("loop")) { s->mediaLoop = c["loop"].toBool(); s->media->setLoop(s->mediaLoop); }
         if (c.contains("restartOnTake")) s->mediaRestartOnTake = c["restartOnTake"].toBool();
+        if (c.contains("seekMs")) s->media->seek(c["seekMs"].toInteger());
         i.changed();
     } else if (command == "record.export") {
         const auto error = i.exportRecording(c["input"].toString(),c["path"].toString()); if (!error.isEmpty()) return fail(error);
     } else if (command == "record.start") {
         const QString path = c["path"].toString();
-        if (i.recorder.busy()) return fail("Recording is already active or finalizing");
+        if (i.recordingBusy()) return fail("Recording is already active or finalizing");
         if (!QFileInfo(path).isAbsolute() || !path.endsWith(".mkv", Qt::CaseInsensitive) || QFileInfo::exists(path)) return fail("Use a new absolute .mkv path");
-        if (!i.recorder.start(path, i.Width, i.Height, i.canvasFps)) return fail(i.recorder.status());
+        QStringList audioIds = i.recordAudioSources,isoIds = i.recordIsoSources;
+        if (c.contains("audioSources")) { audioIds.clear(); for (const auto &id : c["audioSources"].toArray()) audioIds.append(id.toString()); }
+        if (c.contains("isoSources")) { isoIds.clear(); for (const auto &id : c["isoSources"].toArray()) isoIds.append(id.toString()); }
+        const auto error = i.startRecording(path,audioIds,isoIds); if (!error.isEmpty()) return fail(error);
     } else if (command == "record.stop") {
-        i.recorder.requestStop();
-    } else if (command == "show.save" || command == "show.open") {
+        i.stopRecording();
+    } else if (command == "show.collect") {
+        const auto error = i.collect(c["path"].toString()); if (!error.isEmpty()) return fail(error);
+    } else if (command == "show.relink") {
+        const auto folder = c["path"].toString();
+        if (!QFileInfo(folder).isAbsolute() || !QFileInfo(folder).isDir()) return fail("Choose an existing absolute folder");
+        result["relinked"] = i.relink(folder);
+    } else if (command == "show.save" || command == "show.saveAs" || command == "show.open") {
         const QString path = c["path"].toString();
         if (!QFileInfo(path).isAbsolute() || !path.endsWith(".mixer.json", Qt::CaseInsensitive)) return fail("Use an absolute .mixer.json path");
         if (command == "show.save") { if (!i.save(path)) return fail(i.status->text()); }
+        else if (command == "show.saveAs") { if (!i.saveAs(path)) return fail(i.status->text()); }
         else {
             if (outputsBusy()) return fail("Stop all outputs before opening a show");
+            auto lease = c["activate"].toBool() ? showFileAccess().reserve(path) : ShowFileAccess::Lease{};
+            if (c["activate"].toBool() && !lease.allowed) return fail("This show is open in another instance, or its folder cannot be locked");
+            if (c["activate"].toBool() && !i.save(i.projectPath)) return fail(i.status->text());
             if (!i.load(path)) return fail("Could not load show");
+            if (c["activate"].toBool()) i.activateProject(std::move(lease));
             i.selectedScene = 0; i.selectedSource.clear(); i.program = i.scenes[0]; i.fading = false;
             i.history.clear(); i.historyIndex = 0; i.rebuild(); i.updateAudioRouting(); i.changed();
         }
@@ -2444,7 +2684,7 @@ QJsonObject MixerWidget::controlCommand(const QJsonObject &c) {
 }
 void MixerWidget::setOutputState(const QString &label, const QString &status, bool enabled, bool active) {
     impl_->startOutput->setText(label); impl_->startOutput->setAccessibleName(label);
-    impl_->startOutput->setEnabled(enabled); impl_->recordOutput->setEnabled(!impl_->recorder.busy() || impl_->recorder.active());
+    impl_->startOutput->setEnabled(enabled); impl_->recordOutput->setEnabled(!impl_->recordingBusy() || impl_->recordingActive());
     impl_->outputStatus->setText(active ? status : QString(status).replace("Select a window to capture", "Mixer ready"));
 }
 } // namespace versus::mixer

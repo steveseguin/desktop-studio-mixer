@@ -23,7 +23,10 @@ void IsolatedSource::consume() {
     while (running_ && process_->alive()) {
         QJsonObject command;
         { std::lock_guard lock(mutex_); command = std::exchange(pending_, {}); }
-        if (!command.isEmpty()) process_->call(command);
+        if (!command.isEmpty()) {
+            process_->call(command);
+            if (discontinuity_ && (command.contains("seekMs") || command["restart"].toBool())) discontinuity_();
+        }
         if (image_) { auto image = process_->image(); if (!image.isNull()) image_(std::move(image)); }
         else { video::CapturedFrame frame; if (frame_ && process_->frame(frame)) frame_(std::move(frame)); }
         audio::StreamChunk audio; if (audio_ && process_->audio(audio)) audio_(std::move(audio));
@@ -104,6 +107,7 @@ void IsolatedSource::mediaCommand(const QJsonObject &command) {
 void IsolatedSource::setPaused(bool paused) { paused_ = paused; mediaCommand({{"paused", paused}}); }
 void IsolatedSource::setLoop(bool loop) { loop_ = loop; mediaCommand({{"loop", loop}}); }
 void IsolatedSource::restart() { paused_ = false; mediaCommand({{"restart", true}, {"paused", false}}); }
+void IsolatedSource::seek(int64_t milliseconds) { mediaCommand({{"seekMs", qint64(milliseconds)}}); }
 bool IsolatedSource::ended() const { return snapshot()["ended"].toBool(); }
 bool IsolatedSource::hasVideo() const { return snapshot()["hasVideo"].toBool(true); }
 int64_t IsolatedSource::positionMs() const { return snapshot()["positionMs"].toInteger(); }
