@@ -72,6 +72,13 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                     const LONGLONG mediaEnd = durationMs_.load()*10000;
                     LONGLONG lastSampleEnd = 0;
                     uint64_t cycleAudioFrames = 0;
+                    // A loop seek can briefly stall the decoder even with PCM
+                    // read-ahead. Reuse only the first 30 ms of this same file
+                    // across that boundary, then skip its decoded duplicate.
+                    // The existing mixer queue keeps the samples on its clock.
+                    constexpr size_t LoopPrefixFrames = 1440; // stereo 48 kHz
+                    std::vector<float> loopAudioPrefix;
+                    size_t skipLoopAudioFrames = 0;
                     LONGLONG cue = 0;
                     bool previewPending = false;
                     bool decodedCueFrame = false;
@@ -97,6 +104,7 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                         }
                         const bool manualSeek = seek_.exchange(false);
                         if (manualSeek || loopPending) {
+                            if (manualSeek) skipLoopAudioFrames = 0;
                             // A manual restart can leave decoded samples queued
                             // behind the current sample. Clear them before seek
                             // so a later loop cannot inherit stale EOS state.
@@ -176,6 +184,13 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                                             ended_ = true; paused_ = true;
                                         } else {
                                             nextLoopOrigin = origin + std::chrono::nanoseconds(cycleEnd*100);
+                                            if (!loopAudioPrefix.empty()) {
+                                                audio::StreamChunk prefix; prefix.sampleRate = 48000; prefix.channels = 2;
+                                                prefix.captureTime100ns = std::chrono::duration_cast<std::chrono::nanoseconds>(nextLoopOrigin.time_since_epoch()).count()/100;
+                                                prefix.samples = loopAudioPrefix;
+                                                audio(std::move(prefix));
+                                                skipLoopAudioFrames = loopAudioPrefix.size()/2;
+                                            }
                                             loopPending = true;
                                         }
                                     }
@@ -196,7 +211,12 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                         if (previewPending && stream != videoStream) continue;
                         lastSampleEnd = std::max(lastSampleEnd, std::max<LONGLONG>(0, pts)+std::max<LONGLONG>(0, duration));
                         const auto deadline = origin + std::chrono::nanoseconds(std::max<LONGLONG>(stream == audioStream ? cue : 0, pts)*100);
-                        { std::unique_lock lock(mutex_); wake_.wait_until(lock, deadline, [this] { return !running_ || paused_ || seek_; }); }
+                        // PCM is queued for the 10 ms mixer, while pictures are
+                        // presented immediately. Give audio a small read-ahead
+                        // window so decoding/loop seeks can finish before the
+                        // mixer runs out; keep video on its presentation clock.
+                        const auto readyAt = stream == audioStream ? deadline-std::chrono::milliseconds(30) : deadline;
+                        { std::unique_lock lock(mutex_); wake_.wait_until(lock, readyAt, [this] { return !running_ || paused_ || seek_; }); }
                         if (!running_) break;
                         if (seek_) continue;
                         // Preserve this sample while paused; do not consume media off the clock.
@@ -243,15 +263,23 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                                 ? std::clamp<LONGLONG>((mediaEnd-pts)*48000/10000000, firstFrame, totalFrames)
                                 : totalFrames;
                             const size_t keptFrames = size_t(endFrame-firstFrame);
+                            if (cycleAudioFrames == loopAudioPrefix.size()/2 && loopAudioPrefix.size()/2 < LoopPrefixFrames) {
+                                const auto cacheFrames = std::min(keptFrames, LoopPrefixFrames-loopAudioPrefix.size()/2);
+                                const auto offset = loopAudioPrefix.size();
+                                loopAudioPrefix.resize(offset+cacheFrames*2);
+                                if (cacheFrames) std::memcpy(loopAudioPrefix.data()+offset, bytes+size_t(firstFrame)*8, cacheFrames*8);
+                            }
                             // Some readers omit duration. PCM length still gives the
                             // complete interval at our negotiated 48 kHz stereo rate.
                             lastSampleEnd = std::max(lastSampleEnd, std::max<LONGLONG>(0, pts)+LONGLONG(length/8)*10000000/48000);
                             cycleAudioFrames += keptFrames;
                             lastSampleEnd = std::max(lastSampleEnd, LONGLONG(cycleAudioFrames*10000000/48000));
                             audio::StreamChunk chunk; chunk.sampleRate = 48000; chunk.channels = 2; chunk.captureTime100ns = timestamp;
-                            if (keptFrames) {
-                                chunk.samples.resize(keptFrames*2);
-                                std::memcpy(chunk.samples.data(), bytes+size_t(firstFrame)*8, keptFrames*8);
+                            const auto skipped = std::min(skipLoopAudioFrames, keptFrames);
+                            skipLoopAudioFrames -= skipped;
+                            if (keptFrames > skipped) {
+                                chunk.samples.resize((keptFrames-skipped)*2);
+                                std::memcpy(chunk.samples.data(), bytes+(size_t(firstFrame)+skipped)*8, (keptFrames-skipped)*8);
                                 audio(std::move(chunk));
                             }
                         }

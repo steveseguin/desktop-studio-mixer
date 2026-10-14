@@ -34,6 +34,16 @@ if ($Package -or $Installer) {
     $deploy = Join-Path $vcpkgRoot 'installed/x64-windows/tools/Qt6/bin/windeployqt.exe'
     & $deploy --release --no-translations --no-opengl-sw --compiler-runtime "$packageRoot/desktop-studio.exe"
     if ($LASTEXITCODE -ne 0) { throw 'Qt packaging failed.' }
+    # The vcpkg Qt JPEG plugin dynamically links libjpeg-turbo. windeployqt
+    # deploys the plugin but does not copy this non-Qt runtime dependency.
+    $jpegPlugin = Join-Path $packageRoot 'imageformats/qjpeg.dll'
+    if ((Test-Path -LiteralPath $jpegPlugin) -and
+        [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($jpegPlugin)).Contains('jpeg62.dll')) {
+        Copy-Item -LiteralPath (Join-Path $vcpkgRoot 'installed/x64-windows/bin/jpeg62.dll') -Destination $packageRoot -Force
+        $imageNotices = Join-Path $packageRoot 'licenses'
+        New-Item -ItemType Directory -Force -Path $imageNotices | Out-Null
+        Copy-Item -LiteralPath (Join-Path $vcpkgRoot 'installed/x64-windows/share/libjpeg-turbo/copyright') -Destination (Join-Path $imageNotices 'libjpeg-turbo.txt') -Force
+    }
     # App-local VC runtime keeps the portable package and per-user setup usable
     # without an administrator installing the machine-wide redistributable.
     $crt = Join-Path $env:VCToolsRedistDir 'x64/Microsoft.VC143.CRT'

@@ -1,12 +1,19 @@
 """Packaged live mix: huge surfaces, reduced CPU affinity and capture-worker loss."""
 from pathlib import Path
 source=Path(__file__).with_name('mixer-automation-e2e.py').read_text().split('\ntry:\n    target=')[0]
-source=source.replace('args=parser.parse_args()',"parser.add_argument('--fixture',required=True)\nargs=parser.parse_args()")
+source=source.replace('args=parser.parse_args()',"parser.add_argument('--fixture',required=True)\nparser.add_argument('--max-video-gap-ms',type=float,default=250)\nparser.add_argument('--cpu-seconds',type=int,default=15)\nargs=parser.parse_args()")
 exec(source)
-import sys,wave,win32gui
+assert 1<=args.cpu_seconds<=180
+import sys,wave,win32gui,re
 root=None;fixture_process=None;receiver=None;logs=[]
-results={'sha256':hashlib.sha256((package/'desktop-studio.exe').read_bytes()).hexdigest(),'phases':[]}
+results={'sha256':hashlib.sha256((package/'desktop-studio.exe').read_bytes()).hexdigest(),'phases':[],'operations':[]}
 game=Path(__file__).resolve().parents[3]/'game-capture/native-qt'
+base_command=command
+def command(operation,**kwargs):
+    started=time.time();tick=time.perf_counter()
+    reply=base_command(operation,**kwargs)
+    results['operations'].append({'command':operation,'wall':started,'apiMs':(time.perf_counter()-tick)*1000})
+    return reply
 def launch(argv,name):
     log=(report/(name+'.log')).open('wb');logs.append(log)
     return subprocess.Popen([str(v) for v in argv],stdin=subprocess.PIPE,stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)
@@ -21,15 +28,15 @@ def workers(kind):
         except psutil.NoSuchProcess:pass
     return found
 def phase(name,seconds=8):
-    began=time.monotonic();rows=[]
+    began=time.monotonic();wall=time.time();rows=[]
     while time.monotonic()-began<seconds:
         tick=time.perf_counter();s=state();ms=(time.perf_counter()-tick)*1000
         assert s['recording']['program_active'] and s['output']['live'],(name,s['recording'],s['output'])
         assert [p.pid for p in workers('media')]==media_pids,'Healthy media worker restarted'
-        rows.append({'seconds':time.monotonic()-began,'apiMs':ms,'drops':s['recording']['dropped_frames'],
+        rows.append({'seconds':time.monotonic()-began,'apiMs':ms,'drops':s['recording']['dropped_frames'],'repeats':s['recording'].get('repeated_frames'),
                      'privateMiB':root.memory_info().private/2**20,'sources':s['sources']})
         time.sleep(.3)
-    results['phases'].append({'name':name,'samples':rows,'maxApiMs':max(r['apiMs'] for r in rows),'extraDrops':rows[-1]['drops']-rows[0]['drops']})
+    results['phases'].append({'name':name,'wall':wall,'samples':rows,'maxApiMs':max(r['apiMs'] for r in rows),'extraDrops':rows[-1]['drops']-rows[0]['drops']})
     print(name,'API max',round(max(r['apiMs'] for r in rows),1),'drops',rows[-1]['drops']-rows[0]['drops'],flush=True)
 try:
     # Generate before launching/profiling; no decode or compression competes with the app.
@@ -45,6 +52,9 @@ try:
     command('monitor.set',enabled=False)
     healthy=command('source.add',kind='media',name='Healthy source',locator=str(Path(args.fixture).resolve()))['id']
     window=command('source.add',kind='window',name='Resizable capture',locator=str(hwnd))['id']
+    # Both fixtures contain the same tones. Avoid phase cancellation between
+    # them when checking that the independent healthy track stays continuous.
+    command('audio.set',source=window,muted=True)
     command('layer.set',source=window,x=0,y=0,w=1,h=1)
     until(lambda:all(s['frames']>30 for s in state()['sources']),'both video sources')
     media_pids=[p.pid for p in workers('media')]
@@ -66,7 +76,7 @@ try:
     for p in [root]+root.children(recursive=True):
         try:p.cpu_affinity(restricted)
         except psutil.NoSuchProcess:pass
-    phase('two-logical-cpus',15)
+    phase('two-logical-cpus',args.cpu_seconds)
     for p in [root]+root.children(recursive=True):
         try:p.cpu_affinity(allowed)
         except psutil.NoSuchProcess:pass
@@ -89,8 +99,19 @@ try:
         raw=run([ffmpeg,'-v','error','-i',file,'-map','0:a:0','-ar','48000','-ac','2','-f','f32le','-'],timeout=90)
         assert raw.returncode==0
         pcm=np.frombuffer(raw.stdout,np.float32).reshape(-1,2)[48000:-48000];assert np.isfinite(pcm).all()
-        windows=pcm[:len(pcm)//480*480].reshape(-1,480,2);rms=float(np.sqrt(np.mean(windows**2,axis=1)).min())
-        results['files'].append({'name':file.name,'cleanDecode':True,'minimum10msRms':rms});assert rms>.005,rms
+        windows=pcm[:len(pcm)//480*480].reshape(-1,480,2);levels=np.sqrt(np.mean(windows**2,axis=1));rms=float(levels.min())
+        short=pcm[:len(pcm)//48*48].reshape(-1,48,2);short_levels=np.sqrt(np.mean(short**2,axis=1)).min(axis=1)
+        cadence=run([ffmpeg,'-v','info','-i',file,'-an','-vf','scale=1:1,showinfo','-fps_mode','passthrough','-f','null','-'],timeout=180)
+        assert cadence.returncode==0
+        times=np.array([float(v) for v in re.findall(rb'\bn:\s*\d+\s+pts:.*?pts_time:([-\d.]+)',cadence.stderr)])
+        assert len(times)>1000 and np.all(np.diff(times)>0)
+        gaps=np.diff(times);steady=gaps[times[1:]>2]
+        row={'name':file.name,'cleanDecode':True,'minimum10msRms':rms,'lowEnergySeconds':(1+np.flatnonzero(np.min(levels,axis=1)<=.005)*.01).tolist(),
+             'minimum1msRms':float(short_levels.min()),'lowEnergy1msSeconds':(1+np.flatnonzero(short_levels<=.005)*.001).tolist(),'frames':len(times),
+             'fps':float(1/gaps.mean()),'p95GapMs':float(np.percentile(steady,95)*1000),'maxGapMs':float(steady.max()*1000),
+             'longGaps':[{'seconds':float(t),'gapMs':float(g*1000)} for t,g in zip(times[1:],gaps) if g>.07]}
+        results['files'].append(row)
+    assert all(row['minimum1msRms']>.005 and row['maxGapMs']<=args.max_video_gap_ms for row in results['files']),results['files']
     assert max(p['maxApiMs'] for p in results['phases'])<1000
     assert results['brokenImageError'] and results['unavailableWindow']
     results['passed']=True

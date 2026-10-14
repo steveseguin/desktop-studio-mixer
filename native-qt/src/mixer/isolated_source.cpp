@@ -27,9 +27,11 @@ void IsolatedSource::consume() {
             process_->call(command);
             if (discontinuity_ && (command.contains("seekMs") || command["restart"].toBool())) discontinuity_();
         }
+        // Audio has a 10 ms consumption deadline. Drain it before copying a
+        // potentially large picture, especially when only a few CPUs are free.
+        audio::StreamChunk audio; if (audio_ && process_->audio(audio)) audio_(std::move(audio));
         if (image_) { auto image = process_->image(); if (!image.isNull()) image_(std::move(image)); }
         else { video::CapturedFrame frame; if (frame_ && process_->frame(frame)) frame_(std::move(frame)); }
-        audio::StreamChunk audio; if (audio_ && process_->audio(audio)) audio_(std::move(audio));
         const auto now = std::chrono::steady_clock::now();
         if (now-statusAt >= std::chrono::milliseconds(100)) {
             statusAt = now;

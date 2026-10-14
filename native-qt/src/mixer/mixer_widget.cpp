@@ -37,7 +37,6 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
-#include <QImageReader>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -77,6 +76,12 @@ namespace versus::mixer {
 using ui::studioText;
 namespace {
 using Profile = app::detail::PerformanceTrace;
+QThreadPool &imageLoadPool() {
+    static QThreadPool pool;
+    static const bool configured = [] { pool.setMaxThreadCount(2); return true; }();
+    (void)configured;
+    return pool;
+}
 constexpr int Width = 1280, Height = 720;
 struct CanvasFormat { int width, height, fps; };
 // Indices are persisted in shows and used by the API; append new presets.
@@ -127,6 +132,7 @@ struct Source {
     QImage image;
     bool imageStraightAlpha = false; // Protected by imageMutex, alongside image.
     std::deque<float> samples;
+    int64_t audioReadyAt = 0; // Protected by audioMutex; file-playback priming.
     std::deque<float> delayedSamples;
     std::atomic<int> audioDelayMs{0};
     int appliedDelayMs = -1;
@@ -1470,7 +1476,7 @@ struct MixerWidget::Impl {
             if (transparent.isVisible() && !webUrl(value.text().trimmed())) { validationError(studioText("Enter a complete http:// or https:// source URL.")); return; }
             if (kind == "color" && !QColor(value.text()).isValid()) { validationError(studioText("Enter a valid color, for example #24466f.")); return; }
             if (kind == "media" && !QFileInfo(value.text()).isFile()) { validationError(studioText("Choose an existing local media file.")); return; }
-            if (kind == "image" && !QImageReader(value.text()).canRead()) { validationError(studioText("Choose a readable image file.")); return; }
+            if (kind == "image" && !QFileInfo(value.text()).isFile()) { validationError(studioText("Choose an existing image file.")); return; }
             auto item = existing ? existing : std::make_shared<Source>();
             const auto locator = device.isVisible() ? device.currentData().toString() : value.text().trimmed();
             // Labels and audio delay do not change the capture session. Keeping it
@@ -1549,6 +1555,11 @@ struct MixerWidget::Impl {
             const auto item = weak.lock(); if (!item || !*valid) return;
             std::lock_guard lock(item->audioMutex);
             auto normalized = audio::normalizeAudioForOpus(chunk, &item->resampler);
+            // Keep one mixer quantum of scheduling headroom for local files.
+            // Live microphones, browser/guest audio and capture retain their
+            // existing latency. This uses the same bounded 200 ms PCM queue.
+            if (item->kind == "media" && !item->audioReadyAt && !normalized.empty())
+                item->audioReadyAt = now100ns()+100000;
             item->samples.insert(item->samples.end(), normalized.begin(), normalized.end());
             // Keep at most 200 ms. A stalled UI must not accumulate delayed audio.
             while (item->samples.size() > 19200) item->samples.pop_front();
@@ -1619,7 +1630,7 @@ struct MixerWidget::Impl {
         } else if (item->kind == "media") {
             item->media = std::make_unique<IsolatedSource>("media"); item->media->setLoop(item->mediaLoop);
             item->media->onDiscontinuity([weak = std::weak_ptr<Source>(item)] {
-                if (auto source = weak.lock()) { std::lock_guard lock(source->audioMutex); source->samples.clear(); source->delayedSamples.clear(); source->appliedDelayMs = -1; }
+                if (auto source = weak.lock()) { std::lock_guard lock(source->audioMutex); source->samples.clear(); source->delayedSamples.clear(); source->appliedDelayMs = -1; source->audioReadyAt = 0; }
             });
             item->media->setImageCallback(imageFrame);
             item->media->setPaused(item->mediaPaused); item->media->start(item->locator, frame, audioChunk);
@@ -1666,19 +1677,38 @@ struct MixerWidget::Impl {
                 for (qsizetype i = 0; i < pcm.size()/2; ++i) chunk.samples[i] = qFromLittleEndian<qint16>(pcm.constData()+i*2)/32768.0f;
                 audioChunk(std::move(chunk));
             }, Qt::DirectConnection); // audioChunk owns its lock and checks capture validity.
-        } else {
-            QImage image;
-            if (item->kind == "image") {
-                QImageReader reader(item->locator); reader.setAutoTransform(true);
-                if (reader.size().width() > 8192 || reader.size().height() > 8192) reader.setScaledSize(reader.size().scaled(Width*2, Height*2, Qt::KeepAspectRatio));
-                image = reader.read(); if (image.isNull()) item->error = "Image unavailable: " + reader.errorString();
-            } else {
-                image = QImage(Width, Height, QImage::Format_ARGB32_Premultiplied); image.fill(item->color);
-                if (item->kind == "title") {
-                    QPainter painter(&image); painter.setRenderHint(QPainter::TextAntialiasing);
-                    painter.setPen(Qt::white); QFont font("Segoe UI", 48, QFont::DemiBold); painter.setFont(font);
-                    painter.drawText(image.rect().adjusted(60, 60, -60, -60), Qt::AlignCenter | Qt::TextWordWrap, item->locator);
+        } else if (item->kind == "image") {
+            // Decode and transfer large stills away from the render thread.
+            // Native image codecs run in a disposable, bounded worker process.
+            using ImageResult = std::pair<QImage, QString>;
+            item->starting = true;
+            auto *watcher = new QFutureWatcher<ImageResult>(q);
+            QObject::connect(watcher, &QFutureWatcher<ImageResult>::finished, q, [this, watcher, weak, valid] {
+                auto result = watcher->result(); watcher->deleteLater();
+                const auto item = weak.lock(); if (!item || !*valid || !running) return;
+                item->starting = false; item->error = result.second;
+                { std::lock_guard lock(item->imageMutex); item->image = std::move(result.first); item->imageStraightAlpha = false; }
+                if (!item->error.isEmpty()) message(item->name+": "+item->error);
+            });
+            watcher->setFuture(QtConcurrent::run(&imageLoadPool(), [valid, locator = item->locator, size = QSize(Width*2, Height*2)]() -> ImageResult {
+                if (!*valid) return {};
+                ProcessWorker worker;
+                if (!worker.start("image")) return {{}, "Image worker could not start: "+worker.error()};
+                const auto reply = worker.call({{"op", "load"}, {"locator", locator}, {"width", size.width()}, {"height", size.height()}}, nullptr, 0, nullptr, 15000);
+                if (!reply["ok"].toBool()) return {{}, reply["error"].toString("Image worker stopped before decoding completed.")};
+                auto image = worker.image(true);
+                for (int attempt = 0; image.isNull() && *valid && worker.alive() && attempt < 50; ++attempt) {
+                    worker.waitForMedia(10); image = worker.image(true);
                 }
+                if (image.isNull()) return {{}, "Image worker returned no picture."};
+                return {std::move(image), {}};
+            }));
+        } else {
+            QImage image(Width, Height, QImage::Format_ARGB32_Premultiplied); image.fill(item->color);
+            if (item->kind == "title") {
+                QPainter painter(&image); painter.setRenderHint(QPainter::TextAntialiasing);
+                painter.setPen(Qt::white); QFont font("Segoe UI", 48, QFont::DemiBold); painter.setFont(font);
+                painter.drawText(image.rect().adjusted(60, 60, -60, -60), Qt::AlignCenter | Qt::TextWordWrap, item->locator);
             }
             std::lock_guard lock(item->imageMutex); item->image = image;
         }
@@ -1703,7 +1733,7 @@ struct MixerWidget::Impl {
         item->cleanup = promise->get_future().share();
         QThreadPool::globalInstance()->start([retired, promise, prior]() mutable { if (prior.valid()) prior.wait(); retired.reset(); promise->set_value(); });
         delete item->browser.data();
-        { std::lock_guard lock(item->audioMutex); item->samples.clear(); item->delayedSamples.clear(); item->appliedDelayMs = -1; item->resampler = {}; }
+        { std::lock_guard lock(item->audioMutex); item->samples.clear(); item->delayedSamples.clear(); item->appliedDelayMs = -1; item->audioReadyAt = 0; item->resampler = {}; }
         { std::lock_guard lock(item->imageMutex); item->image = {}; }
         item->error.clear(); item->peak = 0;
     }
@@ -2139,6 +2169,7 @@ struct MixerWidget::Impl {
                 if (output) returns.push_back({output, std::vector<float>(960, 0)});
                 const bool listen = item->monitored;
                 std::lock_guard lock(item->audioMutex);
+                if (item->audioReadyAt > chunk.captureTime100ns) continue;
                 const int delay = item->audioDelayMs.load();
                 if (item->appliedDelayMs != delay) {
                     item->delayedSamples.assign(static_cast<size_t>(delay)*96, 0);
@@ -2483,7 +2514,7 @@ QJsonObject MixerWidget::controlState() const {
             {"active_renderer", i.programRenderer}, {"renderer_error", i.compositorError}}},
         {"recording", QJsonObject{{"active", i.recordingActive()}, {"busy", i.recordingBusy()}, {"program_active",i.recorder.active()},
             {"audio_sources",QJsonArray::fromStringList(i.recordingPlan.load()->audioIds)}, {"separate_videos",isoRecordings},
-            {"status", i.recorder.status()}, {"dropped_frames", qint64(i.recorder.dropped())}, {"remaining_seconds_estimate",qint64(i.recorder.remainingSeconds())}, {"exporting",bool(i.exportProcess)}, {"export_status",i.exportStatus}}},
+            {"status", i.recorder.status()}, {"dropped_frames", qint64(i.recorder.dropped())}, {"repeated_frames", qint64(i.recorder.repeated())}, {"remaining_seconds_estimate",qint64(i.recorder.remainingSeconds())}, {"exporting",bool(i.exportProcess)}, {"export_status",i.exportStatus}}},
         {"monitor", QJsonObject{{"enabled", i.monitorEnable->isChecked()}, {"device", i.monitorDevice->currentData(Qt::UserRole+1).toString()}, {"gain", i.monitorGain.load()}, {"refreshing", i.monitorDevicesRefreshing}, {"devices", monitorDevices}}},
         {"private_break", i.privateBreak.load()}, {"microphones_muted", i.microphonesMuted.load()}, {"private_talkback", bool(i.privateTalkback || i.heldTalkback)},
         {"project_path", i.projectPath}, {"show_collection",QJsonObject{{"busy",i.collectionBusy},{"status",i.collectionStatus}}},

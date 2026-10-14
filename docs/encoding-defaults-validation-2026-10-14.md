@@ -217,3 +217,65 @@ Complete candidate packages:
 - Desktop Studio: `native-qt/dist/desktop-studio-fuzz-review/`; executable SHA-256 `81fa31565b89d5f5d482741611d745bc39807e892545d633fb48c61d94be3ce2`.
 
 Limits: these are bounded, seeded workflows, not exhaustive proof of safety. This round did not repeat physical device unplug/replug, AMD/OBS, weak-machine/game-impact, overnight resource growth, trusted-HTTPS certificate cases or every protocol's loss/FEC matrix. Previously observed explicit NVENC pacing and isolated Studio local-recording gaps under large-source faults remain unresolved. Clean-machine testing remains deferred. No release or installer was published by this follow-up.
+
+## Follow-up: recording cadence, file audio and image isolation
+
+The new review build addresses the two remaining pacing findings above and additional problems exposed by the reruns:
+
+- **External hardware encoder pacing:** after successful startup/warm-up, low-latency Annex B hardware encoding collects available packets without blocking the next input frame. This removes a wait that throttled NVENC below 60 fps. IVF's existing wait is retained to preserve AV1/VP9 delivery latency. Input/PTS queues remain bounded; software encoding, bitrate defaults and quality presets are unchanged. The same fix is in Game Capture.
+- **Local recording cadence:** Program and source recorders now own their frame clock. A render stall repeats the last completed picture instead of creating a long timestamp gap. `recording.repeated_frames` exposes Program's repeats. `dropped_frames` still includes replaced pending compositions and send failures; constant file cadence is not proof that every picture is new.
+- **Still-image decoding:** Qt image codecs run in disposable helper processes, outside the compositor/UI. At most two loads run concurrently, each with a 1 GiB job-memory limit and a 15-second decode deadline. Cancelled/replaced loads cannot install an obsolete picture. PNG transparency and EXIF auto-transform are preserved.
+- **JPEG packaging:** the package had `qjpeg.dll` but lacked its `jpeg62.dll` dependency. Packaging now includes the runtime and its libjpeg-turbo copyright notice. No additional browser engine is bundled.
+- **File-audio continuity:** isolated sources drain audio before copying a picture. Local files allow up to 30 ms of PCM read-ahead and prime the mixer with one 10 ms scheduling quantum. A bounded 30 ms PCM prefix (about 11 KiB) covers automatic loop seeking; the same samples are skipped when the decoder catches up. Manual seeking resets the skip count. Existing 200 ms audio-queue limits and user audio-delay controls remain. This priming applies to local files, not microphones, browser/guest audio or native capture.
+
+### Large sources, CPU pressure and source failures
+
+The final package recorded locally and published software UDP through 4K/8K/portrait/odd capture surfaces, 20 rapid resizes, an 8192x4096 PNG, a truncated PNG, **45 seconds restricted to two logical CPUs**, a killed window worker, a suspended audio worker and destruction of the captured window. The healthy media worker never restarted. Both complete files decoded cleanly:
+
+| Measurement | Local MKV | Received MKV |
+|---|---:|---:|
+| Video frames | 4,322 | 4,312 |
+| Average fps | 30.00 | 30.00 |
+| Frame interval p95 / maximum | 34 / 34 ms | 34 / 34 ms |
+| Minimum 10 ms audio RMS | 0.02715 | 0.02729 |
+| Minimum 1 ms audio RMS | 0.02528 | 0.02530 |
+| Unexpected low-energy 1 ms windows | 0 | 0 |
+
+The original local-recording gaps reached 158-162 ms; none exceeded 34 ms in this run. API maximum was 89.0 ms during audio-worker recovery; adding the large PNG returned in 21.6 ms instead of the reproduced 131.6 ms synchronous decode. Recording drops stayed at nine from startup, with seven repeated compositions. Main-process private memory returned to about 40 MiB after removing the large/failed sources. These are measured bounded workflows, not a guarantee against arbitrary scheduling stalls.
+
+The audio check was tightened during investigation: the first read-ahead change passed 10 ms RMS windows but still contained five quiet 1 ms windows at a loop boundary. Prefix caching removed that loop gap; file priming then removed separate two-millisecond scheduling gaps. The final result above uses the stricter one-millisecond check, without lowering its threshold. Evidence: `source-baseline/`, `source-final/`, `source-audio-read-ahead/`, `source-loop-prefix/`, and passing `source-primed-final/` plus `source-scoped-final/` under `native-qt/e2e/reports/pacing-fixes-2026-10-14/`.
+
+Reproduce with `e2e/mixer-source-resilience-e2e.py --package PACKAGE --report REPORT --fixture MP4 --max-video-gap-ms 70 --cpu-seconds 45`. The fixture is `encoder-defaults-2026-10-14/verified-loop/source.mp4`, a 12-second 720p60 file with continuous 440/880 Hz stereo tones. Candidate: `native-qt/dist/desktop-studio-pacing-review/`; executable SHA-256 `0b302aff4826b5009f69109915ec78daed04b9788b607ee020e341d558067634`.
+
+### Combined browser/publisher failures and synchronization
+
+The same final executable passed the complete combined-fault sequence: browser CPU overload, browser termination and suspension, 35 seconds of network starvation without closing the socket, bandwidth restoration, publisher termination, and simultaneous browser/publisher failure. Healthy source restarts stayed at zero, browser audio returned, and the failure log stayed bounded at five worker-failure records. The 6,693-frame local recording decoded cleanly at 30.00 fps, with 34 ms p95/maximum spacing and seven duplicate/skip pairs; its longest repeated picture was 34 ms. Measured local A/V offset stayed within 29 ms. Receiver clips remained decodable and moving after recovery; measured receiver A/V offsets ranged from 46.5 to 56.2 ms across the four clips. The latter is not a promise of sub-frame sync across publisher restarts. Recovered pictures were approximately 0.23 seconds behind the live source. API p95/maximum were 25.6/33.8 ms.
+
+Evidence: `fault-quality-scoped-final/fault-quality.json`, preserved recordings and worker logs under the same reports directory. `mixer-fault-quality-e2e.py` matches frequency-coded audio pulses to visible frame IDs, preserves media timestamps and analyzes the complete recordings after the app exits. Earlier complete passes are retained as `fault-quality-release-candidate/` and `fault-quality-verified/`. Measured offsets varied between starts; these runs did not show accumulating drift across loops.
+
+### Images, unusual audio and visible controls
+
+The final executable also passed these independent packaged workflows:
+
+- **Images:** loaded transparent and half-transparent PNGs, JPEG and an 8192x4096 PNG; checked actual Program pixels, including the expected half-alpha blend. Corrupt PNG and unsupported SVG reported source errors. Replacing a pending image selected the new picture, and twelve rapid add/remove operations did not resurrect sources. Terminating or suspending an image helper during startup left recording, publishing and the healthy media worker running; failed helpers were cleaned up. Both complete recordings decoded cleanly with continuous audio. The current package does not include the SVG plugin. Evidence: `image-isolation-scoped-final/image-isolation.json`.
+- **Audio formats and bad inputs:** repeated ten format cases and nine invalid/missing-input cases while recording Program and a separate source track. The cases cover 8-192 kHz, integer PCM 8/16/24/32, float32, mono/stereo/3/6/8 channels and nonfinite float samples. Unsupported float64 was rejected; it is not counted as supported. All resulting recordings decoded cleanly and the healthy reference track continued. Evidence: `audio-formats-scoped-final/audio-formats.json`.
+- **Playback in the visible app:** drove pause/seek through the local API at 3.0 and 5.5 seconds, verified paused position, reached EOF, restarted, and looped from a cue at the file's end. Compared the captured pictures. This checks the running playback behavior; it does not exercise every playback-dialog control with mouse input. Evidence: `visible-transport-scoped-final/results.json`.
+- **Visible output controls:** started/stopped publishing through UI Automation during simultaneous local recording, then reviewed the single-canvas interface screenshots. Track/master VU meters and bordered scroll areas remained visible. Both CPU and GPU composition used hardware NVENC, with clean complete local/received recordings and continuous stereo tones.
+
+The last comparison used 1080p60, the same moving 720p60 file, approximately 4 Mbps publishing, simultaneous recording, and one 30-second run per renderer:
+
+| Measurement | CPU composition | GPU composition |
+|---|---:|---:|
+| Received distinct frames/second, including startup | 59.83 | 59.83 |
+| Received frame interval p95 | 17 ms | 17 ms |
+| Process-tree CPU, whole 20-logical-CPU machine | 11.24% | 10.69% |
+| Sum of process working sets | 777 MiB | 861 MiB |
+| API response p95 | 30.0 ms | 26.6 ms |
+
+Evidence: `visible-nvenc-scoped-final/results.json` and `visible-nvenc-gpu-final/results.json`. GPU composition saved about half a percentage point of whole-machine CPU in this pair of runs, while using more memory. This is not enough evidence to change the default. The workload still occupied roughly two logical CPUs; the pacing fixes are not a claim that high-resolution mixing plus recording is cheap. Summed working sets can count shared pages more than once. Reproduce using `mixer-encoder-defaults-e2e.py --package PACKAGE --report REPORT --fixture MP4 --case nvenc-1080p60-record --renderer cpu` (or `gpu`); use `--transport-only` for the playback workflow.
+
+### Final scope and remaining coverage
+
+`scoped-final-suite.json` records successful serialized runs of the Game encoder matrix and analysis, Studio large-source faults, combined browser/publisher faults, audio formats, visible output/playback controls and image isolation. The GPU comparison and explicit Game codec validation followed separately, without concurrent builds or decoding. Build, Python/Node syntax and PowerShell parsing checks are gates rather than substitutes for these workflows.
+
+These are bounded runs on this host, not exhaustive proof against every failure. AMD/OBS, physical GPU removal, real older/slow-PC gameplay, overnight resource growth, every protocol's loss/FEC matrix and calibrated Game Capture A/V sync were not repeated in this follow-up. Two-CPU affinity is not a substitute for an older machine. Clean-machine testing remains deferred. Receiver A/V offset after publisher restarts can exceed one 30 fps frame as quantified above. Review packages remain local; no installer or GitHub release was published.

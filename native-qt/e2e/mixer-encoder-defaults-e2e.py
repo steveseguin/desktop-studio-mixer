@@ -5,7 +5,7 @@ Uses the common isolated show/registry cleanup helpers; no public destinations.
 from pathlib import Path
 source=Path(__file__).with_name('mixer-automation-e2e.py').read_text()
 helpers=source[:source.index('\ntry:\n    target=cli_call')]
-helpers=helpers.replace('args=parser.parse_args()',"parser.add_argument('--fixture',help='Moving 60 fps video with continuous stereo 440/880 Hz tones')\nparser.add_argument('--transport-only',action='store_true')\nparser.add_argument('--audio-only',action='store_true')\nparser.add_argument('--soak-seconds',type=int,default=0)\nparser.add_argument('--load-workers',type=int,default=0)\nargs=parser.parse_args()")
+helpers=helpers.replace('args=parser.parse_args()',"parser.add_argument('--fixture',help='Moving 60 fps video with continuous stereo 440/880 Hz tones')\nparser.add_argument('--transport-only',action='store_true')\nparser.add_argument('--audio-only',action='store_true')\nparser.add_argument('--soak-seconds',type=int,default=0)\nparser.add_argument('--load-workers',type=int,default=0)\nparser.add_argument('--case',help='Run only this named encoder case')\nparser.add_argument('--renderer',choices=['cpu','gpu'])\nargs=parser.parse_args()")
 exec(helpers)
 import base64,statistics,sys,re
 from pywinauto import Application
@@ -34,22 +34,27 @@ try:
     window.wait('visible',timeout=15);window.maximize();window.set_focus()
     def output_button():return next(c for c in window.descendants() if (c.element_info.automation_id or '').endswith('.studioStartOutput'))
     command('monitor.set',enabled=False)
+    if args.renderer:command('canvas.set',renderer=args.renderer)
     source_id=command('source.add',kind='media',name='Moving detail and stereo audio',locator=str(fixture))['id']
     if not args.audio_only:command('layer.set',source=source_id,x=0,y=0,w=1,h=1)
     until(lambda:state()['master_peak']>.01 if args.audio_only else state()['sources'][0]['frames']>30,'source playback')
     matrix=[('software-720p30',0,'software',False),('software-1080p60',2,'software',False),
-            ('auto-720p30-record',0,'auto',True),('qsv-720p60',3,'qsv',False)]
+            ('auto-720p30-record',0,'auto',True),('qsv-720p60',3,'qsv',False),('nvenc-1080p60-record',2,'nvenc',True)]
     if args.soak_seconds:
         assert 60<=args.soak_seconds<=3600
         matrix=[('software-720p30-soak',0,'software',True)]
     if args.audio_only:matrix=matrix[:1]
     if args.transport_only:matrix=[]
+    if args.case:
+        matrix=[row for row in matrix if row[0]==args.case]
+        assert matrix,'Unknown or incompatible --case'
     seconds=args.soak_seconds or 30
     if args.load_workers:assert args.soak_seconds>=180,'CPU contention needs at least a three-minute soak'
     for name,fmt,encoder,recording in matrix:
         command('canvas.set',format=fmt)
         command('output.configure',protocol='udp',url='udp://127.0.0.1:18932',encoder=encoder)
-        row={'id':name,'canvasFormat':fmt,'encoder':encoder};results['cases'].append(row)
+        row={'id':name,'canvasFormat':fmt,'encoder':encoder,'renderer':state()['canvas']['active_renderer']};results['cases'].append(row)
+        if args.renderer:assert row['renderer'] in (args.renderer,'passthrough'),row
         if recording:
             command('record.start',path=str(report/(name+'-local.mkv')))
             until(lambda:state()['recording']['status'].startswith('Recording:'),'recording')

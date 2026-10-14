@@ -25,9 +25,11 @@ public:
     QString path() const { std::lock_guard lock(mutex_); return path_; }
     int64_t remainingSeconds() const { return remainingSeconds_; }
     uint64_t dropped() const { return dropped_; }
+    uint64_t repeated() const { return repeated_; }
 private:
     std::atomic<bool> running_{false}, busy_{false};
     std::atomic<uint64_t> dropped_{0};
+    std::atomic<uint64_t> repeated_{0};
     std::atomic<int64_t> remainingSeconds_{-1};
     std::atomic<std::shared_ptr<output::Session>> session_;
     mutable std::mutex mutex_;

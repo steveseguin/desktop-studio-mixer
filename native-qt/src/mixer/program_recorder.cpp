@@ -1,6 +1,8 @@
 #include "versus/mixer/program_recorder.h"
 #include "versus/video/video_encoder.h"
 #include "versus/video/window_capture.h"
+#include "versus/video/frame_waiter.h"
+#include "versus/app/encoder_recovery_policy.h"
 #include <QFileInfo>
 #include <QDir>
 #include <windows.h>
@@ -24,7 +26,7 @@ bool ProgramRecorder::start(const QString &path, int width, int height, int fps,
       if (!error.empty()) { status_ = QString::fromStdString(error); return false; }
       status_ = "Starting recording..."; path_ = path; pending_ = {}; }
     remainingSeconds_ = -1;
-    running_ = true; busy_ = true; dropped_ = 0;
+    running_ = true; busy_ = true; dropped_ = 0; repeated_ = 0;
     worker_ = std::thread([this, config, width, height, fps, path,extraAudioTracks] {
         const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         auto setStatus = [this](const QString &text) { std::lock_guard lock(mutex_); status_ = text; };
@@ -51,12 +53,31 @@ bool ProgramRecorder::start(const QString &path, int width, int height, int fps,
                 auto diskCheck = std::chrono::steady_clock::now();
                 auto lastEncoded = diskCheck;
                 bool wroteVideo = false;
+                using Clock = std::chrono::steady_clock;
+                const auto interval = app::outputFrameInterval(fps);
+                // Allow normal render jitter before the first recording slot.
+                // Keep the file clock independent of source/UI stalls, just as
+                // the publishing pacer does. Repeats are exposed separately.
+                const auto renderGrace = interval / 2;
+                auto nextFrame = Clock::now();
+                video::detail::FrameWaiter frameWaiter;
+                QImage image;
                 while (running_) {
-                    QImage image; int64_t timestamp;
+                    if (image.isNull()) {
+                        std::unique_lock lock(mutex_);
+                        wake_.wait_for(lock, std::chrono::milliseconds(250), [this] { return !running_ || !pending_.isNull(); });
+                        if (!running_) break;
+                        if (!pending_.isNull()) nextFrame = Clock::time_point(std::chrono::duration_cast<Clock::duration>(
+                            std::chrono::nanoseconds(timestamp_ * 100))) + renderGrace;
+                    }
+                    frameWaiter.waitUntil(nextFrame);
                     { std::unique_lock lock(mutex_);
-                      wake_.wait_for(lock, std::chrono::milliseconds(250), [this] { return !running_ || !pending_.isNull(); });
                       if (!running_) break;
-                      image = std::move(pending_); pending_ = {}; timestamp = timestamp_; }
+                      if (!pending_.isNull()) { image = std::move(pending_); pending_ = {}; }
+                      else if (!image.isNull()) ++repeated_; }
+                    // Timestamp the recording slot, not an earlier render tick:
+                    // a newly arrived picture must not be backdated by the grace.
+                    const auto timestamp = app::outputFrameTimestamp100ns(nextFrame);
                     if (session->status().state == output::State::Error) { setStatus(QString::fromStdString(session->status().message)); running_ = false; break; }
                     if (std::chrono::steady_clock::now()-diskCheck > std::chrono::seconds(2)) {
                         diskCheck = std::chrono::steady_clock::now();
@@ -85,6 +106,7 @@ bool ProgramRecorder::start(const QString &path, int width, int height, int fps,
                     } else if (std::chrono::steady_clock::now()-lastEncoded > std::chrono::seconds(10)) {
                         setStatus("Recording stopped: video encoder stopped producing frames."); running_ = false;
                     }
+                    nextFrame = app::outputFrameDeadlineAfterEncode(nextFrame, Clock::now(), interval);
                 }
                 session_.store({}); session->stop();
                 running_ = false;

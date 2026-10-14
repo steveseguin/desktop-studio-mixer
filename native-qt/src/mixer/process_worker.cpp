@@ -12,6 +12,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QFileInfo>
+#include <QImageReader>
 #include <QDir>
 #include <QTimer>
 #include <QElapsedTimer>
@@ -187,7 +188,7 @@ bool ProcessWorker::start(const QString &kind) {
     s.kind = kind;
     SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     s.blobCapacity = (kind == "encoder" || kind == "spout-output" || kind == "virtual-output") ? BlobCapacity : kind == "output" ? 8*1024*1024 : kind == "monitor" ? 960*sizeof(float) : 0;
-    s.pixelCapacity = (kind == "camera" || kind == "window" || kind == "spout" || kind == "media" || kind == "browser") ? BlobCapacity : 0;
+    s.pixelCapacity = (kind == "camera" || kind == "window" || kind == "spout" || kind == "media" || kind == "browser" || kind == "image") ? BlobCapacity : 0;
     const auto mappingSize = sizeof(Shared)+s.blobCapacity+s.pixelCapacity;
     // Reserve an address range; commit only the media bytes actually used.
     // This also preserves large source support without charging every 720p
@@ -205,6 +206,10 @@ bool ProcessWorker::start(const QString &kind) {
     s.shared->magic = Magic; s.shared->blobCapacity = uint32_t(s.blobCapacity); s.shared->pixelCapacity = uint32_t(s.pixelCapacity);
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (kind == "image") {
+        limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
+        limits.JobMemoryLimit = SIZE_T(1) << 30;
+    }
     if (kind == "browser") {
         s.browserBudget = browserBudget(true);
         if (!s.browserBudget->job) { s.error = "Could not apply the combined browser resource limit."; return false; }
@@ -398,7 +403,7 @@ int ProcessWorker::run(int argc, char **argv) {
     const QString kind = QString::fromLocal8Bit(argv[2]);
     const HRESULT apartment = CoInitializeEx(nullptr, kind == "browser" ? COINIT_APARTMENTTHREADED : COINIT_MULTITHREADED);
     std::unique_ptr<QCoreApplication> app;
-    if (kind == "browser") { auto gui = std::make_unique<QApplication>(argc, argv); gui->setQuitOnLastWindowClosed(false); app = std::move(gui); }
+    if (kind == "browser" || kind == "image") { auto gui = std::make_unique<QApplication>(argc, argv); gui->setQuitOnLastWindowClosed(false); app = std::move(gui); }
     else app = std::make_unique<QCoreApplication>(argc, argv);
     auto &application = *app;
     // Dispatch is deliberately a small fixed vocabulary, not a general native bridge.
@@ -472,6 +477,22 @@ int ProcessWorker::run(int argc, char **argv) {
                 if (output) {
                     output->stop(); const auto final = output->status();
                     result["state"] = int(final.state); result["message"] = QString::fromStdString(final.message);
+                }
+            }
+            else if (kind == "image" && op == "load") {
+                QImageReader reader(c["locator"].toString()); reader.setAutoTransform(true);
+                const auto size = reader.size();
+                if (size.width() > 8192 || size.height() > 8192)
+                    reader.setScaledSize(size.scaled(std::clamp(c["width"].toInt(), 160, 8192),
+                        std::clamp(c["height"].toInt(), 120, 8192), Qt::KeepAspectRatio));
+                QImage image = reader.read();
+                if (image.isNull()) result["error"] = "Image unavailable: " + reader.errorString();
+                else {
+                    image = image.convertToFormat(image.hasAlphaChannel() ? QImage::Format_ARGB32_Premultiplied : QImage::Format_RGB32);
+                    video::CapturedFrame f; f.width = image.width(); f.height = image.height();
+                    f.stride = image.bytesPerLine(); f.opaque = !image.hasAlphaChannel();
+                    result["ok"] = frameBytes(f, image.constBits(), size_t(image.sizeInBytes()));
+                    if (!result["ok"].toBool()) result["error"] = "Image exceeds the available source buffer.";
                 }
             }
             else if (kind == "local-registration" && op == "register") {
