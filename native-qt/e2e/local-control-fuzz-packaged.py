@@ -70,9 +70,12 @@ def main():
 
     try:
         discovery = run / 'control.json'
+        show = run / 'fuzz.mixer.json'
+        show.write_text(json.dumps({'version': 1, 'sources': [], 'scenes': [
+            {'id': str(uuid.uuid4()), 'name': 'Fuzz', 'background': '#152638', 'layers': []}]}))
         output = (run / 'publisher.log').open('wb')
         process = subprocess.Popen([str(exe), '--local-control', '--local-control-port=0',
-                                    '--local-control-discovery=' + str(discovery)], cwd=exe.parent,
+                                    '--local-control-discovery=' + str(discovery), '--studio-show=' + str(show)], cwd=exe.parent,
                                    stdout=output, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW,
                                    env=dict(os.environ, LOCALAPPDATA=str(run), GAME_CAPTURE_SUPPRESS_FIREWALL_WARNING='1'))
         deadline = time.monotonic() + 15
