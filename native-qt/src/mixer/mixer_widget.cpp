@@ -2313,7 +2313,10 @@ struct MixerWidget::Impl {
         if (!file.open(QIODevice::ReadOnly) || file.size() > 2*1024*1024) { message("Cannot open this show file."); return false; }
         QJsonParseError error; const auto document = QJsonDocument::fromJson(file.readAll(), &error); const auto data = document.object();
         const auto sourceData = data["sources"].toArray(), sceneData = data["scenes"].toArray();
-        if (error.error != QJsonParseError::NoError || data["version"].toInt() != 1 || sourceData.size() > 32 || sceneData.isEmpty() || sceneData.size() > 64) {
+        // toArray() silently converts null/objects/scalars to empty arrays.
+        // Reject damaged structure before replacing the user's current show.
+        if (error.error != QJsonParseError::NoError || !document.isObject() || data["version"].toInt() != 1 ||
+            !data["sources"].isArray() || !data["scenes"].isArray() || sourceData.size() > 32 || sceneData.isEmpty() || sceneData.size() > 64) {
             message("Invalid show file or unsupported version."); return false;
         }
         std::vector<std::shared_ptr<Source>> incoming;
@@ -2354,7 +2357,8 @@ struct MixerWidget::Impl {
         }
         for (const auto &value : sceneData) {
             const auto obj = value.toObject(); Scene scene; scene.id = obj["id"].toString(); scene.name = obj["name"].toString().left(256);
-            if (QUuid(scene.id).isNull() || sceneIds.contains(scene.id) || obj["layers"].toArray().size() > 32) { message("Invalid scene in show."); return false; }
+            if (QUuid(scene.id).isNull() || sceneIds.contains(scene.id) ||
+                (obj.contains("layers") && !obj["layers"].isArray()) || obj["layers"].toArray().size() > 32) { message("Invalid scene in show."); return false; }
             sceneIds.insert(scene.id); scene.background = QColor(obj["background"].toString()); if (!scene.background.isValid()) scene.background = Qt::black;
             QSet<QString> layerIds;
             for (const auto &entry : obj["layers"].toArray()) {
