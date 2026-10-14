@@ -400,13 +400,15 @@ struct Session::Impl {
             // discard an entire GOP still buffered inside the muxer. This is
             // not an fsync/power-loss guarantee; the OS still caches disk I/O.
             if (config.protocol == Protocol::Recording) args << "-n" << "-f" << "matroska" << "-cluster_time_limit" << "250";
-            else if (config.protocol == Protocol::Srt) args << "-f" << "mpegts" << "-mpegts_flags" << "+resend_headers" << "-muxdelay" << "0" << "-muxpreload" << "0";
+            else if (config.protocol == Protocol::Srt || config.protocol == Protocol::Udp || config.protocol == Protocol::Rist) args << "-f" << "mpegts" << "-mpegts_flags" << "+resend_headers" << "-muxdelay" << "0" << "-muxpreload" << "0";
             else if (isRtsp(config.protocol)) args << "-f" << "rtsp" << "-rtsp_transport"
                 << (config.protocol == Protocol::RtspUdp ? "udp" : "tcp") << "-muxdelay" << "0" << "-pkt_size" << "1200";
             else {
                 args << "-f" << "flv" << "-flvflags" << "no_duration_filesize";
                 if (QUrl(QString::fromStdString(config.url)).scheme() == "rtmps") args << "-tls_verify" << "1";
             }
+            if (config.protocol == Protocol::Rist)
+                args << "-rist_profile" << "main" << "-buffer_size" << QString::number(config.latencyMs) << "-pkt_size" << "1316";
             args << QString::fromStdString(destinationUrl(config));
             const auto muxStarted = Clock::now();
             process.start(QString::fromStdString(media.ffmpegPath), args, QIODevice::ReadWrite);
@@ -631,7 +633,7 @@ bool Session::wantsVideo() const {
     return !impl_->stopping.load() && impl_->current.state != State::Error;
 }
 bool Session::wantsAudio() const { return impl_->media.audioEnabled && wantsVideo(); }
-bool Session::usesPcmInput() const { return impl_->config.protocol == Protocol::Recording || impl_->config.protocol == Protocol::Rtmp || impl_->config.protocol == Protocol::Srt || isRtsp(impl_->config.protocol); }
+bool Session::usesPcmInput() const { return impl_->config.protocol == Protocol::Recording || impl_->config.protocol == Protocol::Rtmp || impl_->config.protocol == Protocol::Srt || impl_->config.protocol == Protocol::Udp || impl_->config.protocol == Protocol::Rist || isRtsp(impl_->config.protocol); }
 bool Session::sendVideo(const webrtc::EncodedVideoPacket &packet, int width, int height) {
     return impl_->push({Packet::Kind::Video, QByteArray(reinterpret_cast<const char *>(packet.data.data()), packet.data.size()),
                         packet.pts, width, height, packet.isKeyframe});

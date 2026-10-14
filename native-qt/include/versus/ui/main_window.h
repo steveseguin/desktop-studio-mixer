@@ -189,6 +189,7 @@ class MainWindow : public QMainWindow {
     QComboBox *audioChannelsSelect_ = nullptr;
     QCheckBox *includeMicrophoneCheck_ = nullptr;
     QComboBox *microphoneDeviceSelect_ = nullptr;
+    QPushButton *microphoneMuteButton_ = nullptr;
     QSpinBox *primaryAudioGainSpin_ = nullptr;
     QSpinBox *microphoneAudioGainSpin_ = nullptr;
     QCheckBox *audioLimiterCheck_ = nullptr;

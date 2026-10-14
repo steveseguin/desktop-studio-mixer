@@ -639,6 +639,8 @@
             "rtsp",
             "rtspt",
             "rtsp-udp",
+            "udp",
+            "rist",
             "srt",
             "whip",
             "file"

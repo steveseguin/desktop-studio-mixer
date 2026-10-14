@@ -9,7 +9,7 @@
 
 namespace versus::output {
 
-enum class Protocol { VdoNinja, Whip, Srt, Rtmp, Recording, Rtsp, RtspUdp };
+enum class Protocol { VdoNinja, Whip, Srt, Rtmp, Recording, Rtsp, RtspUdp, Udp, Rist };
 const char *protocolName(Protocol protocol);
 Protocol parseProtocol(const std::string &name);
 inline bool isRtsp(Protocol protocol) { return protocol == Protocol::Rtsp || protocol == Protocol::RtspUdp; }
@@ -35,7 +35,7 @@ std::string destinationUrl(const Config &config);
 
 struct MediaConfig {
     int width = 1920, height = 1080, fps = 60;
-    int videoBitrateKbps = 6000;
+    int videoBitrateKbps = 2500;
     int audioChannels = 2;
     bool audioEnabled = true;
     std::vector<std::string> audioTrackNames; // Recording only; track 0 is Program.

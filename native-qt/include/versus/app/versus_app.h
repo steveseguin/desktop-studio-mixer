@@ -185,6 +185,7 @@ class VersusApp {
     void setVideoConfig(const versus::video::EncoderConfig &config);
     void setAudioSourceMode(AudioSourceMode mode);
     void setIncludeMicrophone(bool enabled);
+    void setMicrophoneMuted(bool muted);
     void setMicrophoneDeviceId(const std::string &deviceId);
     void setAudioMixConfig(float primaryGain, float additionalGain, bool limiterEnabled);
     // Configure the next capture session. Remote overrides never replace this baseline.
@@ -527,6 +528,7 @@ class VersusApp {
     std::atomic<float> primaryAudioPeak_{0.0f};
     std::atomic<float> additionalAudioLevelRms_{0.0f};
     std::atomic<float> additionalAudioPeak_{0.0f};
+    std::atomic<bool> microphoneMuted_{false};
     std::atomic<float> primaryAudioGain_{1.0f};
     std::atomic<float> additionalAudioGain_{1.0f};
     std::atomic<bool> audioLimiterEnabled_{true};
