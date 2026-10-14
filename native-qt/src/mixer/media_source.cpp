@@ -9,6 +9,7 @@
 #include <cstring>
 #include <emmintrin.h>
 #include <set>
+#include <optional>
 using Microsoft::WRL::ComPtr;
 namespace versus::mixer {
 MediaSource::~MediaSource() { stop(); }
@@ -65,42 +66,88 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                     hasVideo_ = videoStream != DWORD(-1);
                     using Clock = std::chrono::steady_clock;
                     auto origin = Clock::now(); std::set<DWORD> finished;
+                    bool loopPending = false;
+                    bool cycleHadSample = false;
+                    auto nextLoopOrigin = origin;
+                    const LONGLONG mediaEnd = durationMs_.load()*10000;
                     LONGLONG lastSampleEnd = 0;
                     uint64_t cycleAudioFrames = 0;
                     LONGLONG cue = 0;
                     bool previewPending = false;
                     bool decodedCueFrame = false;
+                    struct ReadResult {
+                        DWORD stream = 0, flags = 0;
+                        LONGLONG pts = 0;
+                        ComPtr<IMFSample> sample;
+                    };
+                    std::optional<ReadResult> queuedAudio, queuedInput;
+                    bool firstAudioSample = true;
+                    auto read = [&](DWORD selected, ReadResult &result) {
+                        return reader->ReadSample(selected, 0, &result.stream, &result.flags, &result.pts, &result.sample);
+                    };
                     video::CapturedFrame captured;
                     while (running_) {
                         if (paused_ && !previewPending) {
                             const auto pauseStart = Clock::now(); std::unique_lock lock(mutex_);
                             wake_.wait(lock, [this] { return !running_ || !paused_ || seek_; });
-                            origin += Clock::now()-pauseStart; if (!running_) break;
+                            const auto pausedFor = Clock::now()-pauseStart;
+                            origin += pausedFor;
+                            if (loopPending) nextLoopOrigin += pausedFor;
+                            if (!running_) break;
                         }
-                        if (seek_.exchange(false)) {
+                        const bool manualSeek = seek_.exchange(false);
+                        if (manualSeek || loopPending) {
                             // A manual restart can leave decoded samples queued
                             // behind the current sample. Clear them before seek
                             // so a later loop cannot inherit stale EOS state.
                             hr = reader->Flush(MF_SOURCE_READER_ALL_STREAMS);
                             if (FAILED(hr)) { fail("Could not reset media playback."); break; }
-                            cue = std::clamp<int64_t>(seekMs_.load(), 0, std::max<int64_t>(0,durationMs_.load()-1))*10000;
+                            cue = manualSeek ? std::clamp<int64_t>(seekMs_.load(), 0, std::max<int64_t>(0,durationMs_.load()-1))*10000 : 0;
                             PROPVARIANT position{}; InitPropVariantFromInt64(cue, &position);
                             hr = reader->SetCurrentPosition(GUID_NULL, position); PropVariantClear(&position);
                             if (FAILED(hr)) { fail("This file cannot seek or loop."); break; }
-                            origin = Clock::now()-std::chrono::nanoseconds(cue*100);
+                            // Keep automatic loops on the existing presentation
+                            // clock. Seeking/decoding takes time; resetting to
+                            // now accumulates an audible gap on every cycle.
+                            origin = manualSeek ? Clock::now()-std::chrono::nanoseconds(cue*100) : nextLoopOrigin;
+                            loopPending = false;
+                            queuedAudio.reset(); queuedInput.reset(); firstAudioSample = true;
                             finished.clear(); ended_ = false; lastSampleEnd = cue; cycleAudioFrames = uint64_t(cue)*48000/10000000;
+                            cycleHadSample = false;
                             positionMs_ = cue/10000; previewPending = paused_ && hasVideo_; decodedCueFrame = false;
                             if (paused_ && !hasVideo_) continue;
                         }
-                        DWORD stream = 0, flags = 0; LONGLONG pts = 0; ComPtr<IMFSample> sample;
                         // Keep decoder streams selected for their whole lifetime.
                         // Deselecting/reselecting a drained transform at each loop
                         // can make the Windows reader return E_FAIL after seeking.
                         // Drain the remaining stream explicitly instead.
                         const DWORD readStream = finished.contains(videoStream) ? audioStream :
                             finished.contains(audioStream) ? videoStream : MF_SOURCE_READER_ANY_STREAM;
-                        hr = reader->ReadSample(readStream, 0, &stream, &flags, &pts, &sample);
-                        if (FAILED(hr)) { fail(QString("Media decoding failed (0x%1).").arg(quint32(hr), 8, 16, QChar('0'))); break; }
+                        if (!queuedInput) {
+                            ReadResult input;
+                            hr = read(readStream, input);
+                            if (FAILED(hr)) { fail(QString("Media decoding failed (0x%1).").arg(quint32(hr), 8, 16, QChar('0'))); break; }
+                            queuedInput = std::move(input);
+                        }
+                        ReadResult current;
+                        if (queuedAudio && ((queuedInput->flags & MF_SOURCE_READERF_ENDOFSTREAM) || queuedAudio->pts <= queuedInput->pts)) {
+                            current = std::move(*queuedAudio); queuedAudio.reset();
+                        } else { current = std::move(*queuedInput); queuedInput.reset(); }
+                        if (current.sample && current.stream == audioStream && firstAudioSample) {
+                            firstAudioSample = false;
+                            ReadResult nextAudio;
+                            hr = read(audioStream, nextAudio);
+                            if (FAILED(hr)) { fail("Could not read the start of the media audio track."); break; }
+                            // Windows can expose AAC decoder priming and the first
+                            // real PCM block with the same timestamp (including
+                            // after seeking). Keep the later block for that time.
+                            // Otherwise preserve both blocks in timestamp order.
+                            if (nextAudio.sample && nextAudio.pts == current.pts) current = std::move(nextAudio);
+                            else queuedAudio = std::move(nextAudio);
+                        }
+                        const DWORD stream = current.stream, flags = current.flags;
+                        const LONGLONG pts = current.pts;
+                        auto sample = std::move(current.sample);
                         if ((flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) && stream == videoStream) {
                             ComPtr<IMFMediaType> type;
                             if (FAILED(reader->GetCurrentMediaType(stream, &type)) || FAILED(MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, &width, &height)) || !width || !height || width > 8192 || height > 8192) {
@@ -118,15 +165,20 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                             finished.insert(stream);
                             if ((videoStream == DWORD(-1) || finished.contains(videoStream)) && (audioStream == DWORD(-1) || finished.contains(audioStream))) {
                                 if (loop_) {
-                                    // A decoded audio sample represents an interval, not
-                                    // just its leading timestamp. Restarting at the last
-                                    // sample's start makes each loop queue another block
-                                    // of audio ahead of the next picture cycle.
-                                    const auto end = origin + std::chrono::nanoseconds(lastSampleEnd*100);
-                                    std::unique_lock lock(mutex_);
-                                    wake_.wait_until(lock, end, [this] { return !running_ || paused_ || seek_; });
-                                    if (!running_) break;
-                                    if (!paused_) { seekMs_ = 0; seek_ = true; }
+                                    // Prepare the next cycle while the last audio
+                                    // block is still playing. File duration trims
+                                    // codec padding; unknown-duration files use
+                                    // the complete decoded sample interval.
+                                    if (!paused_ && !seek_) {
+                                        const auto cycleEnd = mediaEnd > 0 ? mediaEnd : lastSampleEnd;
+                                        if (!cycleHadSample || cycleEnd <= 0) {
+                                            fail("Media has no timed samples to loop.");
+                                            ended_ = true; paused_ = true;
+                                        } else {
+                                            nextLoopOrigin = origin + std::chrono::nanoseconds(cycleEnd*100);
+                                            loopPending = true;
+                                        }
+                                    }
                                 }
                                 else { ended_ = true; paused_ = true; if (durationMs_ > 0) positionMs_ = durationMs_.load(); }
                                 previewPending = false;
@@ -138,10 +190,12 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                         // MF may seek to an earlier keyframe. Decode/discard up
                         // to the requested cue; never show that earlier picture.
                         const bool beforeCue = pts < cue;
-                        if (beforeCue && stream != videoStream) continue;
+                        // Audio samples can straddle the cue. Trim PCM below,
+                        // rather than dropping the whole first audible block.
+                        if (mediaEnd > 0 && pts >= mediaEnd) continue;
                         if (previewPending && stream != videoStream) continue;
                         lastSampleEnd = std::max(lastSampleEnd, std::max<LONGLONG>(0, pts)+std::max<LONGLONG>(0, duration));
-                        const auto deadline = origin + std::chrono::nanoseconds(std::max<LONGLONG>(0, pts)*100);
+                        const auto deadline = origin + std::chrono::nanoseconds(std::max<LONGLONG>(stream == audioStream ? cue : 0, pts)*100);
                         { std::unique_lock lock(mutex_); wake_.wait_until(lock, deadline, [this] { return !running_ || paused_ || seek_; }); }
                         if (!running_) break;
                         if (seek_) continue;
@@ -157,6 +211,7 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                         ComPtr<IMFMediaBuffer> buffer; if (FAILED(sample->ConvertToContiguousBuffer(&buffer))) continue;
                         BYTE *bytes = nullptr; DWORD length = 0;
                         if (FAILED(buffer->Lock(&bytes, nullptr, &length))) continue;
+                        cycleHadSample = cycleHadSample || length > 0;
                         if (stream == videoStream && width && height && length >= size_t(std::abs(stride))*height) {
                             captured.width = width; captured.height = height; captured.stride = width*4;
                             captured.timestamp = timestamp; captured.opaque = true; captured.data.resize(size_t(width)*height*4);
@@ -182,13 +237,23 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                                 if (previewPending) { previewPending = false; origin = Clock::now()-std::chrono::nanoseconds(std::max<LONGLONG>(0,pts)*100); }
                             }
                         } else if (stream == audioStream && length%8 == 0) {
+                            const LONGLONG totalFrames = length/8;
+                            const LONGLONG firstFrame = std::clamp<LONGLONG>((std::max<LONGLONG>(0,cue)-pts)*48000/10000000, 0, totalFrames);
+                            const LONGLONG endFrame = mediaEnd > 0
+                                ? std::clamp<LONGLONG>((mediaEnd-pts)*48000/10000000, firstFrame, totalFrames)
+                                : totalFrames;
+                            const size_t keptFrames = size_t(endFrame-firstFrame);
                             // Some readers omit duration. PCM length still gives the
                             // complete interval at our negotiated 48 kHz stereo rate.
                             lastSampleEnd = std::max(lastSampleEnd, std::max<LONGLONG>(0, pts)+LONGLONG(length/8)*10000000/48000);
-                            cycleAudioFrames += length/8;
+                            cycleAudioFrames += keptFrames;
                             lastSampleEnd = std::max(lastSampleEnd, LONGLONG(cycleAudioFrames*10000000/48000));
                             audio::StreamChunk chunk; chunk.sampleRate = 48000; chunk.channels = 2; chunk.captureTime100ns = timestamp;
-                            chunk.samples.resize(length/sizeof(float)); std::memcpy(chunk.samples.data(), bytes, length); audio(std::move(chunk));
+                            if (keptFrames) {
+                                chunk.samples.resize(keptFrames*2);
+                                std::memcpy(chunk.samples.data(), bytes+size_t(firstFrame)*8, keptFrames*8);
+                                audio(std::move(chunk));
+                            }
                         }
                         buffer->Unlock();
                     }

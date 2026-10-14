@@ -252,4 +252,4 @@ status/help messages fall back to English. User names and API identifiers are
 never translated. Catalogs are `native-qt/resources/studio-es.json` and
 `studio-fr.json`.
 
-For direct MPEG-TS output, `output.configure` accepts `protocol: "udp"` with `udp://host:port`, or `protocol: "rist"` with `rist://host:port`. RIST uses Main profile; `latency_ms` sets the recovery buffer. Unsupported `credential` values are rejected for these transports. Fresh launches use 2500 kbps video; `bitrate_kbps` explicitly selects a custom rate. Independent `record.start` keeps its separate recording quality.
+For direct MPEG-TS output, `output.configure` accepts `protocol: "udp"` with `udp://host:port`, or `protocol: "rist"` with `rist://host:port`. RIST uses Main profile; `latency_ms` sets the recovery buffer. Unsupported `credential` values are rejected for these transports. Fresh launches use 4000 kbps video; `bitrate_kbps` explicitly selects a custom rate. Independent `record.start` keeps its separate recording quality.

@@ -35,7 +35,7 @@ std::string destinationUrl(const Config &config);
 
 struct MediaConfig {
     int width = 1920, height = 1080, fps = 60;
-    int videoBitrateKbps = 2500;
+    int videoBitrateKbps = 4000;
     int audioChannels = 2;
     bool audioEnabled = true;
     std::vector<std::string> audioTrackNames; // Recording only; track 0 is Program.

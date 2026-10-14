@@ -40,14 +40,14 @@ try:
         def choices():return [c for w in Application(backend='uia').connect(process=root.pid).windows() for c in w.descendants(control_type='ListItem') if c.is_visible() and c.window_text()==label]
         until(lambda:bool(choices()),'protocol choice');choices()[0].click_input()
         assert ui('outputSelect').selected_text()==label,ui('outputSelect').selected_text()
-        assert ui('bitrateSelect').selected_text()=='Standard (2500 kbps)'
+        assert ui('bitrateSelect').selected_text()=='Standard (4000 kbps)'
         ui('outputUrlInput').set_edit_text(url)
         assert not any(c.is_visible() for c in window.descendants() if (c.element_info.automation_id or '').endswith('.outputSecretInput'))
         screenshot(protocol+'-settings')
         child=receiver(protocol,protocol+'-initial')
         window.child_window(title='Studio',control_type='TabItem').click_input();ui('studioStartOutput').click_input()
         until(lambda:state()['output']['live'],protocol+' live',45)
-        assert api('/diagnostics')['video']['configured_bitrate_kbps']==2500
+        assert api('/diagnostics')['video']['configured_bitrate_kbps']==4000
         child.wait(timeout=35);assert child.returncode==0
         row={'protocol':protocol,'initial':decode(report/(protocol+'-initial.mkv'))};results['cases'].append(row)
         diag=api('/diagnostics');mux=diag['output']['muxer_pid'];previous=diag['output']['reconnects']
