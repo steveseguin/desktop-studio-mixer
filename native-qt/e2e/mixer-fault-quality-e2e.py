@@ -190,7 +190,7 @@ try:
     output = report/'fault-quality.mkv'; command('record.start', path=str(output), audioSources=[healthy, browser_id])
     until(lambda: state()['recording']['status'].startswith('Recording:'), 'recording')
     recording_workers = {p.pid for p in workers('output')}
-    command('output.configure', protocol='rtmp', url=f'rtmp://127.0.0.1:{proxy.getsockname()[1]}/quality', encoder='auto', bitrate_kbps=6000)
+    command('output.configure', protocol='rtmp', url=f'rtmp://127.0.0.1:{proxy.getsockname()[1]}/quality', encoder='auto', bitrate_kbps=4000)
     command('output.start'); until(lambda: state()['output']['live'], 'publishing', 45)
     results['encoder'] = state()['output']['encoder']; started = time.monotonic()
     phase('baseline', lambda: None, 15)

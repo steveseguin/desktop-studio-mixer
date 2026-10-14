@@ -5,7 +5,7 @@ Uses the common isolated show/registry cleanup helpers; no public destinations.
 from pathlib import Path
 source=Path(__file__).with_name('mixer-automation-e2e.py').read_text()
 helpers=source[:source.index('\ntry:\n    target=cli_call')]
-helpers=helpers.replace('args=parser.parse_args()',"parser.add_argument('--fixture',help='Moving 60 fps video with continuous stereo 440/880 Hz tones')\nparser.add_argument('--transport-only',action='store_true')\nparser.add_argument('--audio-only',action='store_true')\nargs=parser.parse_args()")
+helpers=helpers.replace('args=parser.parse_args()',"parser.add_argument('--fixture',help='Moving 60 fps video with continuous stereo 440/880 Hz tones')\nparser.add_argument('--transport-only',action='store_true')\nparser.add_argument('--audio-only',action='store_true')\nparser.add_argument('--soak-seconds',type=int,default=0)\nparser.add_argument('--load-workers',type=int,default=0)\nargs=parser.parse_args()")
 exec(helpers)
 import base64,statistics,sys,re
 from pywinauto import Application
@@ -39,8 +39,13 @@ try:
     until(lambda:state()['master_peak']>.01 if args.audio_only else state()['sources'][0]['frames']>30,'source playback')
     matrix=[('software-720p30',0,'software',False),('software-1080p60',2,'software',False),
             ('auto-720p30-record',0,'auto',True),('qsv-720p60',3,'qsv',False)]
+    if args.soak_seconds:
+        assert 60<=args.soak_seconds<=3600
+        matrix=[('software-720p30-soak',0,'software',True)]
     if args.audio_only:matrix=matrix[:1]
     if args.transport_only:matrix=[]
+    seconds=args.soak_seconds or 30
+    if args.load_workers:assert args.soak_seconds>=180,'CPU contention needs at least a three-minute soak'
     for name,fmt,encoder,recording in matrix:
         command('canvas.set',format=fmt)
         command('output.configure',protocol='udp',url='udp://127.0.0.1:18932',encoder=encoder)
@@ -49,16 +54,29 @@ try:
             command('record.start',path=str(report/(name+'-local.mkv')))
             until(lambda:state()['recording']['status'].startswith('Recording:'),'recording')
         receiver=launch([ffmpeg,'-hide_banner','-y','-i','udp://127.0.0.1:18932?fifo_size=8192&overrun_nonfatal=1',
-                         '-t','30','-map','0','-c','copy',report/(name+'.mkv')],name+'-receiver')
+                         '-t',str(seconds),'-map','0','-c','copy',report/(name+'.mkv')],name+'-receiver')
         time.sleep(.5);window.child_window(title='Studio',control_type='TabItem').click_input()
         output_button().invoke();until(lambda:state()['output']['live'],'publishing',45)
         monitor=launch([qa,game/'e2e/quality-resource-monitor.py','--pid',str(root.pid),'--output',report/(name+'-resources.jsonl'),'--no-hooks'],name+'-monitor')
         row['samples']=[]
-        deadline=time.time()+45
+        began=time.monotonic();load=None
+        deadline=time.time()+seconds+30
         while receiver.poll() is None and time.time()<deadline:
             start=time.perf_counter();d=api('/diagnostics');latency=(time.perf_counter()-start)*1000
-            row['samples'].append({'wall':time.time(),'apiMs':latency,'diagnostics':d});time.sleep(1)
+            elapsed=time.monotonic()-began
+            if args.load_workers and load is None and elapsed>=seconds/3:
+                load=launch([qa,game/'e2e/encoder-contention.py','--workers',str(args.load_workers),'--seconds','90'],name+'-cpu-load')
+                row['load']={'startSeconds':elapsed,'requestedSeconds':90,'workers':args.load_workers}
+            current=state()
+            assert current['output']['live'],current['output']
+            if recording:assert current['recording']['program_active'],current['recording']
+            row['samples'].append({'wall':time.time(),'seconds':elapsed,'apiMs':latency,'diagnostics':d,'recordingDrops':current['recording']['dropped_frames']})
+            if len(row['samples'])%30==0:
+                progress={'case':name,'seconds':round(elapsed,1),'sourceFrames':current['sources'][0]['frames'],'recordingDrops':current['recording']['dropped_frames']}
+                (report/'progress.json').write_text(json.dumps(progress));print(json.dumps(progress),flush=True)
+            time.sleep(1)
         assert receiver.poll()==0,'Receiver did not finish'
+        if load:load.wait(timeout=100);assert load.returncode==0
         row['diagnostics']=api('/diagnostics');assert row['diagnostics']['video']['configured_bitrate_kbps']==4000
         row['sources']=state()['sources']
         for child in psutil.Process(monitor.pid).children(recursive=True):child.terminate()

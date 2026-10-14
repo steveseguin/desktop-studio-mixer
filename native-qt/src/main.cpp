@@ -16,6 +16,7 @@
 #include "versus/mixer/show_files.h"
 #ifdef _WIN32
 #include <windows.h>
+#include <mmsystem.h>
 #include <shellapi.h>
 #pragma comment(lib, "shell32.lib")
 #endif
@@ -46,6 +47,33 @@
 #include "versus/mixer/process_worker.h"
 
 namespace {
+
+#ifdef _WIN32
+class HeadlessStudioClock {
+public:
+    explicit HeadlessStudioClock(bool enabled) {
+        if (!enabled) return;
+        // A hidden Studio still drives a real-time canvas. Windows 11 may
+        // ignore its timer requests because no window is visible/audible.
+        // Keep the 30/60 fps compositor clock precise without raising priority
+        // or overriding the system's CPU execution-speed policy.
+        precise_ = timeBeginPeriod(1) == TIMERR_NOERROR;
+        PROCESS_POWER_THROTTLING_STATE power{};
+        power.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+        power.ControlMask = PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION;
+        const bool honored = SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling,
+                                                   &power, sizeof(power)) != FALSE;
+        // Older Windows versions may not support this policy; the ordinary
+        // timer request still applies there.
+        spdlog::info("[Studio] Headless clock: precise={}, occlusion policy={}", precise_, honored);
+    }
+    ~HeadlessStudioClock() { if (precise_) timeEndPeriod(1); }
+    HeadlessStudioClock(const HeadlessStudioClock &) = delete;
+    HeadlessStudioClock &operator=(const HeadlessStudioClock &) = delete;
+private:
+    bool precise_ = false;
+};
+#endif
 
 const char *passwordLogValue(const std::string &password) {
     if (password.empty()) {
@@ -617,6 +645,9 @@ int main(int argc, char *argv[]) {
         if (argument.startsWith("--local-control-discovery=")) localControlDiscoveryArg = argument.mid(26).toUtf8().toStdString();
     }
     if (headless && studioHeadless) { spdlog::error("Choose --headless or --studio-headless, not both"); return 2; }
+#ifdef _WIN32
+    const HeadlessStudioClock headlessClock(studioHeadless);
+#endif
     app.setProperty("studioHeadless", studioHeadless);
     app.setProperty("studioShow", studioShow);
     if (studioHeadless) app.setQuitOnLastWindowClosed(false);
