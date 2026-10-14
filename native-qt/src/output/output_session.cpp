@@ -401,6 +401,8 @@ struct Session::Impl {
             // not an fsync/power-loss guarantee; the OS still caches disk I/O.
             if (config.protocol == Protocol::Recording) args << "-n" << "-f" << "matroska" << "-cluster_time_limit" << "250";
             else if (config.protocol == Protocol::Srt) args << "-f" << "mpegts" << "-mpegts_flags" << "+resend_headers" << "-muxdelay" << "0" << "-muxpreload" << "0";
+            else if (isRtsp(config.protocol)) args << "-f" << "rtsp" << "-rtsp_transport"
+                << (config.protocol == Protocol::RtspUdp ? "udp" : "tcp") << "-muxdelay" << "0" << "-pkt_size" << "1200";
             else {
                 args << "-f" << "flv" << "-flvflags" << "no_duration_filesize";
                 if (QUrl(QString::fromStdString(config.url)).scheme() == "rtmps") args << "-tls_verify" << "1";
@@ -629,7 +631,7 @@ bool Session::wantsVideo() const {
     return !impl_->stopping.load() && impl_->current.state != State::Error;
 }
 bool Session::wantsAudio() const { return impl_->media.audioEnabled && wantsVideo(); }
-bool Session::usesPcmInput() const { return impl_->config.protocol == Protocol::Recording || impl_->config.protocol == Protocol::Rtmp || impl_->config.protocol == Protocol::Srt; }
+bool Session::usesPcmInput() const { return impl_->config.protocol == Protocol::Recording || impl_->config.protocol == Protocol::Rtmp || impl_->config.protocol == Protocol::Srt || isRtsp(impl_->config.protocol); }
 bool Session::sendVideo(const webrtc::EncodedVideoPacket &packet, int width, int height) {
     return impl_->push({Packet::Kind::Video, QByteArray(reinterpret_cast<const char *>(packet.data.data()), packet.data.size()),
                         packet.pts, width, height, packet.isKeyframe});

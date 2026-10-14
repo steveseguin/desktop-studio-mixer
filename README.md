@@ -81,6 +81,10 @@ The original controls remain in **Capture & output**: standalone window/camera/S
 - Browser audio is routed from Web Audio/media streams to the native mixer. Browser speaker sessions are silenced; only enabled native monitoring plays locally. Ordinary Web Audio and WebRTC receivers are supported. Protected media, cross-origin media without CORS permission, and unusual page audio graphs may not expose audio; check the channel meter before going live. Chat overlays are visual sources.
 - Application/desktop loopback audio needs Windows build 20348 or newer. Camera/mic capture and the browser audio bridge do not use that process-loopback API. Avoid capturing the same game's audio both individually and via Desktop audio.
 
+## RTSP and VRChat output
+
+Advanced output settings offer **RTSP / VRChat (TCP)** and **RTSP (UDP)**, alongside RTMP/RTMPS, SRT and WHIP. RTSP sends H.264/AAC to a publishing server; TCP also accepts `rtspt://`. Use the server's viewing link in VRChat. See the [setup and automation guide](docs/rtsp-vrchat-output.md).
+
 ## Publishing recovery
 
 WHIP uses WebRTC media negotiation; it has no universal error-correction percentage. Desktop Studio offers recovery automatically and uses the mechanisms accepted by the destination. **Output settings > Advanced** exposes the following controls; stop publishing before changing them. Output profiles remember them.

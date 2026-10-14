@@ -636,6 +636,9 @@
           "enum": [
             "vdo",
             "rtmp",
+            "rtsp",
+            "rtspt",
+            "rtsp-udp",
             "srt",
             "whip",
             "file"

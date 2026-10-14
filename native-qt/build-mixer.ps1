@@ -56,6 +56,7 @@ if ($Package -or $Installer) {
     New-Item -ItemType Directory -Force -Path $packageDocs | Out-Null
     Copy-Item -Path (Join-Path $PSScriptRoot '../docs/mixer*.md') -Destination $packageDocs -Force
     Copy-Item (Join-Path $PSScriptRoot '../docs/game-capture-base.md') $packageDocs -Force
+    Copy-Item -Path (Join-Path $PSScriptRoot '../docs/rtsp*.md') -Destination $packageDocs -Force
     Copy-Item (Join-Path $PSScriptRoot 'third_party/webview2/LICENSE.txt') (Join-Path $packageRoot 'WebView2-LICENSE.txt')
     $notices = Join-Path $packageRoot 'licenses'
     New-Item -ItemType Directory -Force -Path $notices | Out-Null

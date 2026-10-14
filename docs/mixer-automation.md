@@ -157,11 +157,13 @@ credentials in command history. The live schema describes exact fields and limit
 | `local.set` | Isolated Spout/virtual-camera producers and per-user camera registration |
 | `record.start/stop` | Program MKV with optional named audio tracks and separate source MKVs |
 | `record.export` | Remux a completed MKV to a new MP4 |
-| `output.configure/start/stop` | VDO.Ninja, RTMP/RTMPS, SRT caller/listener, WHIP, or file output |
+| `output.configure/start/stop` | VDO.Ninja, RTMP/RTMPS, RTSP TCP/UDP, SRT caller/listener, WHIP, or file output |
 | `show.save/saveAs/open` | Snapshot export, active Save As, or load an absolute `.mixer.json` path |
 | `show.collect/relink` | Copy assets into a new folder or relink missing local assets |
 | `workspace.set` | Single/Studio mode and workspace layout |
 | `preferences.set` | Theme and next-launch language |
+
+For RTSP, use protocol `rtsp` (TCP), `rtspt` (TCP alias), or `rtsp-udp`, with the server's publishing URL in `url`. RTSP authentication goes in the URL; a nonempty `credential` is rejected. See [RTSP and VRChat](rtsp-vrchat-output.md).
 
 For WHIP, `output.configure` also accepts `whip_history_ms` (250-3000,
 default 1500), `whip_playout_ms` (0-1000, default 500; 0 uses receiver timing),
