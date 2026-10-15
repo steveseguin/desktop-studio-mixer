@@ -7,7 +7,7 @@ frequency, so nearest identical periodic pulses cannot hide a large sync error.
 """
 from pathlib import Path
 exec(Path(__file__).with_name('mixer-automation-e2e.py').read_text(encoding='utf-8').split('\ntry:\n    target=')[0])
-import re, sys, base64
+import re, sys, base64, shutil
 sys.path.insert(0, str(Path('.cache/mixer-qa').resolve()))
 from playwright.sync_api import sync_playwright
 
@@ -170,9 +170,11 @@ try:
     clip = report/'frame-clock.mp4'
     boxes = ['drawbox=x=0:y=0:w=320:h=24:color=black:t=fill']
     boxes += [f"drawbox=x={n*20}:y=0:w=20:h=24:color=white:t=fill:enable='mod(floor(n/{1<<n}),2)'" for n in range(16)]
-    ff('-v', 'error', '-n', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30', '-f', 'lavfi', '-i',
-       r'aevalsrc=if(lt(mod(t\,1)\,0.12)\,0.25*sin(2*PI*(600+20*floor(t))*t)\,0):s=48000',
-       '-vf', ','.join(boxes), '-t', '60', '-c:v', 'libopenh264', '-b:v', '4000k', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', clip)
+    if os.environ.get('STUDIO_CLOCK_FIXTURE'): shutil.copyfile(os.environ['STUDIO_CLOCK_FIXTURE'],clip)
+    else:
+        ff('-v', 'error', '-n', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=30', '-f', 'lavfi', '-i',
+           r'aevalsrc=if(lt(mod(t\,1)\,0.12)\,0.25*sin(2*PI*(600+20*floor(t))*t)\,0):s=48000',
+           '-vf', ','.join(boxes), '-t', '60', '-c:v', 'libopenh264', '-b:v', '4000k', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', clip)
     rtsp, rtmp = port(), port()
     config = report/'receiver.yml'; config.write_text(f'logLevel: warn\nrtspAddress: 127.0.0.1:{rtsp}\nrtspTransports: [tcp]\nrtmpAddress: 127.0.0.1:{rtmp}\nwebrtc: false\nsrt: false\nhls: false\nmoq: false\npaths:\n  all_others:\n')
     log = (report/'receiver.log').open('wb'); receiver = subprocess.Popen([args.mediamtx, str(config)], stdout=log, stderr=log, creationflags=subprocess.CREATE_NO_WINDOW)

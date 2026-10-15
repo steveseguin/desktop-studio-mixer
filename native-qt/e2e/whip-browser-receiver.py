@@ -20,8 +20,20 @@ async def offer(request):
     current=str(uuid.uuid4());closed=False
     sdp=await page.evaluate('''async sdp => {
         window.framesSeen=[]; window.audioLevels=[];
+        window.statsTimeline=[]; window.playbackEvents=[];
         window.pc=new RTCPeerConnection({iceServers:[]});
         window.v=document.createElement('video'); v.autoplay=true; v.muted=!combined; v.volume=0; document.body.replaceChildren(v);
+        for(const event of ['waiting','stalled','playing','pause','ended','error'])v.addEventListener(event,()=>{
+            if(playbackEvents.length<10000)playbackEvents.push({event,wall:performance.timeOrigin+performance.now(),mediaTime:v.currentTime,readyState:v.readyState});
+        });
+        window.statsBusy=false;
+        window.statsTimer=setInterval(async()=>{
+            if(statsBusy || statsTimeline.length>=10000)return;
+            statsBusy=true;
+            try{const stats=[...await pc.getStats()].map(x=>x[1]).filter(x=>['inbound-rtp','candidate-pair'].includes(x.type));
+                statsTimeline.push({wall:performance.timeOrigin+performance.now(),mediaTime:v.currentTime,readyState:v.readyState,stats});
+            }finally{statsBusy=false;}
+        },250);
         window.received=new MediaStream();if(combined)v.srcObject=received;
         window.canvas=document.createElement('canvas'); canvas.width=640; canvas.height=360;
         const g=canvas.getContext('2d',{willReadFrequently:true});
@@ -57,6 +69,7 @@ async def offer(request):
 
 async def snapshot():
     value=await page.evaluate('''async()=>{const q=v.getVideoPlaybackQuality();return {contextState:window.context?.state,playError:window.playError,audioTime:window.a?.currentTime,playbackQuality:{totalVideoFrames:q.totalVideoFrames,droppedVideoFrames:q.droppedVideoFrames},frames:framesSeen,audio:audioLevels,stats:[...await pc.getStats()].map(x=>x[1])};}''')
+    value.update(await page.evaluate('()=>({statsTimeline,playbackEvents})'))
     value['id']=current;value['combinedPlayback']=bool(os.environ.get('STUDIO_BROWSER_COMBINED'));return value
 
 async def close_session():
@@ -65,7 +78,7 @@ async def close_session():
     closed=True
     value=await snapshot(); (report/(current+'.json')).write_text(json.dumps(value),encoding='utf-8')
     await page.screenshot(path=str(report/(current+'.png')))
-    await page.evaluate('''async()=>{v.cancelVideoFrameCallback(window.frameCallback);pc.close();clearInterval(window.audioTimer);if(window.context && context.state!=="closed")await context.close();}''')
+    await page.evaluate('''async()=>{v.cancelVideoFrameCallback(window.frameCallback);clearInterval(window.statsTimer);pc.close();clearInterval(window.audioTimer);if(window.context && context.state!=="closed")await context.close();}''')
 
 async def delete(request):
     await close_session(); return web.Response(status=200)

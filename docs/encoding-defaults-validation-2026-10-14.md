@@ -432,3 +432,91 @@ Do not represent the six timestamp checks as six complete A/V quality passes.
 Relevant implementation references:
 [FFmpeg RTP clock mapping](https://github.com/FFmpeg/FFmpeg/blob/n8.1.2/libavformat/rtpdec.c)
 and [RTSP shared sender-report origin](https://github.com/FFmpeg/FFmpeg/blob/n8.1.2/libavformat/rtsp.c).
+
+### Longer Chromium comparison with matched video-repair settings
+
+The unchanged WHIP candidate above was tested again with combined browser A/V
+playback: 10 seconds clean, 60 seconds of 1% packet loss plus 0-25 ms random
+delay/reordering, and 10 seconds restored, for both RED on and off. Both cases
+used 1,500 ms repair history and the default 500 ms playout hint. The relay RNG
+was reset to seed 72941 for each case; this makes the fixture reproducible,
+not packet-for-packet identical across different audio packetizations.
+
+**Both cases failed the existing <250 ms maximum video-gap requirement.** RED
+on averaged 29.48 impaired displayed fps with a 366 ms gap; RED off averaged
+29.67 fps with a 334 ms gap, plus a 283 ms gap during the restored phase. Audio
+remained audible, video timestamps remained increasing, RTX was active and
+repair-cache misses were zero. Turning RED off is therefore not an established
+workaround. The previous shorter RED-off pass remains valid for that run only.
+
+The private browser receiver now logs bounded playback events and 250 ms
+WebRTC statistics. During the pauses, incoming video-frame counters continued
+while decoded-frame counters temporarily stopped. This locates the symptom
+in the receiving video path but does not prove its root cause or exclude
+sender repair timing. No production defaults or timestamp policies changed.
+
+Independent recording stayed clean: 5,145 frames at 30.00 fps, maximum interval
+34 ms, no repeated/skipped source pictures and maximum measured A/V offset
+15 ms. Recording drops stayed 12 -> 12. Maximum API time was 31.2 ms; app-tree
+private memory ranged from 383.0 to 397.1 MiB over the run.
+
+Evidence: `native-qt/e2e/reports/followup-2026-10-14/browser-matched-history/`,
+including failed `udp-fault.json` and `gap-diagnostics.json`. Reproduce with
+`mixer-whip-browser-recovery-e2e.py`, `STUDIO_BROWSER_COMBINED=1`,
+`STUDIO_BROWSER_IMPAIRED_SECONDS=60`, `STUDIO_WHIP_HISTORY_MS=1500`,
+`STUDIO_BROWSER_SEED=72941`, and the existing `STUDIO_CLOCK_FIXTURE`.
+
+A separate RED-enabled diagnostic run increased only the advanced playout hint
+to 750 ms (`STUDIO_WHIP_PLAYOUT_MS=750`). Negotiation confirmed 750 ms, but it
+still failed: 29.76 impaired displayed fps and a 300 ms gap, zero cache misses,
+increasing timestamps and audible audio. The restored phase returned to
+30.00 fps with maximum gap 53 ms. This does not establish a buffer-setting
+workaround; the application's 500 ms default remains unchanged. Its independent
+recording decoded cleanly at 30 fps, maximum measured A/V offset 28 ms, with
+two repeated/skipped source pictures and maximum repeated-picture interval
+34 ms. Evidence: `followup-2026-10-14/browser-playout-750/udp-fault.json`.
+
+### Repeated browser, publisher and network fault isolation
+
+The same packaged Studio passed `mixer-fault-quality-e2e.py` with local recording,
+named source-audio tracks and real RTMP reception running together. Faults were
+24 busy browser JavaScript workers, browser-host termination, a suspended
+browser host, 35 seconds of upstream bandwidth starvation, publisher-worker
+termination, and simultaneous browser termination/publisher suspension.
+Bandwidth was restored without the fixture resetting the TCP connection.
+
+The healthy media worker never restarted. Browser audio was present in the
+actual recorded track both before and after recovery. All four received clips
+decoded cleanly at 30 fps, maximum frame interval 34 ms, no duplicate/skipped
+source pictures, and maximum measured A/V offsets of 69.2, 28.2, 30.0 and
+31.2 ms respectively. Restored receiver-picture age was approximately
+0.20-0.23 seconds, without persistent accumulated network delay.
+
+The complete 6,719-frame local recording and named source audio decoded cleanly
+at 30 fps with maximum measured A/V offset 24 ms. Heavy browser CPU pressure
+caused **two additional dropped source pictures**, replaced by repeated pictures
+to preserve the recording timeline (recording drops 9 -> 11). The longest
+repeated-picture interval was 33 ms. Other fault phases added no recording
+drops. Maximum control API time was 31.4 ms. App-tree private memory peaked
+at 928.9 MiB during browser stress and ended at 647.5 MiB, versus 633.3 MiB at
+the first sample; this short run does not establish long-term leak freedom.
+Five bounded worker-failure log entries identified the injected failures.
+
+Evidence: `native-qt/e2e/reports/followup-2026-10-14/fault-quality/`.
+The harness can now reuse `STUDIO_CLOCK_FIXTURE` instead of regenerating the
+same media, and all decoding was performed after capture/publishing stopped.
+
+### Full application crash, diagnostics and logging failures
+
+`mixer-diagnostics-fault-e2e.py` injected an actual unhandled access violation
+into its own packaged Studio process while recording. The interrupted MKV
+decoded cleanly with continuous audible audio; all owned child processes exited.
+The crash handler wrote the expected `0xC0000005` report, minidump and preserved
+log snapshot. Relaunch left outputs off and produced another clean recording.
+
+Five subsequent launches verified bounded log rotation and retention of the
+crash snapshot. A synthetic private stream key was absent from the generated
+issue report and logs. Finally, a file deliberately blocking creation of the
+private log directory did not prevent launching or making a clean recording.
+The test used a private data directory and left the user's show unchanged.
+Evidence: `native-qt/e2e/reports/followup-2026-10-14/crash-diagnostics/`.

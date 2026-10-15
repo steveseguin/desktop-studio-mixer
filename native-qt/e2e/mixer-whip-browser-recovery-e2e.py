@@ -5,6 +5,9 @@ STUDIO_AUDIO_BITRATE exercises persisted Opus settings with a private active
 project; STUDIO_WHIP_PLAYOUT_MS overrides the default playback hint for diagnosis.
 STUDIO_BROWSER_COMBINED=1 uses one video element for synchronized A/V playback;
 otherwise the fixture exercises separate audio/video elements.
+STUDIO_BROWSER_IMPAIRED_SECONDS extends each impaired phase (default 20).
+STUDIO_WHIP_HISTORY_MS holds repair history constant across the RED comparison.
+STUDIO_BROWSER_SEED sets the repeatable relay RNG seed for each case.
 """
 from pathlib import Path
 exec(Path(__file__).with_name('mixer-udp-fault-e2e.py').read_text(encoding='utf-8').split('\ntry:\n    assert args.mediamtx')[0])
@@ -39,12 +42,17 @@ try:
     results['cases']=[]
     for red in ([False] if os.environ.get('STUDIO_RED_OFF_ONLY') else [True] if os.environ.get('STUDIO_RED_ON_ONLY') else [True,False]):
         relay.configure('clean')
-        command('output.configure',protocol='whip',url=f'http://127.0.0.1:{signal_server.server_port}/whip/whip',encoder='auto',bitrate_kbps=3500,whip_audio_red=red,whip_history_ms=1500 if red else 1000,whip_playout_ms=int(os.environ.get('STUDIO_WHIP_PLAYOUT_MS','500')))
+        if os.environ.get('STUDIO_BROWSER_SEED'):
+            with relay.lock: relay.random.seed(int(os.environ['STUDIO_BROWSER_SEED']))
+        history_ms=int(os.environ.get('STUDIO_WHIP_HISTORY_MS',str(1500 if red else 1000)))
+        impaired_seconds=int(os.environ.get('STUDIO_BROWSER_IMPAIRED_SECONDS','20'))
+        assert 1 <= impaired_seconds <= 600
+        command('output.configure',protocol='whip',url=f'http://127.0.0.1:{signal_server.server_port}/whip/whip',encoder='auto',bitrate_kbps=3500,whip_audio_red=red,whip_history_ms=history_ms,whip_playout_ms=int(os.environ.get('STUDIO_WHIP_PLAYOUT_MS','500')))
         command('output.start'); until(lambda:state()['output']['live'],'browser live',45); dwell(3)
         selected=state()['output']; assert selected['audio_red']==red,selected
         assert selected['video_rtx'] and selected['video_nack'] and selected['video_pli'],selected
         phases=[]
-        for label,loss,jitter,seconds in [('baseline',0,0,10),('moderate',.01,25,20),('restored',0,0,10)]:
+        for label,loss,jitter,seconds in [('baseline',0,0,10),('moderate',.01,25,impaired_seconds),('restored',0,0,10)]:
             print(('RED on ' if red else 'RED off ')+label,flush=True); relay.configure(label,loss,jitter)
             began=time.time()*1000; dwell(seconds); phases.append({'name':label,'start':began,'end':time.time()*1000})
         before_stop=state()['output']; command('output.stop')
@@ -61,6 +69,8 @@ try:
                 phase['compositorPresentedFrames']=frames[-1]['presentedFrames']-frames[0]['presentedFrames']+1
         case={'red':red,'id':received['id'],'phases':phases,'output':before_stop,'stats':received['stats'],'contextState':received.get('contextState'),'playError':received.get('playError'),'audioTime':received.get('audioTime'),'playbackQuality':received.get('playbackQuality')}
         case['combinedPlayback']=received['combinedPlayback']
+        case.update(historyMs=history_ms,relaySeed=os.environ.get('STUDIO_BROWSER_SEED'),
+                    statsTimeline=received.get('statsTimeline',[]),playbackEvents=received.get('playbackEvents',[]))
         case['passed']=before_stop['retransmitted_packets']>0 and all(p['fps']>28 and not p['nonIncreasingPts'] and p['maxPtsGapMs']<250 and p['audibleWindows']>15 for p in phases)
         results['cases'].append(case); save()
     command('record.stop'); until(lambda:not state()['recording']['program_active'],'record stop')
