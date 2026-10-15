@@ -197,3 +197,9 @@ Software H.264 on Windows uses Media Foundation, rather than x264. Its default n
 Fresh window-capture settings use **1280x720 at 60 fps** with hardware-first Auto encoding. Camera capture retains its separate **1080p30** default; Desktop Studio's new-show canvas remains **720p30**. Higher resolutions/frame rates and custom bitrates remain under Advanced; saved selections are preserved, including previously saved 12 Mbps values. **Standard (4000 kbps)** is the new streaming default, with **Economy (2500 kbps)** retained for smaller upload budgets. Software encoding cannot guarantee spare CPU during a demanding game; 720p30 is the lighter manual option. Independent local recording and guest-return streams add their own encoding work.
 
 Packaged measurements, CPU contention results and remaining hardware limits: [encoding defaults validation](docs/encoding-defaults-validation-2026-10-14.md).
+
+## Developer security and QA cost controls
+
+[Install the local commit/push secret guards](docs/development-security.md) in each clone.
+GitHub QA workflows are manual-only on self-hosted Windows runners, with optional
+one-day artifact uploads. Routine changes do not start hosted QA jobs or nightly soaks.
