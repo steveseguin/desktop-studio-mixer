@@ -1379,6 +1379,13 @@ void TestWebRtcClient::testWhipRepairBoundsAndMalformedFeedback() {
     for (uint16_t i=0; i<400; i+=17) feedback.push_back(recoveryNack(i,65535));
     budget.outgoing(packets,{}); budget.incoming(feedback,send);
     QVERIFY(!sent.empty()); QVERIFY(sent.size()*1102<=65536);
+    const auto initiallyRepaired = budget.retransmitted();
+    // A new loss must be repairable shortly after a reorder burst exhausts
+    // the allowance, without waiting for an arbitrary one-second boundary.
+    QTest::qSleep(100);
+    feedback = {recoveryNack(399)};
+    budget.incoming(feedback, send);
+    QCOMPARE(budget.retransmitted(), initiallyRepaired + uint64_t(1));
     // Malformed RTP extension size must not read beyond a short packet.
     auto shortExtension=recoveryPacket(450,12); reinterpret_cast<uint8_t *>(shortExtension->data())[0]|=0x10;
     packets={shortExtension}; budget.outgoing(packets,{});

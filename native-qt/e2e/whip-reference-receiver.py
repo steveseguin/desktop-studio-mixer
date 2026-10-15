@@ -14,6 +14,8 @@ from aiohttp import web
 from aiortc import RTCPeerConnection, RTCConfiguration, RTCBundlePolicy, RTCSessionDescription
 from aiortc.mediastreams import MediaStreamError
 import aiortc.codecs
+from aiortc.jitterbuffer import JitterBuffer
+from aiortc.rtcrtpreceiver import RTCRtpReceiver
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--port', required=True, type=int)
@@ -23,6 +25,25 @@ aioice.ice.get_host_addresses = lambda use_ipv4, use_ipv6: ['127.0.0.1']
 sessions = {}; current = None
 logging.basicConfig(level=logging.WARNING)
 OriginalDecoder = aiortc.codecs.H264Decoder
+original_add = JitterBuffer.add
+original_nack = RTCRtpReceiver._send_rtcp_nack
+
+def observe_add(self, packet):
+    origin = self._origin
+    result = original_add(self, packet)
+    if self._is_video and result[0] and current and len(current['jitterResets']) < 10000:
+        current['jitterResets'].append({'wall': time.monotonic(), 'origin': origin,
+            'sequence': packet.sequence_number, 'timestamp': packet.timestamp,
+            'newOrigin': self._origin, 'capacity': self.capacity})
+    return result
+
+async def observe_nack(self, media_ssrc, lost):
+    if current and len(current['nacks']) < 20000:
+        current['nacks'].append({'wall': time.monotonic(), 'ssrc': media_ssrc, 'lost': list(lost)})
+    await original_nack(self, media_ssrc, lost)
+
+JitterBuffer.add = observe_add
+RTCRtpReceiver._send_rtcp_nack = observe_nack
 
 class ObservedDecoder(OriginalDecoder):
     def __init__(self):
@@ -55,7 +76,8 @@ async def consume(track, s):
     except (MediaStreamError, asyncio.CancelledError): pass
 
 def snapshot(s):
-    return {'id': s['id'], 'closed': s['closed'], 'frames': list(s['frames']), 'audio': list(s['audio']), 'encoded': list(s['encoded'])}
+    return {'id': s['id'], 'closed': s['closed'], 'frames': list(s['frames']), 'audio': list(s['audio']), 'encoded': list(s['encoded']),
+            'jitterResets': list(s['jitterResets']), 'nacks': list(s['nacks'])}
 
 async def close(s):
     if s['closed']: return
@@ -70,7 +92,7 @@ async def offer(request):
     global current
     if current and not current['closed']: await close(current)
     ident = str(uuid.uuid4()); pc = RTCPeerConnection(RTCConfiguration(iceServers=[], bundlePolicy=RTCBundlePolicy.MAX_BUNDLE))
-    s = {'id': ident, 'pc': pc, 'closed': False, 'frames': [], 'audio': [], 'encoded': [], 'tasks': [],
+    s = {'id': ident, 'pc': pc, 'closed': False, 'frames': [], 'audio': [], 'encoded': [], 'tasks': [], 'jitterResets': [], 'nacks': [],
          'lock': threading.Lock(), 'raw': (report/(ident+'.h264')).open('wb'), 'pcm': (report/(ident+'.f32')).open('wb')}
     sessions[ident] = s; current = s
     @pc.on('track')

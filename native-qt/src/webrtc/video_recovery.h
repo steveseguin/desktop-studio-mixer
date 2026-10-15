@@ -105,7 +105,15 @@ class VideoRecovery final : public rtc::MediaHandler {
         std::vector<rtc::message_ptr> repairs;
         {
             std::lock_guard lock(mutex_); const auto now = Clock::now(); prune(now);
-            if (now - budgetStart_ >= std::chrono::seconds(1)) { budgetStart_ = now; budgetBytes_ = 0; }
+            // Refill continuously. A fixed one-second window lets reordered
+            // packets consume the allowance early, then refuses even genuine
+            // loss repairs until the next window (long enough to lose a GOP).
+            // Keep the same average and maximum burst allowance, but let short
+            // periods without repairs immediately replenish the budget.
+            if (budgetUpdated_ == Clock::time_point{}) repairTokens_ = double(repairBudget_);
+            else repairTokens_ = std::min(double(repairBudget_), repairTokens_ +
+                std::chrono::duration<double>(now-budgetUpdated_).count()*double(repairBudget_));
+            budgetUpdated_ = now;
             std::unordered_set<uint16_t> requested;
             std::vector<uint16_t> requestOrder;
             const auto request = [&](uint16_t seq) { if (requested.size() < 512 && requested.insert(seq).second) requestOrder.push_back(seq); };
@@ -140,8 +148,9 @@ class VideoRecovery final : public rtc::MediaHandler {
                 // A reordered feedback burst can repeat the same request before
                 // the first repair has completed even a short round trip.
                 // Suppress those copies without delaying the initial repair.
-                if (now-entry.repaired < std::chrono::milliseconds(50) || budgetBytes_ + entry.packet->size()+2 > repairBudget_) continue;
-                entry.repaired = now; budgetBytes_ += entry.packet->size()+2;
+                const auto cost = entry.packet->size()+2;
+                if (now-entry.repaired < std::chrono::milliseconds(50) || double(cost) > repairTokens_) continue;
+                entry.repaired = now; repairTokens_ -= double(cost);
                 if (!rtx_) { repairs.push_back(entry.packet); continue; }
                 const auto *original = reinterpret_cast<const rtc::RtpHeader *>(entry.packet->data());
                 const auto headerSize = original->getSize() + original->getExtensionHeaderSize();
@@ -175,7 +184,7 @@ class VideoRecovery final : public rtc::MediaHandler {
     }
     const uint32_t ssrc_, rtxSsrc_; const std::chrono::milliseconds history_; const size_t repairBudget_;
     std::mutex mutex_, repairSendMutex_; std::unordered_map<uint16_t, Entry> cache_; std::deque<uint16_t> order_;
-    size_t bytes_ = 0, budgetBytes_ = 0; Clock::time_point budgetStart_{};
+    size_t bytes_ = 0; double repairTokens_ = 0; Clock::time_point budgetUpdated_{};
     uint16_t rtxSequence_ = 0;
     CaptureSrReporter rtxReporter_;
     std::atomic<bool> nack_{false}, pli_{false}, rtx_{false}, playout_{false};
