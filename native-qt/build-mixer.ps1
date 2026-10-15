@@ -74,6 +74,9 @@ if ($Package -or $Installer) {
     Copy-Item (Join-Path $PSScriptRoot 'vendor/rnnoise/COPYING') (Join-Path $notices 'RNNoise-BSD.txt') -Force
     Copy-Item (Join-Path $PSScriptRoot 'vendor/virtualcam/OBS-COPYING') (Join-Path $notices 'OBS-GPL.txt') -Force
     Copy-Item (Join-Path $PSScriptRoot 'vendor/virtualcam/dshow/COPYING') (Join-Path $notices 'libdshowcapture-LGPL.txt') -Force
+    # Sign the payload before archiving so the portable and installed app agree.
+    & (Join-Path $PSScriptRoot 'qa/sign-artifacts.ps1') -FilePaths @("$packageRoot/desktop-studio.exe")
+    if ($LASTEXITCODE -ne 0) { throw 'Application signing failed.' }
     Write-Output "Portable app: $packageRoot/desktop-studio.exe"
     $project = Get-Content (Join-Path $PSScriptRoot 'CMakeLists.txt') -Raw
     if ($project -notmatch 'project\(video-mixer-native-qt VERSION ([0-9.]+)') { throw 'Cannot read app version.' }
@@ -87,6 +90,8 @@ if ($Package -or $Installer) {
         $setupPath = Join-Path $PSScriptRoot "dist/desktop-studio-$appVersion-setup.exe"
         & $nsis /V2 "/DVERSION=$appVersion" "/DBUILD_BIN_DIR=$packageRoot" "/DOUTFILE=$setupPath" (Join-Path $PSScriptRoot 'installer-mixer.nsi')
         if ($LASTEXITCODE -ne 0) { throw 'Installer packaging failed.' }
+        & (Join-Path $PSScriptRoot 'qa/sign-artifacts.ps1') -FilePaths @($setupPath)
+        if ($LASTEXITCODE -ne 0) { throw 'Installer signing failed.' }
         Write-Output "Installer: $setupPath"
     }
 }
