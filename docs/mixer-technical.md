@@ -67,6 +67,10 @@ The pinned SDK is fetched from NuGet; other native dependencies use CMake FetchC
 
 ## Validation and provenance
 
+[0.9.2 Windows release validation](https://github.com/steveseguin/desktop-studio-mixer/blob/main/docs/mixer-0.9.2-release.md)
+covers the signed package on RX 9060 XT, codec playback, Auto fallback,
+installation, browser/audio workflows and independent recording through faults.
+
 [Additional 0.9.0 browser-audio and recovery testing](https://github.com/steveseguin/desktop-studio-mixer/blob/main/docs/mixer-0.9.0-followup-validation.md) documents a fixed stale-audio bug when pages replace tracks or switch between live streams and files, plus actual app-crash, disk-full, guest and browser security workflows.
 
 [0.9.0 project, recording and resource validation](https://github.com/steveseguin/desktop-studio-mixer/blob/main/docs/mixer-0.9.0-validation.md) covers active projects and asset collection, media seeking, named audio tracks and separate videos, SRT listener, aggregate browser limits, and the remaining engineering work.
