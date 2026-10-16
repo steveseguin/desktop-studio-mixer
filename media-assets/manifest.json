@@ -177,5 +177,5 @@
     }
   ],
   "repository_visibility_at_capture": "private",
-  "download_access": "This repository is private. Use repository-authorized GitHub access with contents_api_url and Accept: application/vnd.github.raw+json. Conventional raw_url values are not anonymously accessible."
+  "download_access": "The repository is now public. raw_url downloads work anonymously; contents_api_url also supports Accept: application/vnd.github.raw+json. repository_visibility_at_capture records its historical visibility."
 }
