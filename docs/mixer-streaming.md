@@ -7,6 +7,14 @@ title: Streaming and encoder settings
 
 # Streaming and encoder settings
 
+## Codec compatibility
+
+H.264 is the default and the safest choice for OBS and external destinations.
+On the RX 9060 XT, AMD H.264 and AV1 passed actual Studio playback with independent
+recording; VP9 uses software. HEVC encoded correctly in the driver check, but
+the tested native OBS Ninja receiver does not support it. See the
+[codec results and receiver limits](https://github.com/steveseguin/desktop-studio-mixer/blob/main/docs/mixer-radeon-codecs-2026-10-16.md).
+
 ## Streaming defaults, direct receivers and microphones
 
 New streaming sessions default to **4,000 kbps video**. The encoder ceiling follows the selected target instead of allowing an extra 4,000 kbps. Saved bitrate choices and explicit CLI/API overrides are retained. This is a video encoding target, not a total upload cap: audio, transport headers, retransmissions and extra VDO.Ninja viewers add traffic. Independent Studio recording keeps its separate quality settings. Higher streaming bitrates remain in advanced settings.
