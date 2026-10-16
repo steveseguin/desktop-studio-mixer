@@ -1,0 +1,14 @@
+title: Desktop Studio
+description: A Windows studio for live streams, podcasts and recordings
+theme: jekyll-theme-midnight
+baseurl: /desktop-studio-mixer
+url: https://steveseguin.github.io
+exclude:
+  - native-qt
+  - qa
+  - tools
+  - vp9-alpha-plan.md
+plugins:
+  - jekyll-relative-links
+relative_links:
+  enabled: true

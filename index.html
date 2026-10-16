@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Desktop Studio — Your show, on your desktop</title>
+  <meta name="description" content="A Windows studio for live streams, podcasts, interviews and recordings. Mix cameras, games, guests and browser overlays with VDO.Ninja.">
+  <meta property="og:title" content="Desktop Studio">
+  <meta property="og:description" content="Your show, on your desktop. A Windows production studio powered by VDO.Ninja.">
+  <meta property="og:image" content="https://steveseguin.github.io/desktop-studio-mixer/media-assets/screenshots/02-preview-and-program.png">
+  <link rel="canonical" href="https://steveseguin.github.io/desktop-studio-mixer/">
+  <style>
+    :root{color-scheme:dark;--bg:#10151c;--panel:#19222e;--text:#edf3fa;--muted:#b0bfce;--accent:#a5d5f5;--line:#324354}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:17px/1.65 system-ui,sans-serif}a{color:var(--accent);text-underline-offset:4px}a:hover{color:#fff}a:focus-visible{outline:2px solid var(--accent);outline-offset:5px}header,main,footer{max-width:1120px;margin:auto;padding:24px}header{display:flex;align-items:center;justify-content:space-between;gap:20px;border-bottom:1px solid var(--line)}.brand{font-weight:750;letter-spacing:.02em;color:var(--text);text-decoration:none}nav{display:flex;gap:24px;flex-wrap:wrap;font-size:15px}h1{font-size:clamp(35px,6vw,66px);line-height:1.1;letter-spacing:-.04em;margin:18px 0}h2{font-size:27px;line-height:1.25}h3{font-size:19px;margin:0 0 8px}.hero{padding:30px 0 22px}.eyebrow{color:var(--accent);font-size:13px;letter-spacing:.15em;text-transform:uppercase}.intro{max-width:700px;font-size:20px;color:var(--muted)}.actions{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:24px 0 12px}.button{display:inline-block;padding:11px 20px;border-radius:8px;background:var(--accent);color:#101c28;font-weight:700;text-decoration:none}.button:hover{background:#d1eaff;color:#101c28}.small{color:var(--muted);font-size:14px}figure{margin:12px 0 38px}figure a{display:block}img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:10px;box-shadow:0 14px 45px #0005}figcaption{font-size:14px;color:var(--muted);margin-top:10px}.features{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.card{padding:22px;background:var(--panel);border:1px solid var(--line);border-radius:10px}.card p{color:var(--muted);margin:0}.guides{margin:38px 0 20px}.links{display:flex;gap:14px 28px;flex-wrap:wrap}.start{color:var(--muted);padding-left:24px}.start li{padding:4px 0}footer{border-top:1px solid var(--line);font-size:14px;color:var(--muted);display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}@media(max-width:700px){header{align-items:flex-start;flex-direction:column;gap:12px}.features{grid-template-columns:1fr}header,main,footer{padding:20px}.hero{padding-top:20px}nav{gap:18px}.intro{font-size:18px}}
+  </style>
+</head>
+<body>
+  <header><a class="brand" href="./">Desktop Studio</a><nav aria-label="Main navigation"><a href="docs/mixer-guide.html">User guide</a><a href="https://github.com/steveseguin/desktop-studio-mixer">GitHub</a></nav></header>
+  <main>
+    <section class="hero" aria-labelledby="title">
+      <span class="eyebrow">Windows · Powered by VDO.Ninja</span>
+      <h1 id="title">Your show, on your desktop.</h1>
+      <p class="intro">Mix cameras, games, guests and browser overlays. Stream live, record locally, or do both — from one workspace.</p>
+      <div class="actions"><a class="button" href="https://github.com/steveseguin/desktop-studio-mixer/releases/latest/download/desktop-studio-setup.exe">Download for Windows</a><a href="https://github.com/steveseguin/desktop-studio-mixer/releases/latest/download/desktop-studio-windows-x64.zip">Portable ZIP</a></div>
+      <p class="small">Windows x64 · Free and open source · <a href="https://github.com/steveseguin/desktop-studio-mixer/releases/latest">Release notes</a></p>
+    </section>
+    <figure>
+      <a href="media-assets/screenshots/02-preview-and-program.png" aria-label="Open the Desktop Studio screenshot at full size"><img src="media-assets/screenshots/02-preview-and-program.png" width="1648" height="903" alt="Desktop Studio with a welcome scene staged in Preview, a game and title overlay in Program, scene controls, sources and the audio mixer." fetchpriority="high"></a>
+      <figcaption>The real app, with Preview and Program side by side. Prefer one canvas? Start in the default direct-editing mode. <a href="https://github.com/steveseguin/desktop-studio-mixer/blob/main/media-assets/README.md">See the walkthrough.</a></figcaption>
+    </figure>
+    <section class="features" aria-label="Features">
+      <div class="card"><h3>Build your scene</h3><p>Cameras, window capture, media and transparent web overlays. Switch scenes in landscape or portrait.</p></div>
+      <div class="card"><h3>Bring everyone in</h3><p>Guest and wireless-camera invitations, mix-minus audio, track meters and headphone monitoring.</p></div>
+      <div class="card"><h3>Go live. Keep a copy.</h3><p>Record alongside VDO.Ninja, RTMP, SRT or WHIP streaming. More destinations in advanced settings.</p></div>
+    </section>
+    <section aria-labelledby="start"><h2 id="start">From a blank canvas to your first show</h2><ol class="start"><li>Install Desktop Studio and choose <strong>Add source</strong>.</li><li>Arrange your scene and check the audio meters.</li><li>Choose <strong>Record…</strong>, or set a destination and press <strong>GO LIVE</strong>.</li></ol><p class="small">Browser sources use <a href="https://developer.microsoft.com/microsoft-edge/webview2/">Microsoft WebView2 Evergreen</a>, installed and updated separately.</p></section>
+    <section class="guides" aria-labelledby="guides"><h2 id="guides">Go a little deeper</h2><div class="links"><a href="docs/mixer-guide.html">Scenes, guests and recording</a><a href="docs/mixer-streaming.html">Streaming and encoders</a><a href="https://github.com/steveseguin/desktop-studio-mixer/blob/main/docs/mixer-automation.md">CLI, API and MCP</a><a href="docs/mixer-technical.html">Requirements, development and test results</a></div></section>
+  </main>
+  <footer><span>Desktop Studio · Based on <a href="https://github.com/steveseguin/game-capture">Game Capture</a></span><a href="https://github.com/steveseguin/desktop-studio-mixer/blob/main/LICENSE">GPL license</a></footer>
+</body>
+</html>
