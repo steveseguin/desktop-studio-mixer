@@ -192,11 +192,24 @@ try:
     output = report/'fault-quality.mkv'; command('record.start', path=str(output), audioSources=[healthy, browser_id])
     until(lambda: state()['recording']['status'].startswith('Recording:'), 'recording')
     recording_workers = {p.pid for p in workers('output')}
-    command('output.configure', protocol='rtmp', url=f'rtmp://127.0.0.1:{proxy.getsockname()[1]}/quality', encoder='auto', bitrate_kbps=4000)
+    recording_encoders = {p.pid for p in workers('encoder')}
+    encoder = os.environ.get('STUDIO_ENCODER', 'auto')
+    assert encoder in ('auto','software','amf','qsv','nvenc','ffmpeg_nvenc')
+    command('output.configure', protocol='rtmp', url=f'rtmp://127.0.0.1:{proxy.getsockname()[1]}/quality', encoder=encoder, bitrate_kbps=4000)
     command('output.start'); until(lambda: state()['output']['live'], 'publishing', 45)
     results['encoder'] = state()['output']['encoder']; started = time.monotonic()
     phase('baseline', lambda: None, 15)
     before, _ = receive('receiver-before')
+    amd_recovered = None
+    if encoder == 'amf':
+        assert 'h264_amf' in results['encoder'], results['encoder']
+        def kill_amf():
+            publisher = next(p for p in workers('encoder') if p.pid not in recording_encoders)
+            child = next(p for p in publisher.children() if 'h264_amf' in p.cmdline())
+            results['killedAmfPid'] = child.pid; child.kill(); child.wait(timeout=10)
+        phase('amd-encoder-process-crash', kill_amf, 15)
+        amd_recovered, _ = receive('receiver-amd-recovered')
+        assert 'h264_amf' in state()['output']['encoder'], state()['output']['encoder']
     with sync_playwright() as pw:
         debug = Path(os.environ['LOCALAPPDATA'])/'VideoMixer/browser'/browser_id/'EBWebView/DevToolsActivePort'
         browser = pw.chromium.connect_over_cdp(f'http://127.0.0.1:{int(debug.read_text().splitlines()[0])}')
@@ -227,7 +240,9 @@ try:
     _, alive = psutil.wait_procs(children, timeout=15); assert not alive
     results['localTiming'] = analyze(output)
     results['namedClockTiming'] = analyze(output, 1)
-    results['receiverTiming'] = [analyze(path) for path in (before, after, recovered, final)]
+    received_files = [before, after, recovered, final]
+    if amd_recovered: received_files.append(amd_recovered)
+    results['receiverTiming'] = [analyze(path) for path in received_files]
     for timing in results['receiverTiming']:
         observation = results['receiverObservations'][timing['file']]
         lag = ((observation['liveFrameAtCaptureEnd']-timing['lastSourceFrameId']) % 1800)/30

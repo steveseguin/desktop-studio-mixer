@@ -40,6 +40,10 @@ try:
     until(lambda:state()['master_peak']>.01 if args.audio_only else state()['sources'][0]['frames']>30,'source playback')
     matrix=[('software-720p30',0,'software',False),('software-1080p60',2,'software',False),
             ('auto-720p30-record',0,'auto',True),('qsv-720p60',3,'qsv',False),('nvenc-1080p60-record',2,'nvenc',True)]
+    # Explicit cases keep the default suite usable on hosts without AMD hardware.
+    if args.case and args.case.startswith('amf-'):
+        matrix=[('amf-720p30-record',0,'amf',True),('amf-1080p60-record',2,'amf',True),
+                ('amf-portrait-720p30-record',5,'amf',True)]
     if args.soak_seconds:
         assert 60<=args.soak_seconds<=3600
         matrix=[('software-720p30-soak',0,'software',True)]
@@ -53,7 +57,8 @@ try:
     for name,fmt,encoder,recording in matrix:
         command('canvas.set',format=fmt)
         command('output.configure',protocol='udp',url='udp://127.0.0.1:18932',encoder=encoder)
-        row={'id':name,'canvasFormat':fmt,'encoder':encoder,'renderer':state()['canvas']['active_renderer']};results['cases'].append(row)
+        row={'id':name,'canvasFormat':fmt,'encoder':encoder,'fps':state()['canvas']['fps'],
+             'renderer':state()['canvas']['active_renderer']};results['cases'].append(row)
         if args.renderer:assert row['renderer'] in (args.renderer,'passthrough'),row
         if recording:
             command('record.start',path=str(report/(name+'-local.mkv')))
@@ -83,6 +88,8 @@ try:
         assert receiver.poll()==0,'Receiver did not finish'
         if load:load.wait(timeout=100);assert load.returncode==0
         row['diagnostics']=api('/diagnostics');assert row['diagnostics']['video']['configured_bitrate_kbps']==4000
+        if encoder=='amf':
+            assert 'h264_amf' in row['diagnostics']['video']['active_encoder'],row['diagnostics']['video']
         row['sources']=state()['sources']
         for child in psutil.Process(monitor.pid).children(recursive=True):child.terminate()
         monitor.terminate();monitor.wait(timeout=5)
@@ -139,7 +146,7 @@ try:
         frames=np.frombuffer(decoded.stdout,np.uint8).reshape(-1,90,160,3)
         times=np.array([float(x) for x in re.findall(r'Parsed_showinfo[^\n]*?\bn:\s*\d+\s+pts:.*?pts_time:([-\d.]+)',decoded.stderr.decode(errors='replace'))])
         assert len(frames)==len(times) and np.all(np.diff(times)>0)
-        seconds=times[-1]-times[0];fps=30 if row['canvasFormat']==0 else 60
+        seconds=times[-1]-times[0];fps=row['fps']
         distinct=float(np.count_nonzero(np.any(frames[1:]!=frames[:-1],axis=(1,2,3)))/seconds)
         row['quality']={'decodedFps':float((len(frames)-1)/seconds),'distinctFramesPerSecond':distinct,
                         'p95FrameGapMs':float(np.percentile(np.diff(times)*1000,95))}
