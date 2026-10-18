@@ -165,3 +165,45 @@ This host reports an untrusted certificate root; signing does not establish
 SmartScreen reputation. Archive/signing/build checks are gates, separate from
 application testing. Builds and qualification run locally; no GitHub Actions
 build was requested.
+
+## Additional signed-package workflows — October 18
+
+Three cold and three explicitly warmed local WHIP-to-RTSP receiver starts were
+traced while Studio recorded independently. Two cold starts each produced three
+duplicate file timestamps after FFmpeg's demux clock moved backward about 70 ms.
+Their incoming RTP frame-marker timestamps remained increasing, and RTSP had
+announced only one time origin for two tracks. All three starts with a prior
+RTSP DESCRIBE and 500 ms warm-up announced both origins and produced clean,
+increasing file timestamps at approximately 30 fps. The independent recording
+also remained clean: approximately 132 seconds and 3,954 decoded frames.
+This supports the previously documented receiver-clock explanation; it does not
+change or rewrite Studio's outgoing timestamps. Cold-start failures remain failures.
+
+A real per-user 0.9.2 to 0.9.3 installer upgrade preserved an owned portrait show
+and its source identity. The installed executable matched the released SHA-256;
+15 successive program screenshots changed and a new recording decoded cleanly.
+Uninstall preserved user files and the test restored the user's settings.
+Explicit-show headless mode ignores GUI preferences, so this workflow qualifies
+saved-show preservation rather than GUI preference migration or clean-machine setup.
+
+Two approximately 90-second browser/audio pilots also streamed privately while
+recording independently. Both complete recordings decoded with increasing 30 fps
+timestamps, but source content cadence was lower:
+
+| Setup | Source callbacks | Distinct content in sampled output | Mean app CPU | Mean process-tree RSS |
+|---|---:|---:|---:|---:|
+| Full-frame transparent video, passthrough | 11.87 fps | About 12 fps | 1.021 logical cores | 1.035 GB |
+| Opaque video plus transparent clock overlay, GPU composition | 30.00 fps | About 24 fps | 0.802 logical cores | 1.546 GB |
+
+These are single runs with different source counts/composition, not an isolated
+statistical comparison. RSS sums can double-count shared pages. Audio was present
+in both outputs; sampled median A/V offsets ranged from −15 to −6 ms in the first
+setup and +22.5 to +36.5 ms in the second. These exclude physical playback delay.
+Both pilots counted 10 recording queue drops by the first live sample, with no
+additional drops during the measured interval. They do not qualify lossless startup.
+
+Use opaque capture for full-motion browser video and separate transparent sources
+for overlays. Transparent capture retains its documented 15 fps snapshot ceiling.
+The opaque path's remaining repeated/skipped content frames require investigation;
+30 fps source callbacks or file timestamps alone do not establish 30 unique pictures
+per second. Overnight endurance remains separate from these short pilots.
