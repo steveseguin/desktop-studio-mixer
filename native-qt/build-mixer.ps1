@@ -1,4 +1,10 @@
-param([string]$BuildDirectory = 'build-mixer', [switch]$Package, [switch]$Installer)
+param(
+    [string]$BuildDirectory = 'build-mixer',
+    [string]$PackageDirectory = 'dist/desktop-studio-portable',
+    [ValidateRange(1, 64)][int]$Jobs = 8,
+    [switch]$Package,
+    [switch]$Installer
+)
 $ErrorActionPreference = 'Stop'
 & (Join-Path $PSScriptRoot 'tools/restore-webview2.ps1')
 $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
@@ -25,10 +31,15 @@ foreach ($entry in $compilerEnv) {
 }
 & cmake @configureArgs
 if ($LASTEXITCODE -ne 0) { throw 'Configure failed.' }
-& cmake --build $buildRoot --target video-mixer --parallel 8
+& cmake --build $buildRoot --target video-mixer --parallel $Jobs
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 if ($Package -or $Installer) {
-    $packageRoot = Join-Path $PSScriptRoot 'dist/desktop-studio-portable'
+    # Stage new releases separately so previous qualified packages stay intact.
+    $packageRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot $PackageDirectory))
+    $distRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'dist'))
+    if (!$packageRoot.StartsWith(($distRoot + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The package directory must be inside native-qt/dist.'
+    }
     New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
     # Developer builds may contain test executables and Qt6Test.dll.
     # Copy only application payloads into the user-facing package.
@@ -87,7 +98,7 @@ if ($Package -or $Installer) {
     if ($project -notmatch 'project\(video-mixer-native-qt VERSION ([0-9.]+)') { throw 'Cannot read app version.' }
     $appVersion = $matches[1]
     $zipPath = Join-Path $PSScriptRoot "dist/desktop-studio-$appVersion-windows-x64.zip"
-    & tar.exe -a -c -f $zipPath -C (Join-Path $PSScriptRoot 'dist') desktop-studio-portable
+    & tar.exe -a -c -f $zipPath -C (Split-Path -Parent $packageRoot) (Split-Path -Leaf $packageRoot)
     if ($LASTEXITCODE -ne 0) { throw 'Portable archive failed.' }
     if ($Installer) {
         $nsis = "${env:ProgramFiles(x86)}/NSIS/makensis.exe"
