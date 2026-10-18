@@ -129,8 +129,9 @@ try:
     received=report/'srt.mkv';log=(report/'srt.log').open('wb')
     receiver=subprocess.Popen([str(ffmpeg),'-hide_banner','-y','-i',f'srt://127.0.0.1:{port}?mode=listener&latency=120000','-t','7','-map','0','-c','copy',str(received)],stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)
     owned.append(psutil.Process(receiver.pid));time.sleep(.5)
-    command('output.configure',protocol='srt',url=f'srt://127.0.0.1:{port}',encoder='auto',bitrate_kbps=6000)
+    command('output.configure',protocol='srt',url=f'srt://127.0.0.1:{port}',encoder='auto')
     command('output.start');until(lambda:state()['output']['live'],'SRT publishing')
+    assert api('/diagnostics')['video']['configured_bitrate_kbps']==3000
     api('/studio/command',{'command':'output.configure','protocol':'whip','url':'http://127.0.0.1:1/whip'},400)
     receiver.wait(timeout=35);assert receiver.returncode==0;log.close()
     command('output.stop');until(lambda:not state()['output']['live'] and not state()['output']['stopping'],'SRT stopped')
@@ -138,9 +139,13 @@ try:
     command('record.stop');until(lambda:not state()['recording']['busy'],'recording finalized')
     results['outputs']=[decode(recording),decode(received)]
     if args.mediamtx:
-        def free_port():
-            with socket.socket() as reserve:reserve.bind(('127.0.0.1',0));return reserve.getsockname()[1]
-        rtsp,rtmp,whip,udp,srt=[free_port() for _ in range(5)]
+        def free_port(kind=socket.SOCK_STREAM):
+            # TCP availability does not imply UDP availability on Windows;
+            # excluded/reserved port ranges can differ between transports.
+            with socket.socket(socket.AF_INET,kind) as reserve:
+                reserve.bind(('127.0.0.1',0));return reserve.getsockname()[1]
+        rtsp,rtmp,whip=[free_port() for _ in range(3)]
+        udp=free_port(socket.SOCK_DGRAM)
         config=report/'mediamtx.yml'
         config.write_text(f'''logLevel: info
 rtspAddress: 127.0.0.1:{rtsp}
@@ -151,7 +156,7 @@ webrtcLocalUDPAddress: 127.0.0.1:{udp}
 webrtcIPsFromInterfaces: false
 webrtcAdditionalHosts: [127.0.0.1]
 webrtcICEServers2: []
-srtAddress: 127.0.0.1:{srt}
+srt: false
 hls: false
 moq: false
 paths:
@@ -160,10 +165,12 @@ paths:
         log=(report/'mediamtx.log').open('wb')
         mtx=subprocess.Popen([args.mediamtx,str(config)],stdout=log,stderr=log,creationflags=subprocess.CREATE_NO_WINDOW)
         owned.append(psutil.Process(mtx.pid));time.sleep(.7)
+        assert mtx.poll() is None,'MediaMTX fixture exited before publishing: '+(report/'mediamtx.log').read_text(errors='replace')[-2000:]
         for protocol,url in [('rtmp',f'rtmp://127.0.0.1:{rtmp}/qa-rtmp'),('whip',f'http://127.0.0.1:{whip}/qa-whip/whip')]:
             simultaneous=report/(protocol+'-independent.mkv');command('record.start',path=str(simultaneous))
-            command('output.configure',protocol=protocol,url=url,encoder='auto',bitrate_kbps=6000)
+            command('output.configure',protocol=protocol,url=url,encoder='auto')
             command('output.start');until(lambda:state()['output']['live'],protocol+' live')
+            assert api('/diagnostics')['video']['configured_bitrate_kbps']==3000
             received=report/(protocol+'-received.mkv')
             for attempt in range(10):
                 rx=run([ffmpeg,'-v','error','-y','-rtsp_transport','tcp','-i',f'rtsp://127.0.0.1:{rtsp}/qa-{protocol}','-t','6','-map','0','-c','copy',received],timeout=35)
