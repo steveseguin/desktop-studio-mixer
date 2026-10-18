@@ -1,0 +1,98 @@
+{
+  "measured_utc_date": "2026-10-18",
+  "scope": "Unreleased Windows candidates; local synthetic sources.",
+  "cpu_basis": "Publisher process tree, percent of 20 logical CPUs; excludes source browser and receiver.",
+  "gpu_basis": "One attributed codec engine, not total GPU load; null means unavailable or inapplicable.",
+  "source_sha256": "51ef594aed3a111eef34f96e87f149edcedae4e797f601e0403bf66fdac6b83b",
+  "rows": [
+    {
+      "case": "udp-default-auto",
+      "app": "Desktop Studio headless capture",
+      "cpu_percent": 1.601842105263158,
+      "memory_mib": 270.06763980263156,
+      "fps": 30.00040107488068,
+      "codec_engine_percent": null,
+      "codec_engine": null
+    },
+    {
+      "case": "whip-default-amf",
+      "app": "Desktop Studio headless capture",
+      "cpu_percent": 1.0813636363636363,
+      "memory_mib": 222.10973011363637,
+      "fps": 30.127222245244706,
+      "codec_engine_percent": 5.827187394492044,
+      "codec_engine": "Video Codec Engine"
+    },
+    {
+      "case": "amf-720p30-record",
+      "app": "Desktop Studio",
+      "cpu_percent": 4.24952380952381,
+      "memory_mib": 509.76543898809524,
+      "fps": 29.800440499232465,
+      "codec_engine_percent": 5.8251479116601965,
+      "codec_engine": "Video Codec Engine"
+    },
+    {
+      "case": "amf-portrait-720p30-record",
+      "app": "Desktop Studio",
+      "cpu_percent": 4.520238095238095,
+      "memory_mib": 516.1700148809524,
+      "fps": 29.799886412989007,
+      "codec_engine_percent": 5.911688176581959,
+      "codec_engine": "Video Codec Engine"
+    },
+    {
+      "case": "auto-720p30-record",
+      "app": "Desktop Studio",
+      "cpu_percent": 4.3757142857142854,
+      "memory_mib": 534.9802827380952,
+      "fps": 30.00033407944409,
+      "codec_engine_percent": null,
+      "codec_engine": null
+    },
+    {
+      "case": "nvenc-720p30",
+      "app": "Desktop Studio",
+      "cpu_percent": 2.8475,
+      "memory_mib": 459.1521661931818,
+      "fps": 29.90011024621655,
+      "codec_engine_percent": 8.82575766706841,
+      "codec_engine": "VideoEncode"
+    },
+    {
+      "case": "qsv-720p30",
+      "app": "Desktop Studio",
+      "cpu_percent": 3.294090909090909,
+      "memory_mib": 433.3419744318182,
+      "fps": 29.80044049923246,
+      "codec_engine_percent": 5.539896728702326,
+      "codec_engine": "VideoDecode"
+    },
+    {
+      "case": "software-720p30",
+      "app": "Desktop Studio",
+      "cpu_percent": 3.4478571428571425,
+      "memory_mib": 318.2473958333333,
+      "fps": 30.00033407944409,
+      "codec_engine_percent": null,
+      "codec_engine": null
+    }
+  ],
+  "software_av1": [
+    {
+      "app": "studio",
+      "passed": true,
+      "encoder": "FFmpeg libaom-av1",
+      "configured_fps": 30,
+      "configured_bitrate_kbps": 3000,
+      "rendered_fps": 29.950116070423533,
+      "p95_render_gap_ms": 33.400146484375,
+      "valid_source_id_frames": 602,
+      "cpu_machine_percent_mean": 3.0717857142857143,
+      "rss_mib_mean": 212.45145089285714,
+      "hardware_encoder": false,
+      "audio_codec": "opus",
+      "note": "Opt-in software AV1 at explicit 720p30; receiver video and decoded PCM verified. Existing media-quality harness uses instrumented resource monitoring."
+    }
+  ]
+}

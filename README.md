@@ -22,12 +22,13 @@ A Windows studio for live streams, podcasts, interviews and recordings. Mix came
 2. Choose **Add source**, arrange your scene, and check the audio meters.
 3. Use **Record...** for a local recording, or choose **Output settings** and **GO LIVE**.
 
-Browser sources require [Microsoft WebView2 Evergreen](https://developer.microsoft.com/microsoft-edge/webview2/). Its browser engine updates separately. Start with the default 4 Mbps stream and leave upload headroom for audio and recovery traffic.
+Browser sources require [Microsoft WebView2 Evergreen](https://developer.microsoft.com/microsoft-edge/webview2/). Its browser engine updates separately. Start at 720p30 / 3 Mbps and leave upload headroom for audio, guest returns and recovery traffic. See the [illustrated encoder guide](https://steveseguin.github.io/desktop-studio-mixer/docs/encoder-guide/) for other formats.
 
 ## Guides
 
 | Need | Read |
 | --- | --- |
+| Recommended resolution, bitrate, encoder settings and CPU/GPU cost | [Illustrated encoder guide](https://steveseguin.github.io/desktop-studio-mixer/docs/encoder-guide/) |
 | Scenes, camera controls, guests, audio and recording recovery | [User guide](docs/mixer-guide.md) |
 | Destinations, codecs, bitrate and loss recovery | [Streaming guide](docs/mixer-streaming.md) |
 | AI assistants, CLI, API and headless control | [Automation](docs/mixer-automation.md) |

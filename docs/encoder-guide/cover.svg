@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 330" role="img" aria-labelledby="title desc">
+    <title id="title">A composed interview scene and audio meters</title>
+    <desc id="desc">Original diagram illustrating multiple sources becoming one program; not a measured image-quality comparison.</desc>
+    <rect width="720" height="330" rx="18" fill="#122238"/>
+    <path d="M0 40h720M0 290h720M40 0v330M680 0v330" stroke="#29405a"/>
+    <rect x="76" y="69" width="258" height="142" rx="12" fill="#303654"/>
+    <circle cx="205" cy="119" r="24" fill="#ecbd8b"/><path d="M159 190v-20a46 46 0 0 1 92 0v20" fill="#b9b0ff"/>
+    <rect x="352" y="69" width="192" height="142" rx="12" fill="#364653"/>
+    <circle cx="449" cy="119" r="24" fill="#e4a1a3"/><path d="M407 190v-20a42 42 0 0 1 84 0v20" fill="#8fd9c7"/>
+    <rect x="76" y="225" width="468" height="32" rx="6" fill="#f0c67c"/>
+    <text x="94" y="247" font-family="Arial,sans-serif" font-size="16" fill="#142330">ONE SHOW · MANY SOURCES</text><path d="M566 150h30m-10-9 10 9-10 9" fill="none" stroke="#b9b0ff" stroke-width="3"/>
+    <rect x="610" y="69" width="60" height="188" rx="9" fill="#21364a"/>
+    <rect x="620" y="137" width="8" height="82" rx="3" fill="#b9b0ff"/><rect x="634" y="101" width="8" height="118" rx="3" fill="#b9b0ff"/><rect x="648" y="153" width="8" height="66" rx="3" fill="#b9b0ff"/>
+    <text x="640" y="241" text-anchor="middle" font-family="Arial,sans-serif" font-size="11" fill="#e7eff8">LIVE</text>
+    </svg>
