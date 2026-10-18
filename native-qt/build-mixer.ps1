@@ -30,7 +30,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 if ($Package -or $Installer) {
     $packageRoot = Join-Path $PSScriptRoot 'dist/desktop-studio-portable'
     New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
-    Get-ChildItem -LiteralPath "$buildRoot/bin" | Where-Object { $_.Name -ne "video-mixer.exe" } | Copy-Item -Destination $packageRoot -Recurse -Force
+    # Developer builds may contain test executables and Qt6Test.dll.
+    # Copy only application payloads into the user-facing package.
+    Get-ChildItem -LiteralPath "$buildRoot/bin" | Where-Object {
+        $_.Name -eq 'desktop-studio.exe' -or $_.Name -eq 'ffmpeg' -or
+        ($_.Extension -eq '.dll' -and $_.Name -ne 'Qt6Test.dll')
+    } | Copy-Item -Destination $packageRoot -Recurse -Force
     $deploy = Join-Path $vcpkgRoot 'installed/x64-windows/tools/Qt6/bin/windeployqt.exe'
     & $deploy --release --no-translations --no-opengl-sw --compiler-runtime "$packageRoot/desktop-studio.exe"
     if ($LASTEXITCODE -ne 0) { throw 'Qt packaging failed.' }

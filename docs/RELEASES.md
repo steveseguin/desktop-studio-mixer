@@ -1,197 +1,73 @@
-# Release Playbook (Fixed Download Names)
+# Desktop Studio Windows releases
 
-Use this every time so `releases/latest/download/...` links keep working.
+Use Studio's packaging workflow below. `native-qt/qa/release-and-publish.ps1`
+and `native-qt/qa/build-release.ps1` are inherited Game Capture tooling;
+they do not create or publish Desktop Studio releases.
 
-## Stable filenames (do not change)
+## Prepare and freeze
 
-- `game-capture-setup.exe`
-- `game-capture-portable.exe`
-- `game-capture-win64.zip`
-- `game-capture-ffmpeg-source-info.zip`
+1. Update the version in `native-qt/CMakeLists.txt` and
+   `native-qt/installer-mixer.nsi`, then commit the intended source changes.
+2. Validate the pinned LGPL FFmpeg bundle, its manifest, runtime DLLs, notices,
+   and corresponding-source information. Never bundle a research GPL/nonfree
+   FFmpeg executable.
+3. From the repository root, run locally:
 
-Versioned files can change per release, but these stable aliases must always be uploaded.
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File native-qt/build-mixer.ps1 -Installer
+   ```
 
-## Preferred one-command flow
+Outputs are `native-qt/dist/desktop-studio-portable`, the versioned Windows ZIP,
+and the versioned setup EXE. Use a clean staging directory; the copy allowlist
+excludes developer test executables and Qt6Test.dll but does not remove stale
+files from an existing stage. Preserve previous versioned artifacts and user data.
 
-From repo root:
+The application is signed before archiving; setup is signed separately. Require
+the expected signer and timestamp and reject missing or mismatched signatures.
+Record any local certificate-chain trust limitation. Never print signing secrets.
+Record the source commit and final package hashes before qualification, and do
+not modify a qualified payload afterwards.
 
-```powershell
-$firefox = (Resolve-Path (Join-Path $env:ProgramFiles "Mozilla Firefox\firefox.exe")).Path
-$pluginRepo = (Resolve-Path ..\ninja-plugin).Path
-$spoutSender = (Resolve-Path .\native-qt\build-review2\bin\spout_test_sender.exe).Path
-powershell -NoProfile -ExecutionPolicy Bypass -File .\native-qt\qa\release-and-publish.ps1 `
-  -Version <version> -BuildDir build-review2 -FirefoxPath $firefox `
-  -RoomAlphaPluginRepo $pluginRepo -RoomAlphaSpoutSenderPath $spoutSender
-```
+## Qualify the exact signed package
 
-Use a prepared ninja-plugin checkout with the required OBS runtime and plugin payload; adjust the paths to match your validation environment. Start from a configured Release build and commit the intended source/version changes before packaging.
+Builds and unit checks are gates. Release testing means using the packaged app
+and verifying the actual media output. Run workflows sequentially when comparing
+CPU/GPU measurements, retain failed attempts and focused reruns, and restore user
+preferences afterwards.
 
-This runs:
+- Check fresh defaults, saved settings, and persistence after restart.
+- Publish real moving video and audio using Auto, available NVIDIA/AMD/Intel
+  encoders, and software. Include landscape, portrait, and concurrent recording.
+- Verify CLI/API/MCP control, headless screenshots, browser audio/transparency,
+  and recovery after browser or publishing-worker failure.
+- Install into an isolated QA directory, compare installed/portable identity,
+  publish and record, then uninstall. Never replace an existing user installation.
 
-- A fresh build, packaging, FFmpeg bundle validation/source-info packaging, and signing.
-- Exact packaged-application readiness, including browser/OBS workflows and two 30-minute soaks.
-- Packaged desktop sound/responsiveness and notification workflows (interactive Windows desktop and 64-bit Python 3 with Tk required).
-- Packaged update-footer workflows, including real GitHub HTTPS, the default-browser Releases link, caching, network failures, timeouts, and shutdown. Certificate-rejection fixtures use the OpenSSL executable bundled with Git for Windows. Packages must include Qt's Schannel TLS backend.
-- Packaged capture with the optional border interface unavailable, three deterministic local HTTP/JSON fuzz runs, and real MCP control/edge workflows including receiver playback under request pressure. MCP dependencies are installed from their lockfile with lifecycle scripts disabled.
-- Versioned/stable asset identity checks, optional VirusTotal submission, and GitHub publication.
+Useful runners in `native-qt/e2e` include `mixer-automation-e2e.py`,
+`mixer-encoder-defaults-e2e.py`, `mixer-amd-codecs-e2e.py`,
+`mixer-fault-quality-e2e.py`, and `mixer-installed-e2e.py`. Pass explicit package
+and report paths where supported. Run Python runners from `native-qt`.
+Record hardware, source/package hashes, results, and limitations in versioned
+release notes. Keep credentials and unsanitized recordings/logs private.
 
-There is no `-SkipFastGate` option in this publishing command. Required readiness must pass before upload. Builds, CTest, static contracts, and installer construction are gates; actual application playback and recovery workflows provide end-to-end testing.
+## Publish
 
-## 0) Preflight (avoid stale build-dir source mixups)
+Create a draft `v<version>` release in `steveseguin/desktop-studio-mixer`, targeting
+the frozen source commit. Upload these versioned files and identical stable aliases:
 
-If your local `build-review2` was ever used by another repo, reconfigure it once:
+| Versioned file | Stable alias |
+| --- | --- |
+| `desktop-studio-<version>-setup.exe` | `desktop-studio-setup.exe` |
+| `desktop-studio-<version>-windows-x64.zip` | `desktop-studio-windows-x64.zip` |
+| `desktop-studio-<version>-ffmpeg-source-info.zip` | `desktop-studio-ffmpeg-source-info.zip` |
 
-```powershell
-& "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" `
-  -S .\native-qt -B .\native-qt\build-review2 `
-  -G "Visual Studio 17 2022" -A x64 `
-  -DVERSUS_BUILD_TESTS=ON `
-  -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
-  -DCMAKE_PREFIX_PATH=C:/vcpkg/installed/x64-windows
-```
+Include `SHA256SUMS.txt`, release notes, a validation report link, and the encoder
+guide link. Verify every uploaded file's SHA-256 and size against the local
+artifact and confirm stable/versioned identity before publishing as latest.
+Verify `releases/latest/download/...` links afterwards.
 
-## 1) Build release artifacts
-
-Refresh the pinned LGPL FFmpeg bundle before packaging:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\native-qt\tools\fetch-ffmpeg-lgpl.ps1 -Force
-```
-
-Release packaging fails if the FFmpeg bundle is missing, GPL/nonfree, or lacks `libvpx-vp9`.
-
-From repo root:
-
-```powershell
-. .\native-qt\qa\release-source-snapshot.ps1
-$snapshot = Get-ReleaseSourceSnapshot -SourceRoot (Resolve-Path .\native-qt).Path
-powershell -NoProfile -ExecutionPolicy Bypass -File .\native-qt\qa\build-release.ps1 `
-  -BuildDir build-review2 -Configuration Release -Version <version> `
-  -ExpectedSourceSnapshotSha256 $snapshot.sha256 `
-  -ExpectedSourceSnapshotFileCount $snapshot.fileCount `
-  -ExpectedSourceSnapshotAlgorithm $snapshot.algorithm
-```
-
-VirusTotal behavior during this step:
-
-- If signing certs are available, EXE artifacts are code-signed before VirusTotal submission.
-- If `VT_API_KEY` is set, release EXEs are submitted automatically (best effort).
-- If no key is set, VirusTotal submission is skipped.
-- To skip explicitly: add `-SkipVirusTotal`.
-
-Expected outputs in `native-qt/dist`:
-
-- `game-capture-<version>-setup.exe`
-- `game-capture-<version>-portable.exe`
-- `game-capture-<version>-win64.zip`
-- `game-capture-<version>-ffmpeg-source-info.zip`
-- `game-capture-setup.exe`
-- `game-capture-portable.exe`
-- `game-capture-win64.zip`
-- `game-capture-ffmpeg-source-info.zip`
-
-## 2) Run the fast gate during preparation
-
-```powershell
-$firefox = (Resolve-Path (Join-Path $env:ProgramFiles "Mozilla Firefox\firefox.exe")).Path
-powershell -NoProfile -ExecutionPolicy Bypass -File .\native-qt\qa\run-fast-gate.ps1 -BuildDir build-review2 -Configuration Release -FirefoxPath $firefox
-```
-
-For a prepared Windows runner, the **QA Fast Gate** manual dispatch also accepts
-`validate_release_package=true`. This runs the normal full release-readiness
-script against an existing frozen package, including OBS coverage and both
-30-minute soaks. The runner must provide `GAME_CAPTURE_RELEASE_PACKAGE` (package
-directory), `GAME_CAPTURE_RELEASE_MANIFEST_SHA256` (the independently recorded
-manifest digest), `NINJA_PLUGIN_REPO` (an OBS-ready checkout), and
-`GAME_CAPTURE_FIREFOX_PATH`. Dispatch requires a self-hosted runner with the
-`Windows` and `X64` labels. QA runs are manual-only; artifact uploads default off
-and expire after one day when explicitly enabled. See [local security and QA
-cost controls](development-security.md).
-The normal fast-gate mode continues to build and validate its own package.
-
-## 2.5) Configure VirusTotal key (optional but recommended)
-
-Use one of:
-
-- Environment variable: `VT_API_KEY`
-- Key file: `native-qt/.vt-apikey`
-- Key file: repo root `.vt-apikey`
-
-## 2.6) Configure code-signing bundle (recommended)
-
-- Ensure your decrypted signing bundle exists at:
-  - `C:\Users\Steve\code\code-signing\secrets\decrypted\certs\socialstream.pfx`
-- Provide certificate password via:
-  - `WIN_CSC_KEY_PASSWORD` environment variable, or
-  - `C:\Users\Steve\code\code-signing\secrets\decrypted\build-config.env`
-
-## 2.7) Run signing manually (optional verification)
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\native-qt\qa\sign-artifacts.ps1 -DistDir .\native-qt\dist -Version <version> -FailOnError
-```
-
-## 2.8) Run VirusTotal manually (optional verification)
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\native-qt\qa\submit-virustotal.ps1 -DistDir .\native-qt\dist -Version <version> -FailOnError
-```
-
-## 3) Upload assets to the release
-
-The preferred command above handles upload after readiness passes. For a manual upload, first complete the packaged release-readiness workflow in the [README](../README.md#testing). Replace `<tag>` and `<version>`.
-
-```powershell
-gh release upload <tag> `
-  .\native-qt\dist\game-capture-<version>-setup.exe `
-  .\native-qt\dist\game-capture-<version>-portable.exe `
-  .\native-qt\dist\game-capture-<version>-win64.zip `
-  .\native-qt\dist\game-capture-<version>-ffmpeg-source-info.zip `
-  .\native-qt\dist\game-capture-setup.exe `
-  .\native-qt\dist\game-capture-portable.exe `
-  .\native-qt\dist\game-capture-win64.zip `
-  .\native-qt\dist\game-capture-ffmpeg-source-info.zip `
-  --clobber --repo steveseguin/game-capture
-```
-
-## 4) Publish release (if draft)
-
-```powershell
-gh release edit <tag> --draft=false --repo steveseguin/game-capture
-```
-
-## 5) Links that must keep working
-
-- `https://github.com/steveseguin/game-capture/releases/latest/download/game-capture-setup.exe`
-- `https://github.com/steveseguin/game-capture/releases/latest/download/game-capture-portable.exe`
-- `https://github.com/steveseguin/game-capture/releases/latest/download/game-capture-win64.zip`
-- `https://github.com/steveseguin/game-capture/releases/latest/download/game-capture-ffmpeg-source-info.zip`
-
-## Troubleshooting
-
-- `signtool` reports no matching certs:
-  - Use `native-qt/qa/sign-artifacts.ps1` (it signs directly with `socialstream.pfx` + password; no cert-store selector needed).
-  - Verify:
-    - `C:\Users\Steve\code\code-signing\secrets\decrypted\certs\socialstream.pfx` exists.
-    - `WIN_CSC_KEY_PASSWORD` is set, or `build-config.env` contains it.
-
-- VirusTotal `curl` TLS error `SEC_E_NO_CREDENTIALS`:
-  - Clear proxy env vars before running VT:
-    ```powershell
-    Remove-Item Env:HTTP_PROXY,Env:HTTPS_PROXY,Env:ALL_PROXY,Env:http_proxy,Env:https_proxy,Env:all_proxy -ErrorAction SilentlyContinue
-    ```
-  - Re-run VT step:
-    ```powershell
-    powershell -NoProfile -ExecutionPolicy Bypass -File .\native-qt\qa\submit-virustotal.ps1 -DistDir .\native-qt\dist -Version <version> -FailOnError
-    ```
-
-## Website and documentation follow-up
-
-- Update release notes and link the packaged Windows validation report. Keep historical measurements tied to the version that produced them.
-- Verify every uploaded asset's SHA-256 and size against the local artifact, including stable aliases. Publish `SHA256SUMS.txt` with the release.
-- Keep website download links on stable aliases so they do not need a version edit each release.
-- The GitHub Pages site is served from `main:/docs`; `gamecapture.html` is the canonical landing page and `index.html` redirects to it.
-- Keep `sitemap.xml` limited to canonical public pages. This project is hosted under `/game-capture/`; a robots.txt file here would not control crawling at the host root.
-- After a website change, verify the deployed desktop/mobile layout, keyboard navigation, setup links, and download destinations.
-
-SEO references: [Google's software-app structured data guidance](https://developers.google.com/search/docs/appearance/structured-data/software-app) and [sitemap guidance](https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap). Keep metadata factual; do not invent ratings or promise search placement.
+The website is served from `main:/root`; `index.html` is its landing page.
+Keep download links on stable aliases. Update release-sensitive guide wording
+without relabeling historical measurements as results from the new binaries.
+Build and qualify locally; no hosted build or additional GitHub Actions run is
+required for this workflow.
