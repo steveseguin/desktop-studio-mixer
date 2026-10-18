@@ -20,6 +20,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 #include "versus/mixer/audio_level_meter.h"
 #include "versus/app/versus_app.h"
+#include "versus/app/encoder_recovery_policy.h"
 #include <QApplication>
 #include <QAccessible>
 #include "versus/ui/studio_preferences.h"
@@ -255,7 +256,7 @@ struct MixerWidget::Impl {
     MixerWidget *q;
     app::VersusApp *core;
     int Width = 1280, Height = 720, canvasFps = 30;
-    int64_t nextRender = 0;
+    std::chrono::steady_clock::time_point nextRender{};
     ProgramRecorder recorder;
     struct RecordingPlan {
         QStringList audioIds;
@@ -740,7 +741,7 @@ struct MixerWidget::Impl {
             if (core->isLive() || recordingBusy()) { message("Stop streaming and recording before changing the canvas format."); return; }
             const auto &format = CanvasFormats[index];
             Width = format.width; Height = format.height; canvasFps = format.fps;
-            compositions = {}; nextRender = 0; videoTimer.setInterval(1000/canvasFps);
+            compositions = {}; nextRender = {}; videoTimer.setInterval(1000/canvasFps);
             // Window/Spout workers negotiate their size and pacing at startup.
             // Retune existing sources too, including when moving from 30 to 60 fps.
             for (const auto &item : sources)
@@ -2032,11 +2033,11 @@ struct MixerWidget::Impl {
     void render() {
         const auto talkText = studioText(privateTalkback || heldTalkback ? "Talking privately" : "Private talkback");
         if (talkbackButton->text() != talkText) { talkbackButton->setText(talkText); talkbackButton->setAccessibleName(talkText); }
-        const int64_t tick = now100ns();
-        const int64_t period = 10000000/canvasFps;
-        if (!nextRender || tick-nextRender > period*2) nextRender = tick;
-        nextRender += period;
-        videoTimer.setInterval(std::max(1, int((nextRender-tick+9999)/10000)));
+        const auto renderTime = std::chrono::steady_clock::now();
+        const int64_t tick = app::outputFrameTimestamp100ns(renderTime);
+        nextRender = app::nextRenderFrameDeadline(nextRender, renderTime, app::outputFrameInterval(canvasFps));
+        videoTimer.setInterval(int(std::max(int64_t(1),
+            std::chrono::ceil<std::chrono::milliseconds>(nextRender-renderTime).count())));
         recordOutput->setText(recordingActive() ? studioText("Stop recording") : studioText("Record..."));
         recordOutput->setAccessibleName(recordOutput->text());
         const auto remaining = recorder.remainingSeconds();
@@ -2412,7 +2413,7 @@ struct MixerWidget::Impl {
         canvasFormat->setCurrentIndex(format);
         renderer->setCurrentIndex(std::clamp(data["renderer"].toInt(1), 0, 1));
         Width = CanvasFormats[format].width; Height = CanvasFormats[format].height; canvasFps = CanvasFormats[format].fps;
-        compositions = {}; nextRender = 0;
+        compositions = {}; nextRender = {};
         delete talkback.data();
         room = data["room"].toString(); roomPassword = data["roomPassword"].toString();
         if (room.size() < 16 || room.size() > 128 || roomPassword.size() < 16 || roomPassword.size() > 128) {

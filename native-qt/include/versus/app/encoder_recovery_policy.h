@@ -36,6 +36,21 @@ inline std::chrono::nanoseconds outputFrameInterval(int fps) {
         1000000000LL / std::max(1, fps));
 }
 
+// Keep the compositor and independent outputs on the same nanosecond period.
+// Rounding the render period to 100 ns on every frame accumulates phase error
+// against the recorder (28.5 ms over eight hours at 30 fps, 114 ms at 60 fps).
+// Round only when arming the GUI timer or emitting a media timestamp.
+inline std::chrono::steady_clock::time_point nextRenderFrameDeadline(
+    std::chrono::steady_clock::time_point deadline,
+    std::chrono::steady_clock::time_point now,
+    std::chrono::nanoseconds interval) {
+    if (deadline == std::chrono::steady_clock::time_point{} ||
+        now - deadline > 2 * interval) {
+        deadline = now;
+    }
+    return deadline + interval;
+}
+
 // Advance one output slot without trying to encode a burst of stale frames
 // after a delayed encoder call or a scheduler stall.
 inline std::chrono::steady_clock::time_point advanceOutputFrameDeadline(
