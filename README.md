@@ -35,3 +35,5 @@ Browser sources require [Microsoft WebView2 Evergreen](https://developer.microso
 | Screenshots, video and machine-readable asset descriptions | [Media library](media-assets/README.md) |
 
 Based on [Game Capture](https://github.com/steveseguin/game-capture). [GPL license and attribution](LICENSE).
+
+Encoding: [streaming defaults and advanced policy](docs/streaming-defaults.md).

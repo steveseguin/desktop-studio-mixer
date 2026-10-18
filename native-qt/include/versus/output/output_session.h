@@ -1,5 +1,7 @@
 #pragma once
 
+#include "versus/media_defaults.h"
+
 #include "versus/webrtc/webrtc_client.h"
 #include <cstdint>
 #include <functional>
@@ -22,7 +24,7 @@ struct Config {
     std::string streamId;
     std::string passphrase;
     int latencyMs = 200;
-    int aacBitrateKbps = 192;
+    int aacBitrateKbps = defaults::AudioBitrateKbps;
     int whipHistoryMs = 1500;
     int whipPlayoutMs = 500;
     bool whipAudioRed = true;
@@ -34,8 +36,8 @@ std::string destinationLabel(const Config &config);
 std::string destinationUrl(const Config &config);
 
 struct MediaConfig {
-    int width = 1920, height = 1080, fps = 60;
-    int videoBitrateKbps = 4000;
+    int width = defaults::VideoWidth, height = defaults::VideoHeight, fps = defaults::VideoFps;
+    int videoBitrateKbps = defaults::VideoBitrateKbps;
     int audioChannels = 2;
     bool audioEnabled = true;
     std::vector<std::string> audioTrackNames; // Recording only; track 0 is Program.

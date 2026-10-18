@@ -17,7 +17,7 @@ the tested native OBS Ninja receiver does not support it. See the
 
 ## Streaming defaults, direct receivers and microphones
 
-New streaming sessions default to **4,000 kbps video**. The encoder ceiling follows the selected target instead of allowing an extra 4,000 kbps. Saved bitrate choices and explicit CLI/API overrides are retained. This is a video encoding target, not a total upload cap: audio, transport headers, retransmissions and extra VDO.Ninja viewers add traffic. Independent Studio recording keeps its separate quality settings. Higher streaming bitrates remain in advanced settings.
+New streaming sessions in the next Windows build default to **3,000 kbps video** and **128 kbps audio**. The encoder ceiling follows the selected target. Saved bitrate choices and explicit CLI/API overrides are retained. This is a video encoding target, not a total upload cap: audio, transport headers, retransmissions and extra VDO.Ninja viewers add traffic. Independent Studio recording keeps its separate quality settings. Higher streaming bitrates remain in advanced settings. See the [complete default policy](streaming-defaults.md).
 
 **UDP / MPEG-TS (LAN)** and **RIST** are under advanced Output settings. Both carry H.264 video and AAC audio using the bundled FFmpeg worker. They also accept `--output=udp` / `--output=rist` and `--output-url=...` in headless capture. Start a receiver first, for example:
 
@@ -38,7 +38,7 @@ Process audio capture prefers the default output device's sample rate when Windo
 
 Software H.264 on Windows uses Media Foundation, rather than x264. Its default now favors low encoding complexity and uses at most four encoder workers (at most half the logical processors, minimum one). Native H.264 explicitly requests CBR with a one-second encoder buffer; hardware-specific FFmpeg encoders keep their low-latency settings. Encoder rate control is not a network pacer or a total upload limit.
 
-Fresh window-capture settings use **1280x720 at 60 fps** with hardware-first Auto encoding. Camera capture retains its separate **1080p30** default; Desktop Studio's new-show canvas remains **720p30**. Higher resolutions/frame rates and custom bitrates remain under Advanced; saved selections are preserved, including previously saved 12 Mbps values. **Standard (4000 kbps)** is the new streaming default, with **Economy (2500 kbps)** retained for smaller upload budgets. Software encoding cannot guarantee spare CPU during a demanding game; 720p30 is the lighter manual option. Independent local recording and guest-return streams add their own encoding work.
+Fresh window-capture and new-show settings use **1280x720 at 30 fps** with hardware-first Auto encoding. Camera capture retains its separate **1080p30** default. Higher resolutions/frame rates and custom bitrates remain under Advanced; saved selections are preserved, including previously saved 12 Mbps values. **Balanced (3000 kbps)** is the streaming default, with **Economy (2500 kbps)** retained for smaller upload budgets. Software encoding cannot guarantee spare CPU during a demanding game. Independent local recording and guest-return streams add their own encoding work.
 
 Packaged measurements, CPU contention results and remaining hardware limits: [encoding defaults validation](https://github.com/steveseguin/desktop-studio-mixer/blob/main/docs/encoding-defaults-validation-2026-10-14.md).
 

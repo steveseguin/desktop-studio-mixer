@@ -21,6 +21,7 @@ bool ProgramRecorder::start(const QString &path, int width, int height, int fps,
     if (busy_) return false;
     if (worker_.joinable()) worker_.join();
     output::Config config; config.protocol = output::Protocol::Recording; config.url = path.toStdString();
+    config.aacBitrateKbps = 192; // Local recording keeps its independent quality budget.
     const auto error = output::validateConfig(config);
     { std::lock_guard lock(mutex_);
       if (!error.empty()) { status_ = QString::fromStdString(error); return false; }

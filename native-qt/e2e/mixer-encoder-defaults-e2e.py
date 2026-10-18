@@ -40,6 +40,8 @@ try:
     until(lambda:state()['master_peak']>.01 if args.audio_only else state()['sources'][0]['frames']>30,'source playback')
     matrix=[('software-720p30',0,'software',False),('software-1080p60',2,'software',False),
             ('auto-720p30-record',0,'auto',True),('qsv-720p60',3,'qsv',False),('nvenc-1080p60-record',2,'nvenc',True)]
+    if args.case in ('qsv-720p30','nvenc-720p30'):
+        matrix=[(args.case,0,args.case.split('-')[0],False)]
     # Explicit cases keep the default suite usable on hosts without AMD hardware.
     if args.case and args.case.startswith('amf-'):
         matrix=[('amf-720p30-record',0,'amf',True),('amf-1080p60-record',2,'amf',True),
@@ -87,7 +89,7 @@ try:
             time.sleep(1)
         assert receiver.poll()==0,'Receiver did not finish'
         if load:load.wait(timeout=100);assert load.returncode==0
-        row['diagnostics']=api('/diagnostics');assert row['diagnostics']['video']['configured_bitrate_kbps']==4000
+        row['diagnostics']=api('/diagnostics');assert row['diagnostics']['video']['configured_bitrate_kbps']==3000
         if encoder=='amf':
             assert 'h264_amf' in row['diagnostics']['video']['active_encoder'],row['diagnostics']['video']
         row['sources']=state()['sources']

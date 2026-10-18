@@ -7,7 +7,7 @@ GuestReturn::GuestReturn(const QString &stream, const QString &password, const Q
         auto core = std::make_shared<app::VersusApp>();
         core->onRuntimeEvent([this](const std::string &text, bool) { std::lock_guard lock(mutex_); status_ = QString::fromStdString(text); });
         video::EncoderConfig config; config.width = width; config.height = height; config.frameRate = 30;
-        config.bitrate = 2500; config.minBitrate = 1000; config.maxBitrate = 4000;
+        config.bitrate = 2500; config.minBitrate = 1000; config.maxBitrate = config.bitrate;
         core->setVideoConfig(config); core->setAudioSourceMode(app::AudioSourceMode::None); core->setIncludeMicrophone(false);
         app::StartOptions options; options.streamId = stream.toStdString(); options.password = password.toStdString();
         options.room = room.toStdString(); options.label = "Desktop Studio return"; options.maxViewers = 1; options.roomModeLqEnabled = false;
