@@ -1,4 +1,5 @@
 #include "versus/mixer/process_worker.h"
+#include "chat_engine.h"
 #include "versus/app/performance_trace.h"
 #include "versus/mixer/browser_source.h"
 #include "versus/mixer/media_source.h"
@@ -21,6 +22,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <mmsystem.h>
+#include <psapi.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -42,7 +44,7 @@ struct BrowserBudget {
     HANDLE job = nullptr;
     SIZE_T memoryLimit = 0;
     std::mutex mutex;
-    std::vector<HANDLE> children;
+    std::vector<std::pair<HANDLE,DWORD>> children;
     bool rebalance() {
         const auto processors = std::max<DWORD>(1,GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
         const auto sourceRate = std::max<DWORD>(1,std::min<DWORD>(5000,40000/processors))*10000/browserAggregateCpuRate();
@@ -52,11 +54,11 @@ struct BrowserBudget {
         // the parent's scheduling interval and halt a healthy sibling's video.
         cpu.CpuRate = std::clamp<DWORD>(std::min<DWORD>(sourceRate,9000/std::max<size_t>(1,children.size())),1,10000);
         bool applied = true;
-        for (auto child : children) applied &= bool(SetInformationJobObject(child,JobObjectCpuRateControlInformation,&cpu,sizeof(cpu)));
+        for (auto [child,maximum] : children) {auto quota=cpu;quota.CpuRate=std::min(cpu.CpuRate,maximum);applied &= bool(SetInformationJobObject(child,JobObjectCpuRateControlInformation,&quota,sizeof(quota)));}
         return applied;
     }
-    bool add(HANDLE child) { std::lock_guard lock(mutex); children.push_back(child); return rebalance(); }
-    void remove(HANDLE child) { std::lock_guard lock(mutex); std::erase(children,child); rebalance(); }
+    bool add(HANDLE child,DWORD maximum=10000) { std::lock_guard lock(mutex); children.emplace_back(child,maximum); return rebalance(); }
+    void remove(HANDLE child) { std::lock_guard lock(mutex); std::erase_if(children,[&](const auto &v){return v.first==child;}); rebalance(); }
     BrowserBudget() {
         job = CreateJobObjectW(nullptr,nullptr); if (!job) return;
         JOBOBJECT_CPU_RATE_CONTROL_INFORMATION cpu{};
@@ -85,6 +87,7 @@ struct Shared {
     uint32_t magic, commandSize, replySize, inputSize, outputSize;
     char command[JsonCapacity], reply[JsonCapacity];
     uint64_t frameSerial, contentSerial;
+    char frameTag[65];
     int width, height, stride, format, opaque;
     int64_t timestamp;
     uint32_t frameSize, audioSize, sampleRate, channels;
@@ -128,6 +131,10 @@ QJsonObject settingsJson(const video::CameraSettings &s) {
 struct ProcessWorker::Impl {
     HANDLE mapping = nullptr, request = nullptr, response = nullptr, mutex = nullptr, mediaReady = nullptr;
     HANDLE process = nullptr, job = nullptr;
+    HANDLE budgetEvents = nullptr;
+    DWORD cpuMaximum = 10000;
+    QElapsedTimer resourceClock;
+    qint64 lastCpu = 0, highCpuMs = 0;
     std::shared_ptr<BrowserBudget> browserBudget;
     Shared *shared = nullptr;
     uint64_t serial = 0;
@@ -149,7 +156,7 @@ struct ProcessWorker::Impl {
     ~Impl() {
         // Closing the job also removes orphaned FFmpeg/WebView2 descendants.
         if (browserBudget) browserBudget->remove(job);
-        close(job); close(process);
+        close(job); close(process); close(budgetEvents);
         if (shared) UnmapViewOfFile(shared);
         close(mapping); close(request); close(response); close(mutex); close(mediaReady);
     }
@@ -183,12 +190,41 @@ void ProcessWorker::terminate() {
     }
 }
 QString ProcessWorker::error() const { return impl_->error; }
+QJsonObject ProcessWorker::resourceUsage() {
+    auto &s=*impl_;if(!s.job)return {};
+    JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION accounting{};
+    if(!QueryInformationJobObject(s.job,JobObjectBasicAndIoAccountingInformation,&accounting,sizeof(accounting),nullptr))return {};
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};QueryInformationJobObject(s.job,JobObjectExtendedLimitInformation,&limits,sizeof(limits),nullptr);
+    JOBOBJECT_CPU_RATE_CONTROL_INFORMATION quota{};QueryInformationJobObject(s.job,JobObjectCpuRateControlInformation,&quota,sizeof(quota),nullptr);
+    const double cores=quota.CpuRate/10000.0*browserAggregateCpuRate()/10000.0*GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    const qint64 cpu=accounting.BasicInfo.TotalUserTime.QuadPart+accounting.BasicInfo.TotalKernelTime.QuadPart;
+    const auto elapsed=s.resourceClock.isValid()?s.resourceClock.restart():0;if(!s.resourceClock.isValid())s.resourceClock.start();
+    const double used=elapsed?double(cpu-s.lastCpu)/(elapsed*10000.0):0;s.lastCpu=cpu;
+    std::vector<ULONG_PTR> storage(4+accounting.BasicInfo.ActiveProcesses);
+    auto *ids=reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(storage.data());quint64 memory=0;int measured=0;
+    if(QueryInformationJobObject(s.job,JobObjectBasicProcessIdList,ids,DWORD(storage.size()*sizeof(ULONG_PTR)),nullptr))
+        for(DWORD i=0;i<ids->NumberOfProcessIdsInList;++i){HANDLE process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|PROCESS_VM_READ,FALSE,DWORD(ids->ProcessIdList[i]));
+            PROCESS_MEMORY_COUNTERS_EX counters{};if(process&&GetProcessMemoryInfo(process,reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),sizeof(counters))){memory+=counters.PrivateUsage;++measured;}if(process)CloseHandle(process);}
+    bool exceeded=false;DWORD event=0;ULONG_PTR key=0;LPOVERLAPPED overlapped=nullptr;
+    while(s.budgetEvents&&GetQueuedCompletionStatus(s.budgetEvents,&event,&key,&overlapped,0))exceeded|=event==JOB_OBJECT_MSG_JOB_MEMORY_LIMIT||event==JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT;
+    if(s.kind=="chat") {
+        s.highCpuMs=elapsed&&cores>0&&used>=cores*.9?s.highCpuMs+elapsed:0;
+        // The job's hard CPU quota already protects output. Sustained quota use
+        // during legitimate multi-channel startup is not a reason to restart
+        // every page; the independent heartbeat watchdog handles actual hangs.
+        exceeded|=memory>=limits.JobMemoryLimit/16*15;
+        if(exceeded)terminate();
+    }
+    return {{"private_mib",double(memory)/(1024*1024)},{"peak_job_mib",double(limits.PeakJobMemoryUsed)/(1024*1024)},
+        {"memory_limit_mib",qint64(limits.JobMemoryLimit/(1024*1024))},{"cpu_cores",used},{"cpu_percent",used*100.0/GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)},
+        {"cpu_limit_cores",cores},{"processes",int(accounting.BasicInfo.ActiveProcesses)},{"measured_processes",measured},{"limit_exceeded",exceeded}};
+}
 bool ProcessWorker::start(const QString &kind) {
     stop(); impl_ = std::make_unique<Impl>(); auto &s = *impl_;
     s.kind = kind;
     SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     s.blobCapacity = (kind == "encoder" || kind == "spout-output" || kind == "virtual-output") ? BlobCapacity : kind == "output" ? 8*1024*1024 : kind == "monitor" ? 960*sizeof(float) : 0;
-    s.pixelCapacity = (kind == "camera" || kind == "window" || kind == "spout" || kind == "media" || kind == "browser" || kind == "image") ? BlobCapacity : 0;
+    s.pixelCapacity = (kind == "camera" || kind == "window" || kind == "spout" || kind == "media" || kind == "browser" || kind == "chat" || kind == "image") ? BlobCapacity : 0;
     const auto mappingSize = sizeof(Shared)+s.blobCapacity+s.pixelCapacity;
     // Reserve an address range; commit only the media bytes actually used.
     // This also preserves large source support without charging every 720p
@@ -210,7 +246,7 @@ bool ProcessWorker::start(const QString &kind) {
         limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
         limits.JobMemoryLimit = SIZE_T(1) << 30;
     }
-    if (kind == "browser") {
+    if (kind == "browser" || kind == "chat") {
         s.browserBudget = browserBudget(true);
         if (!s.browserBudget->job) { s.error = "Could not apply the combined browser resource limit."; return false; }
         // Bound the complete source tree, including Chromium workers/GPU/audio
@@ -219,17 +255,24 @@ bool ProcessWorker::start(const QString &kind) {
         const DWORD processors = std::max<DWORD>(1, GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
         JOBOBJECT_CPU_RATE_CONTROL_INFORMATION cpu{};
         cpu.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_HARD_CAP;
-        const auto systemRate = std::max<DWORD>(1, std::min<DWORD>(5000, 40000 / processors));
+        const auto systemRate = kind=="chat"?std::max<DWORD>(1,std::min<DWORD>(2500,20000/processors)):std::max<DWORD>(1, std::min<DWORD>(5000, 40000 / processors));
         // A nested job's rate is relative to its parent's quota, not the whole
         // machine. Preserve the existing per-source allowance under the cap.
         cpu.CpuRate = std::clamp<DWORD>(systemRate*10000/browserAggregateCpuRate(),1,10000);
+        s.cpuMaximum=cpu.CpuRate;
         if (!SetInformationJobObject(s.job, JobObjectCpuRateControlInformation, &cpu, sizeof(cpu))) {
             s.error = "Could not apply browser CPU protection."; return false;
         }
         MEMORYSTATUSEX memory{sizeof(memory)};
         if (!GlobalMemoryStatusEx(&memory)) { s.error = "Could not determine the browser memory limit."; return false; }
         limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
-        limits.JobMemoryLimit = SIZE_T(std::clamp<ULONGLONG>(memory.ullTotalPhys / 4, 1ull << 30, 4ull << 30));
+        // Two busy channels measure about 900 MiB at peak, so this leaves room for several more.
+        limits.JobMemoryLimit = kind=="chat"?SIZE_T(std::clamp<ULONGLONG>(memory.ullTotalPhys / 4, 1536ull << 20, 3ull << 30)):SIZE_T(std::clamp<ULONGLONG>(memory.ullTotalPhys / 4, 1ull << 30, 4ull << 30));
+        if(kind=="chat") {
+            s.budgetEvents=CreateIoCompletionPort(INVALID_HANDLE_VALUE,nullptr,0,1);
+            JOBOBJECT_ASSOCIATE_COMPLETION_PORT port{};port.CompletionKey=&s;port.CompletionPort=s.budgetEvents;
+            if(!s.budgetEvents||!SetInformationJobObject(s.job,JobObjectAssociateCompletionPortInformation,&port,sizeof(port))){s.error="Could not monitor chat resource protection.";return false;}
+        }
     }
     if (!SetInformationJobObject(s.job, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
         s.error = "Could not apply worker resource protection."; return false;
@@ -260,7 +303,7 @@ bool ProcessWorker::start(const QString &kind) {
         TerminateProcess(s.process,1); CloseHandle(process.hThread); s.error = "Could not contain the browser in its shared resource budget."; return false;
     }
     if (!AssignProcessToJobObject(s.job, s.process)) { TerminateProcess(s.process, 1); CloseHandle(process.hThread); s.error = "Could not isolate worker process."; return false; }
-    if (s.browserBudget && !s.browserBudget->add(s.job)) { TerminateProcess(s.process,1); CloseHandle(process.hThread); s.error = "Could not balance browser resource limits."; return false; }
+    if (s.browserBudget && !s.browserBudget->add(s.job,s.cpuMaximum)) { TerminateProcess(s.process,1); CloseHandle(process.hThread); s.error = "Could not balance browser resource limits."; return false; }
     ResumeThread(process.hThread); CloseHandle(process.hThread);
     const HANDLE waits[]{s.response, s.process};
     const auto startupWait = WaitForMultipleObjects(2, waits, FALSE, 15000);
@@ -316,7 +359,7 @@ bool ProcessWorker::frame(video::CapturedFrame &frame) {
     }
     ReleaseMutex(s.mutex); return valid;
 }
-QImage ProcessWorker::image(bool premultiplied) {
+QImage ProcessWorker::image(bool premultiplied, QString *tag) {
     auto &s = *impl_; if (!alive() || !lock(s.mutex)) return {};
     const auto &v = *s.shared; const auto serial = v.frameSerial, content = v.contentSerial;
     const auto size = v.frameSize; const int width = v.width, height = v.height, stride = v.stride, opaque = v.opaque;
@@ -341,6 +384,7 @@ QImage ProcessWorker::image(bool premultiplied) {
             s.imageContentSerial = content;
         }
         s.serial = serial; result = s.cachedImage;
+        if (tag) *tag=QString::fromLatin1(v.frameTag,int(strnlen_s(v.frameTag,sizeof(v.frameTag))));
     }
     ReleaseMutex(s.mutex); return result;
 }
@@ -401,9 +445,9 @@ int ProcessWorker::run(int argc, char **argv) {
     }
     spdlog::set_level(spdlog::level::off);
     const QString kind = QString::fromLocal8Bit(argv[2]);
-    const HRESULT apartment = CoInitializeEx(nullptr, kind == "browser" ? COINIT_APARTMENTTHREADED : COINIT_MULTITHREADED);
+    const HRESULT apartment = CoInitializeEx(nullptr, (kind == "browser" || kind == "chat") ? COINIT_APARTMENTTHREADED : COINIT_MULTITHREADED);
     std::unique_ptr<QCoreApplication> app;
-    if (kind == "browser" || kind == "image") { auto gui = std::make_unique<QApplication>(argc, argv); gui->setQuitOnLastWindowClosed(false); app = std::move(gui); }
+    if (kind == "browser" || kind == "chat" || kind == "image") { auto gui = std::make_unique<QApplication>(argc, argv); gui->setQuitOnLastWindowClosed(false); app = std::move(gui); }
     else app = std::make_unique<QCoreApplication>(argc, argv);
     auto &application = *app;
     // Dispatch is deliberately a small fixed vocabulary, not a general native bridge.
@@ -417,6 +461,7 @@ int ProcessWorker::run(int argc, char **argv) {
     QImage localOutputFrame;
     std::vector<float> monitorSamples(960);
     std::unique_ptr<BrowserSource> browser;
+    std::unique_ptr<ChatWorker> chat;
     std::unique_ptr<video::VideoEncoder> encoder;
     video::CapturedFrame encoderFrame; // Reuse capacity across frames.
     std::unique_ptr<output::Session> output;
@@ -440,6 +485,7 @@ int ProcessWorker::run(int argc, char **argv) {
     }
     qint64 browserImageKey = 0;
     size_t committedPixels = 0;
+    QByteArray chatFrameToken;
     auto publishState = [&] { if (lock(handles[3])) { json(shared->status, shared->statusSize, state); ReleaseMutex(handles[3]); } };
     auto frameBytes = [&](const video::CapturedFrame &f, const unsigned char *data, size_t size) {
         app::detail::PerformanceTrace::Scope profile(app::detail::PerformanceTrace::IpcCopy);
@@ -451,6 +497,7 @@ int ProcessWorker::run(int argc, char **argv) {
         if (size > shared->pixelCapacity || f.format != video::CapturedFrame::Format::BGRA || !lock(handles[3])) return false;
         shared->width = f.width; shared->height = f.height; shared->stride = f.stride;
         shared->format = int(f.format); shared->opaque = f.opaque; shared->timestamp = f.timestamp;
+        if (kind=="chat") { memset(shared->frameTag,0,sizeof(shared->frameTag));memcpy(shared->frameTag,chatFrameToken.constData(),std::min<size_t>(64,chatFrameToken.size())); }
         shared->frameSize = uint32_t(size); memcpy(pixelData(shared), data, size); ++shared->frameSerial; ++shared->contentSerial;
         ReleaseMutex(handles[3]); SetEvent(handles[4]); return true;
     };
@@ -478,6 +525,15 @@ int ProcessWorker::run(int argc, char **argv) {
                     output->stop(); const auto final = output->status();
                     result["state"] = int(final.state); result["message"] = QString::fromStdString(final.message);
                 }
+            }
+            else if (kind == "chat") {
+                if (!chat) chat = std::make_unique<ChatWorker>([&](QImage image,QString token) {
+                    chatFrameToken=token.toLatin1();
+                    const auto pixels = image.convertToFormat(QImage::Format_ARGB32);
+                    video::CapturedFrame f; f.width=pixels.width(); f.height=pixels.height(); f.stride=pixels.bytesPerLine(); f.opaque=false;
+                    frameBytes(f,pixels.constBits(),size_t(pixels.sizeInBytes()));
+                });
+                result = chat->command(c);
             }
             else if (kind == "image" && op == "load") {
                 QImageReader reader(c["locator"].toString()); reader.setAutoTransform(true);
@@ -740,7 +796,7 @@ int ProcessWorker::run(int argc, char **argv) {
     });
     health.start(250); SetEvent(handles[2]);
     const int result = application.exec();
-    localOutput.reset(); monitor.reset(); output.reset(); browser.reset(); media.reset(); captureAudio.reset(); spout.reset(); window.reset(); camera.reset(); encoder.reset();
+    chat.reset(); localOutput.reset(); monitor.reset(); output.reset(); browser.reset(); media.reset(); captureAudio.reset(); spout.reset(); window.reset(); camera.reset(); encoder.reset();
     UnmapViewOfFile(shared); for (auto &handle : handles) close(handle);
     if (SUCCEEDED(apartment)) CoUninitialize();
     if (preciseClock) timeEndPeriod(1);

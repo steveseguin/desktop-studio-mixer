@@ -511,6 +511,7 @@ QIcon makeBrandTrayFallbackIcon() {
 }
 
 QString defaultLogFolderPath() {
+    if (!qEnvironmentVariable("VIDEO_MIXER_DATA_DIR").isEmpty()) return QDir(qEnvironmentVariable("VIDEO_MIXER_DATA_DIR")).filePath("logs");
     QString localAppData = qEnvironmentVariable("LOCALAPPDATA");
     if (localAppData.isEmpty()) {
         localAppData = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
@@ -750,7 +751,7 @@ MainWindow::MainWindow(
         resize(1440, 960);
     }
 
-    appearance_->apply(QSettings("VDO.Ninja", "Video Mixer").value("ui/theme", "original").toString());
+    appearance_->apply(QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").value("ui/theme", "original").toString());
     if (core_) {
         studioSystemResourceLabel_ = new QLabel(studioText("System: CPU - | RAM -"), this);
         studioSystemResourceLabel_->setObjectName("studioSystemResources");
@@ -1002,7 +1003,7 @@ QJsonObject MainWindow::studioControl(const QString &operation, const QJsonObjec
             {"whip_playout_ms", outputWhipPlayoutSpin_->value()}, {"whip_history_ms", outputWhipHistorySpin_->value()}, {"whip_audio_red_requested", outputWhipRedCheck_->isChecked()}};
         state["preferences"] = QJsonObject{{"theme", qApp->property("studioTheme").toString()},
             {"language", qApp->property("studioLanguage").toString()},
-            {"next_language", QSettings("VDO.Ninja", "Video Mixer").value("ui/language", "en").toString()}};
+            {"next_language", QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").value("ui/language", "en").toString()}};
         return state;
     }
     if (operation == "screenshot") {
@@ -1029,18 +1030,19 @@ QJsonObject MainWindow::studioControl(const QString &operation, const QJsonObjec
     if (command == "preferences.set") {
         if (request.contains("theme")) {
             const auto theme = request["theme"].toString();
-            appearance_->apply(theme); QSettings("VDO.Ninja", "Video Mixer").setValue("ui/theme", theme);
+            appearance_->apply(theme); QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").setValue("ui/theme", theme);
             if (auto *action = findChild<QAction*>("theme_"+theme)) action->setChecked(true);
         }
         if (request.contains("language")) {
             const auto language = request["language"].toString();
-            QSettings("VDO.Ninja", "Video Mixer").setValue("ui/language", language);
+            QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").setValue("ui/language", language);
             if (auto *action = findChild<QAction*>("language_"+language)) action->setChecked(true);
         }
         return {{"ok", true}, {"language_requires_restart", request.contains("language")}};
     }
     if (command == "output.stop") { requestStop(); return {{"ok", true}, {"asynchronous", true}}; }
     if (command == "output.start") {
+        if (studio->practiceMode() && !request["acknowledgePractice"].toBool()) return fail("Pretend comments will reach output. Set acknowledgePractice to true to continue.");
         if (startInProgress_ || stopInProgress_ || hasPendingAsyncOperation()) return fail("Output operation in progress");
         if (isLive_) return fail("Output is already live");
         if (outputSelect_->currentData() == "vdo" && streamIdInput_->text().trimmed().isEmpty()) return fail("Configure a VDO.Ninja stream ID first");
@@ -1578,9 +1580,9 @@ void MainWindow::setupMenuBar() {
     for (const auto &[id, label] : languageChoices) {
         auto *action = languageMenu->addAction(label); action->setObjectName("language_"+id);
         action->setCheckable(true); languages->addAction(action);
-        action->setChecked(QSettings("VDO.Ninja", "Video Mixer").value("ui/language", "en") == id);
+        action->setChecked(QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").value("ui/language", "en") == id);
         connect(action, &QAction::triggered, this, [this, id] {
-            QSettings("VDO.Ninja", "Video Mixer").setValue("ui/language", id);
+            QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").setValue("ui/language", id);
             updateStatus(studioText("Language saved. Applies next launch; some technical messages remain in English."), "ready");
         });
     }
@@ -1591,9 +1593,9 @@ void MainWindow::setupMenuBar() {
     for (const auto &[id, label] : themeChoices) {
         auto *action = appearanceMenu->addAction(studioText(label.toUtf8().constData())); action->setObjectName("theme_"+id);
         action->setCheckable(true); themes->addAction(action);
-        action->setChecked(QSettings("VDO.Ninja", "Video Mixer").value("ui/theme", "original") == id);
+        action->setChecked(QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").value("ui/theme", "original") == id);
         connect(action, &QAction::triggered, this, [this, id] {
-            appearance_->apply(id); QSettings("VDO.Ninja", "Video Mixer").setValue("ui/theme", id);
+            appearance_->apply(id); QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").setValue("ui/theme", id);
         });
     }
     appearanceMenu->addSeparator();
@@ -1611,7 +1613,7 @@ void MainWindow::setupMenuBar() {
         QMessageBox::about(
             this,
             "About Desktop Studio",
-            QString("%1\nVersion %2\nPowered by VDO.Ninja")
+            (QString("%1\nVersion %2\nPowered by VDO.Ninja\n") + studioText("Chat is powered by Social Stream Ninja"))
                 .arg(APP_BRAND, APP_VERSION_TEXT));
     });
     helpMenu->addSeparator();
@@ -2526,8 +2528,9 @@ void MainWindow::setupUI() {
     layout->addLayout(footerLayout);
 
     if (runtimeOptions_.systemIntegrationsEnabled) {
-        const QString cachePath = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)
-                                  + "/VideoMixer/update-check.ini";
+        const QString cachePath = qEnvironmentVariable("VIDEO_MIXER_DATA_DIR").isEmpty()
+            ? QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)+"/VideoMixer/update-check.ini"
+            : QDir(qEnvironmentVariable("VIDEO_MIXER_DATA_DIR")).filePath("update-check.ini");
         auto *checker = new UpdateChecker(APP_VERSION_TEXT, cachePath, this);
         const auto refreshUpdateStatus = [checker, updateLabel, releasesLink] {
             const auto &result = checker->result();
@@ -2766,7 +2769,7 @@ void MainWindow::applyDarkTheme() {
             selection-background-color: %4;
             selection-color: %6;
         }
-        QListWidget {
+        QListWidget, QListView#chatMessages {
             background-color: %3;
             color: %2;
             border: 1px solid #50667b;
@@ -2776,12 +2779,12 @@ void MainWindow::applyDarkTheme() {
             padding: 4px;
             border-radius: 4px;
         }
-        QListWidget::item:selected {
+        QListWidget::item:selected, QListView#chatMessages::item:selected {
             background-color: #16435a;
             color: %2;
             border: 2px solid %4;
         }
-        QListWidget::item:hover {
+        QListWidget::item:hover, QListView#chatMessages::item:hover {
             background-color: #162634;
         }
         QWidget#itemWidget {
@@ -3143,6 +3146,9 @@ versus::app::StartOptions MainWindow::buildStartOptionsFromUi() const {
 }
 
 void MainWindow::onGoLiveClicked() {
+    if (!isLive_ && !localAutomationCommand_) {
+        if (auto *studio = findChild<versus::mixer::MixerWidget*>(); studio && !studio->confirmPracticeOutput()) return;
+    }
     if (!core_) {
         return;
     }

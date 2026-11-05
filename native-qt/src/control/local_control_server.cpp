@@ -64,6 +64,9 @@ QByteArray reasonPhrase(int status) {
 }
 
 QString appDataPath(const QString &leaf) {
+    if (!qEnvironmentVariable("VIDEO_MIXER_DATA_DIR").isEmpty()) {
+        QDir dir(qEnvironmentVariable("VIDEO_MIXER_DATA_DIR"));dir.mkpath(".");return dir.filePath(leaf);
+    }
 #ifdef _WIN32
     const QString base = qEnvironmentVariable("LOCALAPPDATA");
     QDir dir(base.isEmpty() ? QDir::currentPath() : base);

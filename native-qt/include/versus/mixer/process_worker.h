@@ -22,10 +22,11 @@ public:
     QJsonObject call(const QJsonObject &command, const void *data = nullptr,
                      size_t size = 0, QByteArray *reply = nullptr, int timeoutMs = 3000);
     bool frame(video::CapturedFrame &frame);
-    QImage image(bool premultiplied = false);
+    QImage image(bool premultiplied = false, QString *tag = nullptr);
     bool audio(audio::StreamChunk &chunk);
     void waitForMedia(int timeoutMs);
     QJsonObject status() const;
+    QJsonObject resourceUsage();
     QString error() const;
     static bool inWorker();
     static QJsonObject browserBudgetState();

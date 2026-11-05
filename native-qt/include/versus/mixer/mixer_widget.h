@@ -16,6 +16,8 @@ public:
     int heightForWidth(int) const override { return -1; }
     void setOutputState(const QString &label, const QString &status, bool enabled, bool active);
     void shutdown();
+    bool confirmPracticeOutput();
+    bool practiceMode() const;
     QSize canvasSize() const;
     int canvasFrameRate() const;
     QJsonObject controlState() const;
@@ -27,6 +29,7 @@ signals:
     void toggleOutputRequested();
     void recordRequested();
 private:
+    void resizeEvent(QResizeEvent *event) override;
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

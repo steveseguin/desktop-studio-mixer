@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8"><title>Local SSN iframe transport</title>
+<!-- Served by native interception at the original https://vdo.socialstream.ninja/
+     iframe URL. Never downloads or runs VDO. Native owns the room graph.
+     This file translates only the documented subset used by SSN tool pages. -->
+<script>
+(() => {
+  'use strict';
+  const p = new URLSearchParams(location.search), host = window.__engineSpike;
+  const uuid = crypto.randomUUID();
+  let ready = false;
+  const queue = [];
+  function parentEvent(packet) { parent.postMessage(packet, '*'); }
+  addEventListener('engine-spike-bridge', e => parentEvent(e.detail));
+  addEventListener('message', e => {
+    if (e.source !== parent || !e.data || typeof e.data !== 'object') return;
+    if ('sendData' in e.data) {
+      const packet={sendData:e.data.sendData,type:e.data.type || 'pcs',UUID:e.data.UUID || null};
+      if (!['pcs','rpcs'].includes(packet.type)) { host.send({kind:'log',event:'unsupported-bridge',detail:packet});return; }
+      if (ready) host.rpc('bridge.send',[uuid,packet]).catch(console.error); else queue.push(packet);
+    } else if (!e.data.engineSpikeDown) host.send({kind:'log',event:'unsupported-bridge',detail:e.data});
+  });
+  host.rpc('bridge.join',[{uuid,room:p.get('room') || p.get('view') || '',password:p.get('password') || 'false',
+    label:p.get('label') || '',push:p.has('push') ? (p.get('push') || uuid) : '',
+    view:p.get('view') || '',scene:p.has('scene'),exclude:p.get('exclude') || ''}]).then(()=>{
+      ready=true; for(const packet of queue.splice(0)) host.rpc('bridge.send',[uuid,packet]).catch(console.error);
+    }).catch(console.error);
+  addEventListener('pagehide',()=>host.send({kind:'bridge-leave',uuid}));
+})();
+</script>

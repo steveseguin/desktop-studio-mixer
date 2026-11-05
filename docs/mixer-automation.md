@@ -253,3 +253,53 @@ never translated. Catalogs are `native-qt/resources/studio-es.json` and
 `studio-fr.json`.
 
 For direct MPEG-TS output, `output.configure` accepts `protocol: "udp"` with `udp://host:port`, or `protocol: "rist"` with `rist://host:port`. RIST uses Main profile; `latency_ms` sets the recovery buffer. Unsupported `credential` values are rejected for these transports. Fresh launches use 4000 kbps video; `bitrate_kbps` explicitly selects a custom rate. Independent `record.start` keeps its separate recording quality.
+
+## Built-in chat
+
+All commands use `/studio/command` and appear in `/studio/schema`. Channel settings are app-level, independent of show files. `chat.status` returns `available`, `ready`, `problem`, channels with real connection status, practice, displayed/pending counts, selected ID, pending show token, on-air comment, `on_screen`, `hidden_by_private_break`, timer and show-level layer settings. The full Studio state includes the same object as `chat`.
+
+`oversized_messages` counts capture envelopes or comments rejected by size limits during the current chat worker session. A nonzero count also shows a warning in the Chat panel. It resets when the worker restarts; it is not a count of every possible delivery failure. This warning does not make the engine unavailable or cancel Show.
+
+| Command | Fields | Result |
+| --- | --- | --- |
+| `chat.status` | none | Current state; `problem` describes engine/settings failures without failing the status request. |
+| `chat.channel.add` | `input` | Detected channel and stable channel ID; persists only after a successful settings save. |
+| `chat.channel.remove` | `id` | Removes the saved channel and its capture page. |
+| `chat.practice.set` | `enabled`, optional `acknowledgeOutput` | Pretend capture on/off. When output is active, enabling requires explicit acknowledgement. |
+| `chat.messages` | none | Bounded displayed `messages` with stable run-local IDs and `pending` count. |
+| `chat.select` | optional `id` | Private preview; freezes incoming rows. Missing or empty ID deselects and releases the list. |
+| `chat.show` | optional `id`, `style` (`bar`, `bubble`, `big`) | Queues an approved comment. Returns `pending:true` and a token, not a visibility claim. |
+| `chat.hide` | none | Clears composition immediately, including pending shows. |
+| `chat.keep` | optional `enabled` (default true) | Keeps the current comment; false starts a fresh ten-second timer. |
+| `chat.inject` | `message: {chatname, chatmessage, hasDonation?, membership?}` | Practice-only capture submission through unmodified SSN. Returns pending; find the processed comment in `chat.messages`. |
+
+After Show, poll `chat.status.on_screen`. It becomes true only after acknowledged overlay rendering, frame transfer and Studio composition. During Private break it is false while `hidden_by_private_break` is true. `remaining_ms` pauses during Private break. A scene change/Take preserves Comments. Opening a show clears its on-air comment while loading its style/position.
+
+While practice is enabled, automation `record.start` and `output.start` require `acknowledgePractice:true`. Rejection is deliberate: pretend comments really reach these outputs. Production commands remain read-only with respect to the platform chats; no reply/input automation exists.
+
+Run the packaged workflow from the repository root with Node 22+:
+
+```powershell
+$env:npm_config_cache = "$PWD/native-qt/build-chat/npm-cache"
+./native-qt/build-mixer.ps1 -BuildDirectory build-chat -Package
+./native-qt/tools/run-chat-gates.ps1
+node ./native-qt/tools/chat-packaged-workflow.mjs
+```
+
+The workflow creates a new `native-qt/build-chat/workflows/<timestamp>/` folder, saves results and Program screenshots, and closes only the instance it launched. Browser startup failure is a failure, not a skipped/passed workflow. For interactive review, launch a fresh isolated instance:
+
+```powershell
+$run = "$PWD/native-qt/build-chat/manual-" + (Get-Date -Format yyyyMMdd-HHmmss)
+New-Item -ItemType Directory -Path $run | Out-Null
+$env:VIDEO_MIXER_DATA_DIR = $run
+& ./native-qt/dist/desktop-studio-portable/desktop-studio.exe "--studio-show=$run/show.mixer.json" --local-control-port=0 "--local-control-discovery=$run/control.json"
+```
+
+In another terminal, use `node native-qt/tools/mcp/studio-cli.mjs --discovery <run>/control.json command --stdin` and pipe a JSON object to it. For example:
+
+```powershell
+'{"command":"chat.practice.set","enabled":true}' | node native-qt/tools/mcp/studio-cli.mjs --discovery "$run/control.json" command --stdin
+'{"command":"chat.status"}' | node native-qt/tools/mcp/studio-cli.mjs --discovery "$run/control.json" command --stdin
+```
+
+`chat.status.resources` reports the whole chat job’s private commit, CPU usage/limit, process counts and recovery flag. `chat.status.timing` separates startup, worker render/snapshot/decode/frame transfer, Studio frame receipt and composition. CPU percent uses the whole-machine convention; compare `measured_processes` with `processes` when interpreting memory. See mixer-technical.md for fields and budgets.

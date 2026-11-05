@@ -9,6 +9,8 @@
 #include "versus/mixer/guest_return.h"
 #include "versus/mixer/global_hotkeys.h"
 #include "versus/mixer/show_files.h"
+#include "chat_panel.h"
+#include <QDockWidget>
 #include <QDateTime>
 #include <QKeySequenceEdit>
 #include <QProcess>
@@ -292,7 +294,7 @@ struct MixerWidget::Impl {
     QTimer videoTimer, saveTimer;
     QElapsedTimer transition;
     bool fading = false, rebuilding = false, loading = false;
-    bool studioMode = QSettings("VDO.Ninja", "Video Mixer").value("mixer/studioMode", false).toBool();
+    bool studioMode = QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").value("mixer/studioMode", false).toBool();
     std::mutex sourcesMutex;
     std::vector<std::shared_ptr<Source>> sources;
     std::vector<Scene> scenes;
@@ -328,6 +330,9 @@ struct MixerWidget::Impl {
     QLabel *brand = nullptr;
     QPushButton *takeButton = nullptr, *fadeButton = nullptr;
     QPointer<BrowserSource> chatDock;
+    ChatPanel *chatPanel = nullptr;
+    QDockWidget *nativeChatDock = nullptr;
+    QVBoxLayout *studioLayout = nullptr;
     QPointer<BrowserSource> talkback;
     QString room = "mix"+newId().remove('-').left(24), roomPassword = newId().remove('-');
     QLabel *sourceHealth = nullptr, *outputStatus = nullptr;
@@ -520,6 +525,7 @@ struct MixerWidget::Impl {
     void record() {
         if (recordingActive()) { stopRecording(); return; }
         if (recordingBusy()) return;
+        if (!chatPanel->confirmPracticeOutput()) return;
         const auto path = QFileDialog::getSaveFileName(q, "Record Program", QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)+"/Desktop Studio recording.mkv", "Matroska video (*.mkv)");
         if (path.isEmpty()) return;
         const auto error = startRecording(path.endsWith(".mkv", Qt::CaseInsensitive) ? path : path+".mkv",recordAudioSources,recordIsoSources);
@@ -584,7 +590,7 @@ struct MixerWidget::Impl {
             hotkeyKeys = {"Ctrl+Alt+B", "Ctrl+Alt+M", "Ctrl+Alt+Return", "Ctrl+Alt+T"};
             for (int n=1; n<=9; ++n) hotkeyKeys << QString("Ctrl+Alt+%1").arg(n);
             if (qApp->property("studioShow").toString().isEmpty()) {
-                QSettings settings("VDO.Ninja", "Video Mixer");
+                QSettings settings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer");
                 hotkeysEnabled = settings.value("mixer/globalHotkeys", false).toBool();
                 const auto saved = settings.value("mixer/globalHotkeyKeys").toStringList();
                 if (saved.size() == hotkeyKeys.size()) hotkeyKeys = saved;
@@ -625,7 +631,7 @@ struct MixerWidget::Impl {
             for (int n=0; n<int(editors.size()); ++n) hotkeyKeys[n] = editors[n]->keySequence().toString();
             const auto error = apply();
             if (qApp->property("studioShow").toString().isEmpty()) {
-                QSettings settings("VDO.Ninja", "Video Mixer"); settings.setValue("mixer/globalHotkeys", hotkeysEnabled); settings.setValue("mixer/globalHotkeyKeys", hotkeyKeys);
+                QSettings settings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer"); settings.setValue("mixer/globalHotkeys", hotkeysEnabled); settings.setValue("mixer/globalHotkeyKeys", hotkeyKeys);
             }
             if (!error.isEmpty()) { feedback.setText("Global hotkeys disabled. "+error); enabled.setChecked(false); return; }
             window.accept();
@@ -642,19 +648,35 @@ struct MixerWidget::Impl {
             "QPushButton:hover, QToolButton#exportShow:hover { background:#253c52; } QPushButton#takeScene, QPushButton#mixerOutput { background:#00c2ff; color:#06131a; font-weight:700; }"
             "QListWidget::indicator { width:14px; height:14px; border:1px solid #647b91; border-radius:3px; }"
             "QListWidget::indicator:checked { background:#00c2ff; } QListWidget::indicator:unchecked { background:#101b27; }");
-        auto *root = new QVBoxLayout(q); root->setContentsMargins(18, 14, 18, 14); root->setSpacing(12);
+        auto *workspace = new QHBoxLayout(q); workspace->setContentsMargins(0,0,0,0);
+        auto *split = new QSplitter(Qt::Horizontal,q); workspace->addWidget(split);
+        auto *studio = new QWidget(split);
+        auto *root = new QVBoxLayout(studio); root->setContentsMargins(18, 14, 18, 14); root->setSpacing(12);
+        studioLayout = root;
+        nativeChatDock = new QDockWidget(studioText("Chat"),split);
+        nativeChatDock->setFeatures(QDockWidget::DockWidgetClosable);
+        nativeChatDock->setFixedWidth(372);
+        chatPanel = new ChatPanel(nativeChatDock);nativeChatDock->setWidget(chatPanel);
+        split->setStretchFactor(0,1);split->setStretchFactor(1,0);
+        chatPanel->advanced = [this]{addChat();};
+        chatPanel->changed = [this]{changed();};
+        chatPanel->outputActive = [this]{return core->isLive()||recordingBusy()||(spoutOutput&&spoutOutput->isChecked())||(virtualCamera&&virtualCamera->isChecked());};
         auto *toolbar = new QHBoxLayout;
         brand = new QLabel(q);
-        toolbar->addWidget(brand); toolbar->addStretch();
+        brand->setMinimumWidth(0);brand->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
+        toolbar->addWidget(brand,1);
         auto *invite = button("Invite guest", "inviteGuest", toolbar, q);
         auto *wireless = button("Wireless camera", "inviteCamera", toolbar, q);
-        auto *chat = button("Social chat", "socialChat", toolbar, q);
+        auto *chat = button("Chat", "socialChat", toolbar, q);chat->setCheckable(true);chat->setChecked(true);
         auto *talk = button("Guest talkback", "guestTalkback", toolbar, q);
         talkbackButton = talk;
         auto *output = button("Output settings", "mixerOutput", toolbar, q);
         QObject::connect(invite, &QPushButton::clicked, q, [this] { addInvite(false); });
         QObject::connect(wireless, &QPushButton::clicked, q, [this] { addInvite(true); });
-        QObject::connect(chat, &QPushButton::clicked, q, [this] { addChat(); });
+        QObject::connect(chat, &QPushButton::toggled, nativeChatDock, &QDockWidget::setVisible);
+        QObject::connect(nativeChatDock, &QDockWidget::visibilityChanged,chat,&QPushButton::setChecked);
+        chat->setStyleSheet("QPushButton:checked { background:palette(highlight); color:palette(highlighted-text); border:2px solid palette(highlight); }");
+        QObject::connect(&chatPanel->engine,&ChatEngine::updated,chat,[this,chat]{const int count=chatPanel->engine.model.rowCount()+chatPanel->engine.model.pendingCount();chat->setText(nativeChatDock->isVisible()||!count?studioText("Chat"):studioText("Chat")+" ("+QString::number(count)+")");});
         talk->setText(studioText("Private talkback")); talk->setCheckable(true);
         talk->setToolTip(studioText("While enabled, microphone inputs go only to guests and are removed from Program. Add your microphone as a source first."));
         QObject::connect(talk, &QPushButton::toggled, q, [this](bool enabled) {
@@ -793,7 +815,7 @@ struct MixerWidget::Impl {
         QObject::connect(mode, &QCheckBox::toggled, q, [this](bool enabled) {
             studioMode = enabled; draggingLayer = false;
             if (qApp->property("studioShow").toString().isEmpty())
-                QSettings("VDO.Ninja", "Video Mixer").setValue("mixer/studioMode", enabled);
+                QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").setValue("mixer/studioMode", enabled);
             changed(); updateModeUi(); rebuildSources();
             message(enabled ? "Studio mode: layout edits stay in Preview until you Take." : "Single canvas: the selected scene is on output. Edits apply immediately.");
         });
@@ -867,8 +889,10 @@ struct MixerWidget::Impl {
         auto *sceneButtons = new QHBoxLayout;
         auto *newScene = button("+", "addScene", sceneButtons, q);
         auto *duplicate = button("Duplicate", "duplicateScene", sceneButtons, q);
-        auto *rename = button("Rename", "renameScene", sceneButtons, q);
+        auto *sceneButtons2 = new QHBoxLayout;
+        auto *rename = button("Rename", "renameScene", sceneButtons2, q);
         auto *removeScene = button("-", "removeScene", sceneButtons, q); sceneLayout->addLayout(sceneButtons);
+        sceneLayout->addLayout(sceneButtons2);
         auto *background = new QPushButton(studioText("Background color"), q); sceneLayout->addWidget(background);
         QObject::connect(sceneList, &QListWidget::itemSelectionChanged, q, [this] {
             const int row = sceneList->selectedItems().isEmpty() ? -1 : sceneList->row(sceneList->selectedItems().front());
@@ -984,7 +1008,7 @@ struct MixerWidget::Impl {
                 QUrl dock("https://socialstream.ninja/dock.html");
                 QUrlQuery query;
                 const QUrlQuery overlayQuery(QUrl(item->locator));
-                for (const auto &key : {"session", "password", "server", "localserver"})
+                for (const auto &key : {"session", "password", "server", "server2", "server3", "localserver"})
                     if (overlayQuery.hasQueryItem(key)) query.addQueryItem(key, overlayQuery.queryItemValue(key, QUrl::FullyDecoded));
                 dock.setQuery(query);
                 delete chatDock.data();
@@ -1004,6 +1028,7 @@ struct MixerWidget::Impl {
         QObject::connect(sourceList, &QListWidget::itemChanged, q, [this](QListWidgetItem *item) {
             if (rebuilding) return;
             const auto id = item->data(Qt::UserRole).toString();
+            if (id == "comments") { chatPanel->layer.enabled=item->checkState()==Qt::Checked;chatPanel->refresh();changed();return; }
             auto &layers = preview().layers;
             auto found = std::find_if(layers.begin(), layers.end(), [&](const auto &l) { return l.source == id; });
             if (found != layers.end()) found->visible = item->checkState() == Qt::Checked;
@@ -1145,7 +1170,7 @@ struct MixerWidget::Impl {
         QObject::connect(monitorDevice, &QComboBox::currentIndexChanged, q, [this] {
             monitorDeviceKey.store(std::make_shared<const QString>(monitorDevice->currentData(Qt::UserRole+1).toString()));
             if (qApp->property("studioShow").toString().isEmpty()) {
-                QSettings settings("VDO.Ninja", "Video Mixer");
+                QSettings settings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer");
                 settings.setValue("mixer/monitorDevice", monitorDevice->currentData(Qt::UserRole+1));
                 settings.setValue("mixer/monitorDeviceName", monitorDevice->currentData(Qt::UserRole+2));
             }
@@ -1181,6 +1206,10 @@ struct MixerWidget::Impl {
             row->setToolTip(item->error.isEmpty() ? (studioMode ? "Toggle to include in Preview. Take to update Program." : "Toggle to show or hide this source in output immediately.") : item->error);
             if (item->id == selectedSource) sourceList->setCurrentItem(row);
         }
+        auto *comments = new QListWidgetItem(studioText("Comments — stays on top in every scene"),sourceList);
+        comments->setData(Qt::UserRole,"comments");comments->setFlags(comments->flags()|Qt::ItemIsUserCheckable);
+        comments->setCheckState(chatPanel->layer.enabled?Qt::Checked:Qt::Unchecked);
+        comments->setToolTip(studioText("Choose a comment in Chat. Change its position in Advanced."));
         rebuilding = false;
     }
     void rebuild() {
@@ -1756,7 +1785,7 @@ struct MixerWidget::Impl {
     }
 
     void populateMonitorDevices(const std::vector<MonitorDevice> &devices) {
-        const QSettings settings("VDO.Ninja", "Video Mixer");
+        const QSettings settings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer");
         const auto key = monitorDevice->count() ? monitorDevice->currentData(Qt::UserRole+1).toString() : settings.value("mixer/monitorDevice", "default").toString();
         const auto name = monitorDevice->count() ? monitorDevice->currentData(Qt::UserRole+2).toString() : settings.value("mixer/monitorDeviceName", key).toString();
         const QSignalBlocker block(monitorDevice);
@@ -1878,7 +1907,7 @@ struct MixerWidget::Impl {
     void addChat() {
         bool ok; const auto value = QInputDialog::getText(q, "Social Stream Ninja", "Paste your overlay URL, or enter your Social Stream session ID.\nConnect your social platforms in Social Stream Ninja first.", QLineEdit::Normal, {}, &ok).trimmed();
         if (!ok || value.isEmpty()) return;
-        auto item = std::make_shared<Source>(); item->name = "Social chat"; item->kind = "chat";
+        auto item = std::make_shared<Source>(); item->name = studioText("Chat overlay"); item->kind = "chat";
         item->transparent = true;
         if (webUrl(value)) item->locator = value;
         else {
@@ -2014,6 +2043,7 @@ struct MixerWidget::Impl {
         return cached.image;
     }
     QImage composeProgram() {
+        chatPanel->setPrivateBreak(privateBreak);
         if (privateBreak) {
             if (breakSlate.size() != QSize(Width, Height)) {
                 breakSlate = QImage(Width, Height, QImage::Format_RGB32); breakSlate.fill(QColor("#101722"));
@@ -2028,6 +2058,7 @@ struct MixerWidget::Impl {
             QImage old = compose(previous, 2); QPainter painter(&old); painter.setOpacity(fraction); painter.drawImage(0, 0, frame); painter.end(); frame = old;
             if (fraction >= 1) fading = false;
         }
+        chatPanel->compose(frame, false);
         return frame;
     }
     void render() {
@@ -2271,7 +2302,7 @@ struct MixerWidget::Impl {
                 {"cropX", layer.crop.x()}, {"cropY", layer.crop.y()}, {"cropW", layer.crop.width()}, {"cropH", layer.crop.height()}});
             jsonScenes.append(QJsonObject{{"id", scene.id}, {"name", scene.name}, {"background", scene.background.name(QColor::HexArgb)}, {"layers", layers}});
         }
-        return {{"version", 1}, {"sources", jsonSources}, {"scenes", jsonScenes},
+        return {{"version", 1}, {"sources", jsonSources}, {"scenes", jsonScenes}, {"comments",chatPanel->layer.json()},
             {"recordAudioSources",QJsonArray::fromStringList(recordAudioSources)}, {"recordIsoSources",QJsonArray::fromStringList(recordIsoSources)},
             {"room", room}, {"roomPassword", roomPassword}, {"guestReturns", guestReturnEnabled->isChecked()}, {"masterGain", masterGain.load()}, {"canvasFormat", canvasFormat->currentIndex()}, {"renderer", renderer->currentIndex()}};
     }
@@ -2309,7 +2340,7 @@ struct MixerWidget::Impl {
     void activateProject(ShowFileAccess::Lease lease) {
         showFileAccess().activate(std::move(lease));
         projectPath = showFileAccess().path();
-        if (qApp->property("studioShow").toString().isEmpty()) QSettings("VDO.Ninja","Video Mixer").setValue("mixer/activeProject",projectPath);
+        if (qApp->property("studioShow").toString().isEmpty()) QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").setValue("mixer/activeProject",projectPath);
     }
     QString collect(const QString &path) {
         if (collectionBusy) return "A show collection is already running.";
@@ -2405,6 +2436,9 @@ struct MixerWidget::Impl {
             }
             incomingScenes.push_back(scene);
         }
+        CommentsLayer comments;
+        if (!CommentsLayer::read(data["comments"],comments)) { message("Invalid Comments layer in show."); return false; }
+        chatPanel->hideComment();chatPanel->layer=comments;chatPanel->refresh();
         loading = true;
         recordAudioSources.clear(); recordIsoSources.clear();
         for (const auto &id : data["recordAudioSources"].toArray()) if (sourceIds.contains(id.toString()) && !recordAudioSources.contains(id.toString()) && recordAudioSources.size()<16) recordAudioSources.append(id.toString());
@@ -2443,9 +2477,15 @@ struct MixerWidget::Impl {
 };
 
 MixerWidget::MixerWidget(app::VersusApp *core, QWidget *parent) : QWidget(parent), impl_(std::make_unique<Impl>(this, core)) {
-    setWorkspaceLayout(QSettings("VDO.Ninja", "Video Mixer").value("ui/workspaceLayout", "balanced").toString());
+    setWorkspaceLayout(QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").value("ui/workspaceLayout", "balanced").toString());
 }
 MixerWidget::~MixerWidget() = default;
+void MixerWidget::resizeEvent(QResizeEvent *event) {
+    QWidget::resizeEvent(event);
+    if(impl_&&impl_->nativeChatDock&&window()->width()<1240)impl_->nativeChatDock->hide();
+}
+bool MixerWidget::confirmPracticeOutput() { return impl_->chatPanel->confirmPracticeOutput(); }
+bool MixerWidget::practiceMode() const { return impl_->chatPanel->engine.settings.practice; }
 void MixerWidget::shutdown() { impl_->shutdown(); }
 QSize MixerWidget::canvasSize() const { return {impl_->Width, impl_->Height}; }
 int MixerWidget::canvasFrameRate() const { return impl_->canvasFps; }
@@ -2470,11 +2510,11 @@ void MixerWidget::setWorkspaceLayout(const QString &layout) {
     else if (layout == "production") i.panels->setSizes({240, 740, 360});
     else if (layout == "simple") i.panels->setSizes({180, 580, 340});
     else i.panels->setSizes({220, 680, 380});
-    auto *root = qobject_cast<QVBoxLayout*>(this->layout());
+    auto *root = i.studioLayout;
     root->setStretch(root->indexOf(i.panels), layout == "simple" ? 2 : 4);
     setProperty("workspaceLayout", layout);
     if (qApp->property("studioShow").toString().isEmpty())
-        QSettings("VDO.Ninja", "Video Mixer").setValue("ui/workspaceLayout", layout);
+        QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").setValue("ui/workspaceLayout", layout);
 }
 QJsonObject MixerWidget::controlState() const {
     auto &i = *impl_; QJsonArray scenes, sources;
@@ -2507,7 +2547,7 @@ QJsonObject MixerWidget::controlState() const {
     for (const auto &iso : i.recordingPlan.load()->isos) isoRecordings.append(QJsonObject{{"source",iso.id},{"active",iso.recorder->active()},{"busy",iso.recorder->busy()},{"status",iso.recorder->status()},{"path",iso.recorder->path()}});
     for (int n = 0; n < i.monitorDevice->count(); ++n) monitorDevices.append(QJsonObject{
         {"id", i.monitorDevice->itemData(n, Qt::UserRole+1).toString()}, {"name", i.monitorDevice->itemText(n)}, {"available", i.monitorDevice->itemData(n).toInt() >= -1}});
-    return {{"scenes", scenes}, {"sources", sources}, {"preview", i.preview().id}, {"program", i.program.id},
+    return {{"scenes", scenes}, {"sources", sources}, {"preview", i.preview().id}, {"program", i.program.id}, {"chat",i.chatPanel->state()},
         {"program_layers", layers(i.program)}, {"transitioning", i.fading},
         {"mode", i.studioMode ? "studio" : "single"}, {"layout", property("workspaceLayout").toString()},
         {"canvas", QJsonObject{{"width", i.Width}, {"height", i.Height}, {"fps", i.canvasFps},
@@ -2529,6 +2569,7 @@ QJsonObject MixerWidget::controlCommand(const QJsonObject &c) {
     const auto command = c["command"].toString();
     const auto fail = [](const QString &why) { return QJsonObject{{"error", why}}; };
     if (!i.running) return fail("Mixer is shutting down");
+    if (command.startsWith("chat.")) return i.chatPanel->command(c);
     const auto sceneIndex = [&](const QString &id) {
         for (int n = 0; n < int(i.scenes.size()); ++n) if (i.scenes[n].id == id) return n;
         return -1;
@@ -2688,6 +2729,7 @@ QJsonObject MixerWidget::controlCommand(const QJsonObject &c) {
     } else if (command == "record.export") {
         const auto error = i.exportRecording(c["input"].toString(),c["path"].toString()); if (!error.isEmpty()) return fail(error);
     } else if (command == "record.start") {
+        if (i.chatPanel->engine.settings.practice && !c["acknowledgePractice"].toBool()) return fail("Pretend comments will be recorded. Set acknowledgePractice to true to continue.");
         const QString path = c["path"].toString();
         if (i.recordingBusy()) return fail("Recording is already active or finalizing");
         if (!QFileInfo(path).isAbsolute() || !path.endsWith(".mkv", Qt::CaseInsensitive) || QFileInfo::exists(path)) return fail("Use a new absolute .mkv path");

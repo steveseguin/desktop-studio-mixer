@@ -68,7 +68,7 @@ export async function executablePath(explicit) {
 export async function launch({executable, headless = true, show, discoveryPath} = {}) {
   const exe = await executablePath(executable);
   await access(exe);
-  const root = path.join(process.env.LOCALAPPDATA || process.cwd(),'VideoMixer','automation');
+  const root = process.env.VIDEO_MIXER_DATA_DIR ? path.join(process.env.VIDEO_MIXER_DATA_DIR,'automation') : path.join(process.env.LOCALAPPDATA || process.cwd(),'VideoMixer','automation');
   await mkdir(root,{recursive:true});
   const run = await mkdtemp(path.join(root,'session-'));
   const filename = path.resolve(discoveryPath || path.join(run,'control.json'));

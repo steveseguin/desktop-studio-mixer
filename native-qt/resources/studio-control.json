@@ -508,6 +508,9 @@
             "minLength": 1,
             "maxLength": 64
           }
+        },
+        "acknowledgePractice": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -715,6 +718,9 @@
       "properties": {
         "command": {
           "const": "output.start"
+        },
+        "acknowledgePractice": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -917,12 +923,22 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "command": { "const": "local.set" },
-        "spout": { "type": "boolean" },
-        "virtualCamera": { "type": "boolean" },
-        "unregisterCamera": { "type": "boolean" }
+        "command": {
+          "const": "local.set"
+        },
+        "spout": {
+          "type": "boolean"
+        },
+        "virtualCamera": {
+          "type": "boolean"
+        },
+        "unregisterCamera": {
+          "type": "boolean"
+        }
       },
-      "required": ["command"]
+      "required": [
+        "command"
+      ]
     },
     "show.saveAs": {
       "description": "Save a show and make it the active autosave project.",
@@ -979,6 +995,204 @@
       "required": [
         "command",
         "path"
+      ]
+    },
+    "chat.status": {
+      "description": "Read chat engine, channel, composition and timer state.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "chat.status"
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "chat.channel.add": {
+      "description": "Add a public channel link or name to app settings.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "chat.channel.add"
+        },
+        "input": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "command",
+        "input"
+      ]
+    },
+    "chat.channel.remove": {
+      "description": "Remove a saved channel and stop its capture.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "chat.channel.remove"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "command",
+        "id"
+      ]
+    },
+    "chat.practice.set": {
+      "description": "Enable pretend chat. Explicit acknowledgement is required if output is running.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "chat.practice.set"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "acknowledgeOutput": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "command",
+        "enabled"
+      ]
+    },
+    "chat.messages": {
+      "description": "Read the bounded displayed comment list. Pending comments are reported separately.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "chat.messages"
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "chat.select": {
+      "description": "Select a comment for private preview. Missing or empty id clears selection and releases buffered rows.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "chat.select"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "chat.show": {
+      "description": "Show a comment. Poll chat.status: success is pending until overlay rendering and Program composition.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "chat.show"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "style": {
+          "enum": [
+            "bar",
+            "bubble",
+            "big"
+          ]
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "chat.hide": {
+      "description": "Immediately remove the comment from composition.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "chat.hide"
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "chat.keep": {
+      "description": "Keep a comment up; false restarts its ten second timer.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "chat.keep"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "command"
+      ]
+    },
+    "chat.inject": {
+      "description": "Submit pretend capture through the real engine. Practice mode only.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "chat.inject"
+        },
+        "message": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "chatname": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "chatmessage": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8000
+            },
+            "hasDonation": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "membership": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "chatname",
+            "chatmessage"
+          ]
+        }
+      },
+      "required": [
+        "command",
+        "message"
       ]
     }
   },

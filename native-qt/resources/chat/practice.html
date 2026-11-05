@@ -1,0 +1,4 @@
+<!doctype html><meta charset="utf-8"><title>Practice chat</title><script>
+window.capture = message => chrome.runtime.sendMessage({message});
+window.__engineSpike.rpc('practice.ready',[]).catch(()=>{});
+</script>
