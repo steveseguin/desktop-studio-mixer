@@ -35,6 +35,13 @@ Browser sources require [Microsoft WebView2 Evergreen](https://developer.microso
 | Browser isolation, requirements, building and test results | [Technical details](docs/mixer-technical.md) |
 | Screenshots, video and machine-readable asset descriptions | [Media library](media-assets/README.md) |
 
-Based on [Game Capture](https://github.com/steveseguin/game-capture). [GPL license and attribution](LICENSE).
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Contributions require the signed
+[Contributor License Agreement](CLA.md), which gives
+Steve Seguin rights to relicense contributions, including under MIT or
+proprietary terms.
+
+Based on [Game Capture](https://github.com/steveseguin/game-capture). [AGPL license and attribution](LICENSE).
 
 Encoding: [streaming defaults and advanced policy](docs/streaming-defaults.md).
