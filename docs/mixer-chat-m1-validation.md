@@ -10,7 +10,7 @@ The new integration checkout is `C:\Users\Steve\code\video-mixer-chat-integratio
 
 - Integration executable SHA-256: `2b0bca270ef351e8268897b0f791ae72651e77f3d74763d42df7fe87e4f9ce9c`.
 - Integration installer `native-qt/dist/desktop-studio-0.9.4-setup.exe` SHA-256: `b3e6ac16bb041607c38264b18127afccfebc3bacffe4b297bf41d8b506676bba`.
-- Complete integration ZIP: `native-qt/dist/desktop-studio-0.9.4-integration-windows-x64.zip`. The earlier ZIP without `integration` in its filename was created before FFmpeg was staged and is not a qualified artifact.
+- Complete integration ZIP: `native-qt/dist/desktop-studio-0.9.4-integration-windows-x64.zip`. The standard `desktop-studio-0.9.4-windows-x64.zip` in the integration checkout was replaced with an identical copy of this qualified archive; the incomplete pre-FFmpeg archive is no longer offered there.
 - The existing qualified SSN pack and FFmpeg bundle were reused. No upstream capture script was changed. Signing uses the same local certificate, with trust status `UnknownError`.
 
 ### Findings that remain open
