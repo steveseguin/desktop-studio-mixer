@@ -94,7 +94,9 @@ try {
   await c('production.set',{privateBreak:false});await delay(2000);await c('record.stop');
   await until(async()=>!(await request(app.target,'/studio/state')).recording.busy,'recording finalized');
   const ff=path.join(path.dirname(exe),'ffmpeg/bin/ffmpeg.exe');
-  const decoded=await exec(ff,['-v','error','-i',clip,'-f','null','-'],{windowsHide:true,timeout:60000,maxBuffer:1<<23});
+  // Preserve recorded timestamps. The null encoder's default coarse time base
+  // can round distinct 33/34 ms frame times to duplicate DTS values.
+  const decoded=await exec(ff,['-v','error','-i',clip,'-fps_mode','passthrough','-enc_time_base','1:1000000','-f','null','-'],{windowsHide:true,timeout:60000,maxBuffer:1<<23});
   check(!decoded.stderr.trim(),'Recorded output fully decodes without errors',decoded.stderr);
   await exec(ff,['-v','error','-y','-ss','1','-i',clip,'-frames:v','1',path.join(out,'06-recorded-comment.png')],{windowsHide:true});
   await c('chat.hide');await c('chat.practice.set',{enabled:false});

@@ -5,8 +5,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
-import {discovery,request} from './mcp/studio-client.mjs';
+import {discovery,health,request} from './mcp/studio-client.mjs';
 
 const flag=(name,fallback)=>{const i=process.argv.indexOf('--'+name);return i<0?fallback:process.argv[i+1];};
 const video=flag('video'),seconds=Number(flag('seconds',600)),port=Number(flag('port',9397));
@@ -15,6 +16,7 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const exe=process.env.VIDEO_MIXER_CHAT_EXE||path.join(root,'native-qt/dist/desktop-studio-portable/desktop-studio.exe');
 const out=path.join(root,'native-qt/build-chat/youtube',new Date().toISOString().replaceAll(/[:.]/g,'-'));
 await fs.mkdir(out,{recursive:true});
+await fs.writeFile(path.join(out,'artifact.json'),JSON.stringify({exe,sha256:createHash('sha256').update(await fs.readFile(exe)).digest('hex'),video,seconds,startedUtc:new Date().toISOString()},null,2));
 const entities={'&amp;':'&','&lt;':'<','&gt;':'>','&quot;':'"','&#39;':"'",'&#x27;':"'"};
 const normal=t=>String(t??'').replace(/&(?:amp|lt|gt|quot|#39|#x27);/g,e=>entities[e]).normalize('NFC').replace(/[​﻿]/g,'').replace(/\s+/gu,' ').trim();
 
@@ -46,7 +48,10 @@ async function readFeed(feed){
         const row=action.addChatItemAction?.item?.liveChatTextMessageRenderer;
         if(!row||truth.has(row.id))continue;
         const runs=row.message?.runs||[];
-        truth.set(row.id,{at:Number(row.timestampUsec)/1000,received:Date.now(),user:row.authorName?.simpleText,text:runs.map(r=>r.text??'').join(''),plain:runs.every(r=>r.text!==undefined)});
+        // YouTube renders emoji accessibility labels as image alt text. Retain
+        // them so emoji-only and mixed comments receive content scoring too.
+        const parts=runs.map(r=>r.text??r.emoji?.image?.accessibility?.accessibilityData?.label??null);
+        truth.set(row.id,{id:row.id,at:Number(row.timestampUsec)/1000,received:Date.now(),user:row.authorName?.simpleText,text:parts.map(p=>p??'').join(''),plain:runs.every(r=>r.text!==undefined),comparable:parts.every(p=>typeof p==='string'),runs});
       }
       const next=chat.continuations?.[0];const timed=next?.timedContinuationData||next?.invalidationContinuationData||next?.reloadContinuationData;
       if(timed?.continuation)continuation=timed.continuation;
@@ -59,7 +64,8 @@ async function readFeed(feed){
 const control=path.join(out,'control.json');
 const flags=`--remote-debugging-port=${port} --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding`;
 const child=spawn(exe,['--studio-headless',`--studio-show=${path.join(out,'show.mixer.json')}`,'--local-control-port=0',`--local-control-discovery=${control}`],{env:{...process.env,VIDEO_MIXER_DATA_DIR:out,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:flags},windowsHide:true,stdio:'ignore'});
-let target;for(let i=0;i<120&&!target;i++){try{target=await discovery(control);}catch{await delay(250);}}
+let target;const startupDeadline=Date.now()+60000;
+while(!target&&Date.now()<startupDeadline){try{const candidate=await discovery(control);await health(candidate);target=candidate;}catch{await delay(250);}}
 const raw=c=>request(target,'/studio/command',c);
 async function inPage(page,expression){
   const ws=new WebSocket(page.webSocketDebuggerUrl);await new Promise((r,x)=>{ws.onopen=r;ws.onerror=x;});
@@ -100,22 +106,24 @@ try{
   await fs.writeFile(path.join(out,'samples.json'),JSON.stringify(samples,null,1));
   // Allow time to attach at the start, and to be delivered at the end.
   const inWindow=[...truth.values()].filter(t=>t.at>=started+45000&&t.at<=stopped-15000).sort((a,b)=>a.at-b.at);
-  const plain=inWindow.filter(t=>t.plain&&normal(t.text));
+  const eligible=inWindow.filter(t=>t.comparable&&normal(t.text));
+  const unscorable=inWindow.filter(t=>!t.comparable);
+  const emptyReference=inWindow.filter(t=>t.comparable&&!normal(t.text)).length;
   // Only comments that arrived during the scored time can satisfy it.
   const key=(user,text)=>normal(user).toLowerCase()+'|'+normal(text);
   const texts=new Map();for(const r of rows.filter(r=>r.seenMs>=started+40000)){const k=key(r.chatname,r.chatmessage);texts.set(k,(texts.get(k)||0)+1);}
-  let matched=0;const missed=[],buckets={};
-  for(const t of plain){
+  let matched=0,emoteMatched=0;const missed=[],buckets={};
+  for(const t of eligible){
     const k=key(t.user,t.text),hit=texts.get(k)>0,b=Math.floor((t.at-started)/60000);
     (buckets[b]??=[0,0])[hit?0:1]++;
-    if(hit){matched++;texts.set(k,texts.get(k)-1);}else if(missed.length<8)missed.push(t.user+': '+t.text.slice(0,120));
+    if(hit){matched++;if(!t.plain)emoteMatched++;texts.set(k,texts.get(k)-1);}else if(missed.length<8)missed.push(t.user+': '+t.text.slice(0,120));
   }
   console.log('60s buckets hit/miss',Object.values(buckets).map(b=>b.join('/')).join(' '));
   const stalled=Object.values(buckets).filter(([hit,miss])=>miss>=5&&hit===0).length;
   // A reference that stopped proves nothing about the time it was away.
   const referenceHeld=!feedError&&longestFeedGap<=30000&&stopped-lastFeedAt<=30000;
-  if(!referenceHeld||!plain.length||matched!==plain.length||stalled)process.exitCode=1;
-  summary={video,seconds,referenceHeld,longestFeedGap,feedError,referenceTotal:inWindow.length,referencePlainText:plain.length,matched,rate:plain.length?matched/plain.length:null,stalled,panelYouTube:rows.length,pageLoads:loads.size,view:samples.at(-1)?.view??null,states,missed};
+  if(!referenceHeld||!eligible.length||matched!==eligible.length||unscorable.length||stalled)process.exitCode=1;
+  summary={video,seconds,comparison:'author-text-and-emoji-alt',referenceHeld,longestFeedGap,feedError,referenceTotal:inWindow.length,referencePlainText:eligible.filter(t=>t.plain).length,referenceEmoteMessages:eligible.filter(t=>!t.plain).length,unscorable:unscorable.length,emptyReference,emoteMatched,matched,rate:eligible.length?matched/eligible.length:null,stalled,panelYouTube:rows.length,pageLoads:loads.size,view:samples.at(-1)?.view??null,states,missed};
 }catch(e){summary.error=e.message;process.exitCode=1;}
 finally{
   feedStopped=true;

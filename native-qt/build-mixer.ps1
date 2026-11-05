@@ -35,6 +35,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Configure failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 & (Join-Path $PSScriptRoot 'tools/sync-ssn-pack.ps1') -Destination (Join-Path $buildRoot 'bin/ssn')
 if ($Package -or $Installer) {
+    # A fresh worktree may compile without the optional FFmpeg bundle, but a
+    # release needs it for recording/playback. Fail before signing or archiving.
+    if (!(Test-Path -LiteralPath (Join-Path $buildRoot 'bin/ffmpeg/bin/ffmpeg.exe'))) {
+        throw 'Release packaging requires FFmpeg. Run native-qt/tools/fetch-ffmpeg-lgpl.ps1 and rebuild.'
+    }
     # Stage new releases separately so previous qualified packages stay intact.
     $packageRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot $PackageDirectory))
     $distRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'dist'))

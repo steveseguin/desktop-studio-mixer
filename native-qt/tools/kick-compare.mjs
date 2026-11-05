@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
-import {discovery,request} from './mcp/studio-client.mjs';
+import {discovery,health,request} from './mcp/studio-client.mjs';
 
 const flag=(name,fallback)=>{const i=process.argv.indexOf('--'+name);return i<0?fallback:process.argv[i+1];};
 const seconds=Number(flag('seconds',300)),port=Number(flag('port',9395));
@@ -17,7 +17,8 @@ await fs.mkdir(out,{recursive:true});
 const control=path.join(out,'control.json');
 const flags=`--remote-debugging-port=${port} --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding`;
 const child=spawn(exe,['--studio-headless',`--studio-show=${path.join(out,'show.mixer.json')}`,'--local-control-port=0',`--local-control-discovery=${control}`],{env:{...process.env,VIDEO_MIXER_DATA_DIR:out,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:flags},windowsHide:true,stdio:'ignore'});
-let target;for(let i=0;i<120&&!target;i++){try{target=await discovery(control);}catch{await delay(250);}}
+let target;const startupDeadline=Date.now()+60000;
+while(!target&&Date.now()<startupDeadline){try{const candidate=await discovery(control);await health(candidate);target=candidate;}catch{await delay(250);}}
 const raw=c=>request(target,'/studio/command',c);
 const normal=t=>String(t??'').normalize('NFC').replace(/[​﻿]/g,'').replace(/\s+/gu,' ').trim();
 const kickPage=async()=>(await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(p=>/kick\.com/.test(p.url)&&p.type==='page');
