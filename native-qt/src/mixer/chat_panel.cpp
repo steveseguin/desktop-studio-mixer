@@ -96,7 +96,7 @@ ChatPanel::ChatPanel(QWidget *parent) : QWidget(parent),engine(this) {
     auto add=new QPushButton(studioText("Add this channel"),this);setup->addWidget(add);
     connect(add,&QPushButton::clicked,this,[this]{if(input_->text().trimmed().isEmpty())return;auto result=engine.addChannel(input_->text());if(result.contains("error"))hint_->setText(studioText(result["error"].toString().toUtf8().constData()));else{setupOpen_=false;input_->clear();hint_->setText(studioText("Comments will appear here as soon as they arrive."));}refresh();});
     connect(input_,&QLineEdit::returnPressed,add,&QPushButton::click);
-    hint_=plainLabel(this);hint_->setText(studioText("Works with YouTube, Twitch, TikTok, Kick, Facebook, Instagram, X, Rumble and many more."));setup->addWidget(hint_);
+    hint_=plainLabel(this);hint_->setText(studioText("Connect Twitch, YouTube or Kick. Other platforms are experimental. Sign-in is not available yet."));setup->addWidget(hint_);
     feedControls_=new QWidget(this);auto feedControls=new QVBoxLayout(feedControls_);feedControls->setContentsMargins(0,0,0,0);feedControls->setSpacing(8);root->addWidget(feedControls_);
     auto chipsScroll=new QScrollArea(this);chipsScroll->setWidgetResizable(true);chipsScroll->setFixedHeight(46);chipsScroll->setFrameShape(QFrame::NoFrame);
     chipsScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);auto chipsWidget=new QWidget(chipsScroll);chips_=new QHBoxLayout(chipsWidget);chipsScroll->setWidget(chipsWidget);feedControls->addWidget(chipsScroll);
@@ -207,7 +207,7 @@ QJsonObject ChatPanel::state() const {
         {"channels",channels},{"practice",engine.settings.practice},{"count",engine.model.rowCount()},{"pending_comments",engine.model.pendingCount()},
         {"selected",selected_},{"pending_show",waitingToken_},{"on_screen",composed_&&!privateBreak_&&layer.enabled&&!onAir_.isEmpty()},
         {"hidden_by_private_break",privateBreak_&&!onAir_.isEmpty()},{"on_air",onAir_},{"remaining_ms",remainingMs_},{"kept",pinned_},{"layer",layer.json()},
-        {"browser_pid",engine.health["browserPid"]},{"page_count",engine.health["pageCount"]},{"diagnostic",engine.health["diagnostic"]},{"resources",engine.health["resources"]},{"timing",QJsonObject{{"startup",engine.health["startup_timing"]},{"worker",engine.health["timing"]},{"frame_received_ms",frameReceivedMs_},{"composed_ms",composedMs_}}}};
+        {"oversized_messages",engine.health["oversizedMessages"].toInteger()},{"browser_pid",engine.health["browserPid"]},{"page_count",engine.health["pageCount"]},{"diagnostic",engine.health["diagnostic"]},{"resources",engine.health["resources"]},{"timing",QJsonObject{{"startup",engine.health["startup_timing"]},{"worker",engine.health["timing"]},{"frame_received_ms",frameReceivedMs_},{"composed_ms",composedMs_}}}};
 }
 QJsonObject ChatPanel::command(const QJsonObject &c) {
     const auto op=c["command"].toString();auto fail=[](QString e){return QJsonObject{{"error",e}};};
@@ -262,6 +262,7 @@ void ChatPanel::refresh() {
     if(!engine.packAvailable)notice=studioText("Chat is unavailable. Reinstall Studio to restore its chat files.");
     else if(!engine.settingsError.isEmpty())notice=studioText(engine.settingsError.toUtf8().constData());
     else if(!engine.health["error"].toString().isEmpty())notice=studioText(engine.health["error"].toString().toUtf8().constData());
+    else if(engine.health["oversizedMessages"].toInteger()>0)notice=studioText("Some chat data was too large to display. Comments may be missing.");
     else if(engine.model.rowCount()==0&&!engine.settings.channels.isEmpty())notice=studioText("Comments will appear here as soon as they arrive.");
     const auto connectionStates=engine.health["channels"].toObject();
     for(auto it=connectionStates.begin();it!=connectionStates.end();++it)if(it.value().toString().contains("sign-in")||it.value().toString().contains("could not")||it.value().toString().contains("unavailable"))notice=studioText(it.value().toString().toUtf8().constData());

@@ -114,7 +114,7 @@ try{
   const stalled=Object.values(buckets).filter(([hit,miss])=>miss>=5&&hit===0).length;
   // A reference that stopped proves nothing about the time it was away.
   const referenceHeld=!feedError&&longestFeedGap<=30000&&stopped-lastFeedAt<=30000;
-  if(!referenceHeld||!plain.length||matched/plain.length<0.9||stalled)process.exitCode=1;
+  if(!referenceHeld||!plain.length||matched!==plain.length||stalled)process.exitCode=1;
   summary={video,seconds,referenceHeld,longestFeedGap,feedError,referenceTotal:inWindow.length,referencePlainText:plain.length,matched,rate:plain.length?matched/plain.length:null,stalled,panelYouTube:rows.length,pageLoads:loads.size,view:samples.at(-1)?.view??null,states,missed};
 }catch(e){summary.error=e.message;process.exitCode=1;}
 finally{

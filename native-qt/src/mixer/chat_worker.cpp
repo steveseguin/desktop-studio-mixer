@@ -57,6 +57,7 @@ struct Host {
     const QString captureEpoch=QUuid::createUuid().toString(QUuid::Id128);
     QString root,profile,session,shim;QJsonObject manifest,storage,diagnostic; qint64 startedAt=0;
     std::map<QString,qint64> lastComment;
+    qint64 oversizedMessages=0;
     QJsonArray feed; QJsonObject states; QJsonArray channels; bool practice=false, ready=false; QString error, renderedToken, pendingToken; QJsonObject pendingCard; qint64 requestedAt=0; std::function<void(QImage,QString)> frame; QTimer timer;ComPtr<ICoreWebView2Environment> environment;
     std::map<int,std::unique_ptr<Page>> pages;std::map<QString,Peer> peers;std::map<QString,Pending> pending;
     int nextTab=1;quint64 sequence=0;UINT32 browserPid=0;
@@ -131,10 +132,12 @@ struct Host {
             if (packet.contains("message")) {
                 if (!ready || (p.role=="practice" && !practice)) { fail("Chat is getting ready"); return; }
                 const auto input=packet["message"].toObject();
-                if (!input["chatmessage"].isString() || input["chatmessage"].toString().size()>8000 || input["chatname"].toString().size()>256) { fail("Invalid comment"); return; }
+                if (!input["chatmessage"].isString()) { fail("Invalid comment"); return; }
+                const auto comment=chatCommentText(input);
+                if(input["chatmessage"].toString().size()>8000||comment.size()>8000||input["chatname"].toString().size()>256){++oversizedMessages;fail("Comment exceeds the size limit");return;}
                 QJsonObject clean;
                 for (const auto &key : {"chatname","hasDonation","membership"}) if(input[key].isString()) clean[key]=input[key].toString().left(256);
-                clean["chatmessage"]=chatCommentText(input).left(8000);
+                clean["chatmessage"]=comment;
                 clean["textonly"]=input["textonly"].toBool();
                 const auto practiceType=input["type"].toString("twitch");
                 clean["type"]=p.role=="practice"?(QStringList{"twitch","youtube"}.contains(practiceType)?practiceType:QString("twitch")):p.property("platform").toString().toLower();
@@ -218,7 +221,7 @@ void Page::receiveNative(ICoreWebView2WebMessageReceivedEventArgs *a,ICoreWebVie
     if(role=="capture") {if(!chatCaptureAllowed(host.manifest,QUrl(url),QUrl(origin),sender!=nullptr))return;}
     else if(origin!=url)return;
     a->get_WebMessageAsJson(&raw);const size_t length=raw?wcsnlen_s(raw,32769):0;
-    if(length>32768){CoTaskMemFree(raw);return;}
+    if(length>32768){if(role=="capture"||role=="practice")++host.oversizedMessages;CoTaskMemFree(raw);return;}
     auto m=QJsonDocument::fromJson(take(raw).toUtf8()).object();
     if(role=="capture") {
         // Source is supplied by WebView2, not by the page's postMessage payload.
@@ -482,7 +485,7 @@ QJsonObject Host::command(const QJsonObject &c) {
         // A channel that has gone quiet, or a capture that has stopped, must not look like it is still reading.
         auto shownStates=states;const auto now=QDateTime::currentMSecsSinceEpoch();
         for(const auto &[channel,at]:lastComment)if(now-at>300000&&shownStates[channel].toString()=="Reading comments")shownStates[channel]="No new comments in 5 minutes";
-        return {{"ok",true},{"ready",ready&&practiceReady&&overlayReady},{"error",error},{"channels",shownStates},{"names",names},{"timing",timing},{"startup_timing",startupTiming},{"messages",batch},{"renderedToken",renderedToken},{"pendingToken",pendingToken},{"browserPid",int(browserPid)},{"diagnostic",diagnostic},{"pageCount",int(pages.size())}};
+        return {{"ok",true},{"ready",ready&&practiceReady&&overlayReady},{"error",error},{"oversizedMessages",oversizedMessages},{"channels",shownStates},{"names",names},{"timing",timing},{"startup_timing",startupTiming},{"messages",batch},{"renderedToken",renderedToken},{"pendingToken",pendingToken},{"browserPid",int(browserPid)},{"diagnostic",diagnostic},{"pageCount",int(pages.size())}};
     }
     if(op=="inject") {
         if(!practice||!ready)return {{"error","Practice chat is not ready."}};

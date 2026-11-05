@@ -1,12 +1,65 @@
 ﻿# Native chat integration: packaged validation
 
-Updated 2026-11-05 UTC. Worktree: `C:\Users\Steve\code\video-mixer-chat`. Changes remain uncommitted. This report supersedes the earlier restricted-environment review: the runs below exercised real WebView2, the portable app, Windows accessibility controls, recordings, and an installed release.
+Updated 2026-11-05 UTC. Worktree: `C:\Users\Steve\code\video-mixer-chat`. The integration base is `90caa70` on `feature/studio-chat-spike` (07:56 local); the follow-up fixes and this report are recorded together in a later local commit on that branch. Main's application edits were not changed. The runs below exercised real WebView2, the portable app, Windows accessibility controls, recordings, and an installed release.
+
+## Current package, qualification follow-up
+
+Use `native-qt/dist/desktop-studio-chat-qualification-nov5/desktop-studio.exe`. It replaces the review build as the current artifact, while both earlier portable folders remain available. The only application change since the 13:00 review is honest setup wording: Twitch, YouTube and Kick are named; other platforms are experimental and sign-in is unavailable. English, Spanish and French text was updated. The SSN capture pack's `SHA256SUMS` is identical to the review package.
+
+- Executable SHA-256: `4ecfce8da1bd976c5b5404f87dcdd2fbfef1f331baf2a4ee9c60235e436917f9`.
+- Installer `native-qt/dist/desktop-studio-0.9.4-setup.exe` SHA-256: `1e62e83b2982f3b9c455f68ad0ae2915d98054962c8ca1ca939d9331b802b73a`.
+- The current ZIP contains `desktop-studio-chat-qualification-nov5`. Local-certificate signing still reports `UnknownError`; publicly trusted signing is not established.
+- Windows UI Automation: **22/22** assertions on this executable. First-run and on-air screenshots visually reviewed at 1280 pixels: support copy wraps without clipping, and amber controls remain readable. Evidence: `native-qt/build-chat/ui-walkthrough/20261105-083732/`.
+- Live Kick: **165/165** matching occurrences over two minutes on `absi` (18,785 viewers), including **104/104 emote-containing messages**, reference held, no stalls. Evidence: `native-qt/build-chat/kick/2026-11-05T13-37-51-556Z/`. The final comparator also scopes collection to the selected channel, requires it to be live and requires a successful reference subscription.
+- Installer workflow: fresh install, upgrade with stale-asset removal, missing/tampered-pack recovery, installed chat, CLI/MCP, recording and uninstall all passed. Installed chat **21/21**, 500/500 tokens at 50/s, Show Bar/Bubble/Big **244/244/288 ms**, worst command 8 ms, browser-kill recovery 1,071 ms. Recordings fully decoded, 12 distinct moving-video screenshots, maximum frame gap 34 ms, portable/ZIP/installed executable hashes matched, and no owned descendants or installer registration remained. Evidence: `native-qt/e2e/reports/chat-qualification-nov5/`.
+- Release/package/installer build, 28 chat gates, script syntax and diff-whitespace gates pass. These gates are not application testing.
+
+No two-hour soak, forced-memory-overload, real broadcast rollover or live Twitch/YouTube comparison was repeated on this exact executable. Earlier results remain tied to their recorded artifacts. Rumble and TikTok observations below do not qualify those platforms.
+
+## Further platform observations, 13:23–13:36 UTC
+
+These observations used the 13:00 reviewed executable below. Nothing was posted to a public chat.
+
+- **Kick including emotes:** 665/665 occurrences matched by author, text and emote names in five minutes on live `absi` (18,789 viewers): 314 plain-text and 351 emote-containing comments. The independent socket reference held; no stalled 30-second buckets. Evidence: `native-qt/build-chat/kick/2026-11-05T13-25-50-641Z/`. The comparator now decodes Kick's explicit emote tokens to their displayed names, preserving surrounding text. It still compares occurrence counts, not native message IDs. A successful five-minute interval does not resolve the earlier intermittent losses.
+- **Rumble:** `https://rumble.com/c/RTNews/live` resolved to the real RT News popout (`/chat/popup/186945454`). Both the source page and Studio were empty for 90 seconds. The page offered sign-in to post; this alone does not establish that reading requires authentication. Capture remains unverified. Evidence: `native-qt/build-chat/platform-inspect/2026-11-05T13-27-04-215Z-rumble.com/`. The earlier `/c/RT/live` was an incorrect channel slug and reached a real 404.
+- **TikTok:** three logged-out runs on a publicly live channel did not establish sustained viewer-comment capture. The first delivered 14 notices/like/gift items while viewer comments were visible; those 14 must not be reported as viewer comments. The next delivered five authored comments matching visible rows, one fan-club notice and one gift. Its Program screenshot shows the gift, not a verified viewer comment. A third run, with an explicitly recorded diagnostic scroll pulse, had no viewer rows visible and no captured items; it neither proves a fix nor isolates a defect. Evidence: `native-qt/build-chat/platform-inspect/2026-11-05T13-23-36-599Z-www.tiktok.com/`, `2026-11-05T13-31-53-306Z-www.tiktok.com/`, and `2026-11-05T13-33-50-002Z-www.tiktok.com/`. Source and Program screenshots were visually reviewed. TikTok remains unqualified.
+
+`tools/chat-platform-inspect.mjs` now records source-page snapshots, captured items, native status/resources and composed output in an isolated packaged-app session. It deliberately reports **items requiring review**, since system notices and gifts must not qualify as viewer comments. Its optional `--pulse-scroll` modifies the observed page for diagnosis and must be disclosed in results; it is not a shipped fix.
+
+## Follow-up review, 13:00 UTC
+
+Reviewed executable at 13:00: `native-qt/dist/desktop-studio-chat-review-nov5/desktop-studio.exe`. The original portable directory was preserved. At that time the ZIP `desktop-studio-0.9.4-windows-x64.zip` contained the `desktop-studio-chat-review-nov5` directory and the installer was `desktop-studio-0.9.4-setup.exe`; those two shared filenames have since been replaced by the current package above. Historical artifact references below describe earlier builds.
+
+- Executable SHA-256: `f73cda6cf27a3d153b54aedd9d6e8a5e7071b91704841965a4b697df16bb33de`.
+- Installer SHA-256: `f386b42f04cd416a4d8d5399401dc3d9da0d5b171efdd9979c65dd104220e4a7`.
+- Both were signed using the local Social Stream Ninja certificate. The tool reports trust status `UnknownError`; this does not establish publicly trusted signing.
+
+Two additional findings were fixed:
+
+1. Kick/YouTube comparison scripts returned success with up to 10% unexplained missing comments. They now fail unless every eligible plain-text occurrence matches. This does not invalidate the earlier measured 100% results, but closes a false-pass condition for future runs.
+2. Oversized capture data was still discarded without an operator notice, and oversized reply text could be silently truncated. Native rejection now increments `chat.status.oversized_messages`, and the panel shows "Some chat data was too large to display. Comments may be missing." The count covers the current worker session and resets on restart. Limits remain intact. The warning does not cancel Show or mark the engine unavailable. English, Spanish and French copy is supplied.
+
+Actual application testing on this executable:
+
+| Workflow | Result | Evidence under native-qt/ |
+| --- | --- | --- |
+| Strict Kick comparison, live 3li_boltx, 13,928 viewers, 120 seconds | 130/130 eligible plain-text comments; reference stayed connected; no stalled bucket; 70 reference comments containing emotes excluded from content scoring | `build-chat/kick/2026-11-05T13-00-50-093Z/summary.json` |
+| Strict YouTube comparison, rFZHOHl-L8A, 120 seconds | 23/23 eligible plain-text comments; Live chat reference held; one page load; 17 non-plain comments excluded | `build-chat/youtube/2026-11-05T13-00-50-093Z/summary.json` |
+| Isolation and size boundaries | 6/6 checks. Oversized body, oversized reply and >32 KiB envelope rejected/countable; a valid comment with a 40 KB unused badge arrives. Spoof protection, emote alternative text and targeted deletion still pass. | `build-chat/isolation-review/2026-11-05T13-00-08-571Z/results.json` |
+| Windows UI Automation at 1280 px | 22/22 assertions, including selection, Back to live, countdown, Keep, private break/resume and Hide | `build-chat/ui-walkthrough/20261105-080008/results.json` |
+| Installed chat workflow | 21/21 checks; 500/500 tokens at 50/s, no missing/duplicate/unexpected messages; worst command 8 ms; Show Bar/Bubble/Big 242/233/286 ms | `e2e/reports/chat-review-nov5/chat/results.json` |
+| Missing and tampered pack | Chat unavailable, recording continues and fully decodes in both cases | `e2e/reports/chat-review-nov5/integrity/results.json` |
+| Install/upgrade/uninstall, CLI/MCP, recording | Pass. Upgrade removes stale SSN asset; portable/ZIP/installed hashes match; 12 distinct moving-video screenshots, max recording frame gap 34 ms, full decode; no owned descendants or installer registration remain | `e2e/reports/chat-review-nov5/installed-results.json` |
+
+Visually inspected `build-chat/isolation-review/2026-11-05T13-00-08-571Z/01-capture.png`: the new warning wraps visibly below the on-air band while the normal comment is displayed. Also inspected `build-chat/ui-walkthrough/20261105-080008/03-on-screen.png`. The broader cramped source controls remain a known layout issue.
+
+Release build/package/installer and 28 chat gates pass; the diff whitespace gate passes. These are gates, not application testing. The exact current build has not had another two-hour soak, forced-memory-overload run, real stream rollover, or Twitch-versus-IRC comparison. Those earlier results apply to their recorded builds. Other platform and emote-content limitations below remain open. No public chat messages were posted.
 
 ## Result
 
 The native chat workflow is usable with real Twitch, YouTube and Kick. It is **not yet qualified as a reliable all-platform release**: Rumble, TikTok, Facebook, Instagram and X remain unproven, memory is substantial, and real stream rollover needs qualification.
 
-The newest results are under [Latest build](#latest-build). They were run on `native-qt/dist/desktop-studio-portable/desktop-studio.exe`, which is newer than the `desktop-studio-chat-validated` package and the 0.9.4 installer described below. The older sections remain as a record of those builds. No installer has been built or tested with the latest changes.
+The earlier 05:44-local results are under [Latest build](#latest-build). They were run on `native-qt/dist/desktop-studio-portable/desktop-studio.exe`. The follow-up above supersedes their installer/UI qualification gaps. The older sections remain as a record of their specific builds.
 
 Older package: `native-qt/dist/desktop-studio-chat-validated/desktop-studio.exe` or `native-qt/dist/desktop-studio-chat-validated.zip`. Installer: `native-qt/dist/desktop-studio-0.9.4-setup.exe`.
 
@@ -118,7 +171,7 @@ Remaining experience improvements: the source/audio controls below the canvas ne
 From the worktree root (all test messages are local practice/CDP inputs; these drivers do not post public chat):
 
 ```powershell
-$env:VIDEO_MIXER_CHAT_EXE = "$PWD\native-qt\dist\desktop-studio-chat-validated\desktop-studio.exe"
+$env:VIDEO_MIXER_CHAT_EXE = "$PWD\native-qt\dist\desktop-studio-chat-qualification-nov5\desktop-studio.exe"
 node native-qt/tools/chat-packaged-workflow.mjs
 node native-qt/tools/chat-review-e2e.mjs --exe $env:VIDEO_MIXER_CHAT_EXE
 node native-qt/tools/chat-live-e2e.mjs --twitch LIVE_CHANNEL --youtube LIVE_VIDEO_ID --minutes 2
@@ -133,7 +186,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File native-qt/tools/chat-ui-walk
 Installer checks refuse an existing installation/shortcut and only uninstall their private QA destination. Run from `native-qt`, with a new report directory:
 
 ```powershell
-python e2e/mixer-installed-e2e.py --report e2e/reports/chat-new-run --package dist/desktop-studio-chat-validated --archive dist/desktop-studio-chat-validated.zip --chat
+python e2e/mixer-installed-e2e.py --report e2e/reports/chat-new-run --package dist/desktop-studio-chat-qualification-nov5 --chat
 ```
 
 Pending qualification: long live runs through Studio, real channel rollover between broadcasts, supported live/logged-out Kick/Rumble/TikTok/Instagram channels, and sign-in flows. Replies, alerts, read-aloud and viewer tools remain outside this implementation.

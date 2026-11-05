@@ -27,10 +27,11 @@ async function inPage(page,expression){
   ws.close();return result?.result?.value;
 }
 const until=async(fn,ms=60000)=>{const s=Date.now();while(Date.now()-s<ms){const v=await fn().catch(()=>null);if(v)return v;await delay(1000);}return null;};
-let summary={};
+let summary={},socket;
 try{
   let channel=flag('channel');
-  await raw({command:'chat.channel.add',input:`https://kick.com/${channel||'kick'}`});
+  let added=await raw({command:'chat.channel.add',input:`https://kick.com/${channel||'kick'}`});
+  if(!added.channel?.id)throw Error(added.error||'Kick channel was not added');
   let page=await until(kickPage);
   if(!page)throw Error('no Kick page opened');
   if(!channel){
@@ -38,14 +39,16 @@ try{
     if(!listing)throw Error('could not list live Kick channels');
     console.log('live channels',JSON.stringify(listing));
     channel=listing.find(s=>s.viewers>=500&&s.viewers<=20000)?.slug||listing[0].slug;
-    await raw({command:'chat.channel.add',input:`https://kick.com/${channel}`});
+    added=await raw({command:'chat.channel.add',input:`https://kick.com/${channel}`});
+    if(!added.channel?.id)throw Error(added.error||'Live Kick channel was not added');
     page=await until(async()=>(await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(p=>p.url.includes(`/${channel}/`)||p.url.endsWith(`/${channel}`)));
   }
   const info=await until(()=>inPage(page,`fetch('/api/v2/channels/${channel}').then(r=>r.json()).then(j=>JSON.stringify({id:j.chatroom?.id,viewers:j.livestream?.viewer_count??null,live:!!j.livestream})).catch(e=>'')`).then(v=>{const o=v?JSON.parse(v):null;return o?.id?o:null;}),30000);
   if(!info)throw Error('could not read the chatroom id');
+  if(!info.live)throw Error('Selected Kick channel is not live');
   console.log('channel',channel,JSON.stringify(info));
   const truth=[],ids=new Set(),deleted=new Map(),banned=new Map();let subscribed=false,socketLost=false;
-  const socket=new WebSocket('wss://ws-us2.pusher.com/app/34bf7a0ff419a2a775b9?protocol=7&client=js&version=8.4.0&flash=false');
+  socket=new WebSocket('wss://ws-us2.pusher.com/app/34bf7a0ff419a2a775b9?protocol=7&client=js&version=8.4.0&flash=false');
   socket.onmessage=e=>{
     const m=JSON.parse(e.data);
     if(m.event==='pusher:connection_established')for(const name of [`chatrooms.${info.id}.v2`,`chatrooms.${info.id}`,`chatroom_${info.id}`])socket.send(JSON.stringify({event:'pusher:subscribe',data:{channel:name,auth:''}}));
@@ -55,11 +58,12 @@ try{
     if(/UserBannedEvent/.test(m.event))banned.set(JSON.parse(m.data).user?.username,Date.now());
   };
   socket.onclose=()=>{socketLost=true;};
-  await until(async()=>subscribed,15000);
-  const first=await until(async()=>(await raw({command:'chat.messages'})).messages.some(m=>m.type==='kick'),60000);
+  socket.onerror=()=>{socketLost=true;};
+  if(!await until(async()=>subscribed,15000))throw Error('Kick reference did not subscribe');
+  const first=await until(async()=>(await raw({command:'chat.messages'})).messages.some(m=>m.channel===added.channel.id),60000);
   // The panel keeps only its newest comments, so gather them during the run, and score only those that arrived during it.
   const seen=new Map();
-  const collect=async()=>{for(const m of (await raw({command:'chat.messages'})).messages)if(m.type==='kick'&&!seen.has(m.id))seen.set(m.id,{...m,seenMs:Date.now()});};
+  const collect=async()=>{for(const m of (await raw({command:'chat.messages'})).messages)if(m.channel===added.channel.id&&!seen.has(m.id))seen.set(m.id,{...m,seenMs:Date.now()});};
   await collect();
   const started=Date.now();
   while(Date.now()-started<seconds*1000){await delay(3000);await collect();}
@@ -72,27 +76,30 @@ try{
   const inWindow=truth.filter(t=>t.at>=started&&t.at<=stopped-15000);
   const texts=new Map();const key=(user,text)=>normal(user).toLowerCase()+'|'+normal(text);
   for(const r of rows){const k=key(r.chatname,r.chatmessage);texts.set(k,(texts.get(k)||0)+1);}
-  // Emotes appear as markup on one side and [emote:id:name] on the other, so plain text is compared.
+  // Studio exposes emote alternative text. Decode only Kick's explicit emote
+  // tokens into their names; preserve the surrounding text and punctuation.
   const plain=inWindow.filter(t=>!/\[emote:/.test(t.text||''));
-  let matched=0,removedByModerators=0;const missed=[],buckets={};
+  const expectedText=t=>String(t.text??'').replace(/\[emote:\d+:([^\]]+)\]/g,(_,name)=>name);
+  let matched=0,emoteMatched=0,removedByModerators=0;const missed=[],buckets={};
   // Moderators can remove a comment before the page shows it. Those are correct omissions, and are counted separately.
   const soonAfter=(at,t)=>at>=t.at&&at-t.at<=5000;
   const removed=t=>soonAfter(deleted.get(t.id),t)||soonAfter(banned.get(t.user),t);
-  for(const t of plain){
-    const k=key(t.user,t.text),hit=texts.get(k)>0,b=Math.floor((t.at-started)/30000);
+  for(const t of inWindow){
+    const k=key(t.user,expectedText(t)),hit=texts.get(k)>0,b=Math.floor((t.at-started)/30000);
     if(!hit&&removed(t)){removedByModerators++;continue;}
     (buckets[b]??=[0,0])[hit?0:1]++;
-    if(hit){matched++;texts.set(k,texts.get(k)-1);}else if(missed.length<8)missed.push(t.user+': '+String(t.text).slice(0,120));
+    if(hit){matched++;if(/\[emote:/.test(t.text||''))emoteMatched++;texts.set(k,texts.get(k)-1);}else if(missed.length<8)missed.push(t.user+': '+String(t.text).slice(0,120));
   }
   console.log('30s buckets hit/miss',Object.values(buckets).map(b=>b.join('/')).join(' '));
   const status=await raw({command:'chat.status'});
   // A reference with no matches in any 30 seconds means capture stopped, whatever the average says.
   const stalled=Object.values(buckets).filter(([hit,miss])=>miss>=5&&hit===0).length;
-  const eligible=plain.length-removedByModerators;
-  if(!referenceHeld||!eligible||matched/eligible<0.9||stalled)process.exitCode=1;
-  summary={referenceHeld,stalled,channel,viewers:info.viewers,live:info.live,seconds,firstComment:!!first,referenceTotal:inWindow.length,referencePlainText:plain.length,removedByModerators,matched,rate:eligible?matched/eligible:null,panelKick:rows.length,status:status.channels?.map(c=>({name:c.name,status:c.status})),missed};
+  const eligible=inWindow.length-removedByModerators;
+  if(!referenceHeld||!eligible||matched!==eligible||stalled)process.exitCode=1;
+  summary={referenceHeld,stalled,channel,viewers:info.viewers,live:info.live,seconds,comparison:'author-text-and-emote-names',firstComment:!!first,referenceTotal:inWindow.length,referencePlainText:plain.length,referenceEmoteMessages:inWindow.length-plain.length,emoteMatched,removedByModerators,matched,rate:eligible?matched/eligible:null,panelKick:rows.length,status:status.channels?.map(c=>({name:c.name,status:c.status})),missed};
 }catch(e){summary.error=e.message;process.exitCode=1;}
 finally{
+  if(socket){socket.onclose=null;socket.close();}
   console.log('SUMMARY',JSON.stringify(summary));
   await fs.writeFile(path.join(out,'summary.json'),JSON.stringify(summary,null,1));
   try{await request(target,'/commands',{command:'quit'});}catch{}

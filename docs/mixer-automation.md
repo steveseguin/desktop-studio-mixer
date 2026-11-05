@@ -258,6 +258,8 @@ For direct MPEG-TS output, `output.configure` accepts `protocol: "udp"` with `ud
 
 All commands use `/studio/command` and appear in `/studio/schema`. Channel settings are app-level, independent of show files. `chat.status` returns `available`, `ready`, `problem`, channels with real connection status, practice, displayed/pending counts, selected ID, pending show token, on-air comment, `on_screen`, `hidden_by_private_break`, timer and show-level layer settings. The full Studio state includes the same object as `chat`.
 
+`oversized_messages` counts capture envelopes or comments rejected by size limits during the current chat worker session. A nonzero count also shows a warning in the Chat panel. It resets when the worker restarts; it is not a count of every possible delivery failure. This warning does not make the engine unavailable or cancel Show.
+
 | Command | Fields | Result |
 | --- | --- | --- |
 | `chat.status` | none | Current state; `problem` describes engine/settings failures without failing the status request. |

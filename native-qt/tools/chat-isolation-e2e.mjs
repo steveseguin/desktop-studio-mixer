@@ -34,6 +34,18 @@ try {
   const attack=`parent.postMessage(${JSON.stringify({engineSpikeUp:forged})},'*')`;
   await evaluate(`(()=>{const f=document.createElement('iframe');f.sandbox='allow-scripts';f.srcdoc=${JSON.stringify('<script>'+attack+'</script>')};document.body.append(f);return true})()`);
   await delay(2500);check(!(await c('chat.messages')).messages.some(m=>m.chatmessage===token+'-forged'),'Opaque ad frame cannot impersonate a channel');
+  const beforeOversize=(await c('chat.status')).oversized_messages||0;
+  for(const message of [
+    {chatname:'Oversize QA',chatmessage:'x'.repeat(8001),textonly:true},
+    {chatname:'Oversize QA',chatmessage:'short parent',reply:'x'.repeat(8001),textonly:true}
+  ])await evaluate(`chrome.runtime.sendMessage({message:${JSON.stringify(message)}}).catch(e=>e.message)`);
+  // Exercise the native envelope limit, beyond the shim's field filtering.
+  await evaluate(`chrome.webview.postMessage({kind:'rpc',id:'qa-oversize',frame:'qa-oversize',method:'runtime.sendMessage',args:[{message:{chatname:'Oversize QA',chatmessage:'x'.repeat(33000),textonly:true}}]});true`);
+  await until(async()=>(await c('chat.status')).oversized_messages>=beforeOversize+3,'oversize diagnostics');
+  check(!(await c('chat.messages')).messages.some(m=>m.chatname==='Oversize QA'),'Oversized payloads are counted and rejected without truncated comments');
+  const badged={chatname:'Badge QA',chatmessage:token+'-large-badge',textonly:true,chatbadges:'data:image/png;base64,'+'A'.repeat(40000)};
+  await evaluate(`chrome.runtime.sendMessage({message:${JSON.stringify(badged)}})`);
+  check(!!await until(async()=>(await c('chat.messages')).messages.find(m=>m.chatmessage===badged.chatmessage),'large badge comment'),'Large unused badges do not drop otherwise valid comments');
   // Exercise the actual capture -> SSN -> host -> native plain-text conversion.
   const rich={chatname:'Markup Viewer',chatmessage:`${token} before <img alt="Kappa" src="https://invalid.example/emote.png"> after`,textonly:false};
   await evaluate(`chrome.runtime.sendMessage({message:${JSON.stringify(rich)}})`);
