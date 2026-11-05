@@ -33,6 +33,7 @@ foreach ($entry in $compilerEnv) {
 if ($LASTEXITCODE -ne 0) { throw 'Configure failed.' }
 & cmake --build $buildRoot --target video-mixer --parallel $Jobs
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+& (Join-Path $PSScriptRoot 'tools/sync-ssn-pack.ps1') -Destination (Join-Path $buildRoot 'bin/ssn')
 if ($Package -or $Installer) {
     # Stage new releases separately so previous qualified packages stay intact.
     $packageRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot $PackageDirectory))
@@ -41,6 +42,7 @@ if ($Package -or $Installer) {
         throw 'The package directory must be inside native-qt/dist.'
     }
     New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
+    & (Join-Path $PSScriptRoot 'tools/sync-ssn-pack.ps1') -Destination (Join-Path $packageRoot 'ssn')
     # Developer builds may contain test executables and Qt6Test.dll.
     # Copy only application payloads into the user-facing package.
     Get-ChildItem -LiteralPath "$buildRoot/bin" | Where-Object {

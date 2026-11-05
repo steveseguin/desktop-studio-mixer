@@ -92,7 +92,8 @@ std::string resolveLogFilePath() {
     std::filesystem::path logDir = localAppData && *localAppData
         ? std::filesystem::path(localAppData)
         : std::filesystem::current_path();
-    logDir /= "VideoMixer";
+    if (const char *data = std::getenv("VIDEO_MIXER_DATA_DIR"); data && *data) logDir = data;
+    else logDir /= "VideoMixer";
     logDir /= "logs";
     std::error_code ec;
     std::filesystem::create_directories(logDir, ec);
@@ -630,6 +631,14 @@ int main(int argc, char *argv[]) {
     }
 
     QApplication app(argc, argv);
+    if (!qEnvironmentVariable("VIDEO_MIXER_DATA_DIR").isEmpty()) {
+        const auto data = QDir(qEnvironmentVariable("VIDEO_MIXER_DATA_DIR")).absolutePath();
+        QDir().mkpath(data);
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,data+"/settings");
+        QSettings::setPath(QSettings::IniFormat,QSettings::SystemScope,data+"/settings-system");
+        if (studioShow.isEmpty()) studioShow=data+"/studio.mixer.json";
+    }
     // Preserve paths outside the Windows active code page. A console-subsystem
     // CRT may already have damaged argv before QApplication receives it.
     QStringList pathArguments = QCoreApplication::arguments();
@@ -1104,7 +1113,7 @@ int main(int argc, char *argv[]) {
         ? QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)).filePath("VideoMixer/studio.mixer.json")
         : QFileInfo(studioShow).absoluteFilePath();
     if (studioShow.isEmpty()) {
-        const auto active = QSettings("VDO.Ninja","Video Mixer").value("mixer/activeProject").toString();
+        const auto active = QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").value("mixer/activeProject").toString();
         if (QFileInfo(active).isAbsolute() && QFileInfo(active).isFile()) showPath = active;
     }
     auto showLease = versus::mixer::showFileAccess().reserve(showPath);

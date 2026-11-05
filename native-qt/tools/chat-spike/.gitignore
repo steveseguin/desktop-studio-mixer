@@ -1,0 +1,11 @@
+/build*/
+/runs/
+/run*/
+/dist/
+*.jsonl
+metrics.csv
+events.log
+run.json
+analysis.json
+profiles/
+truth-*-meta.json

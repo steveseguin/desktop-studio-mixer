@@ -1,0 +1,11 @@
+<!doctype html><meta charset="utf-8"><title>Engine spike capture source</title>
+<h1>Local capture and dry reply target</h1><div contenteditable="true" id="reply"></div><pre id="callback"></pre>
+<script>
+window.capture = message => new Promise((resolve,reject)=>chrome.runtime.sendMessage({message},response=>{
+ document.querySelector('#callback').textContent=JSON.stringify(response);chrome.runtime.lastError?reject(new Error(chrome.runtime.lastError.message)):resolve(response);
+}));
+chrome.runtime.onMessage.addListener((message,sender,reply)=>{
+ if(message==='focusChat'||message?.focusChat){document.querySelector('#reply').focus();reply(true);return;}
+ reply(true);
+});
+</script>

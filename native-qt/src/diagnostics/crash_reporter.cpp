@@ -245,7 +245,8 @@ std::string defaultCrashDirectory() {
     std::filesystem::path crashDir = localAppData && *localAppData
         ? std::filesystem::path(localAppData)
         : std::filesystem::current_path();
-    crashDir /= "VideoMixer";
+    if (const char *data = std::getenv("VIDEO_MIXER_DATA_DIR"); data && *data) crashDir = data;
+    else crashDir /= "VideoMixer";
     crashDir /= "crashes";
     return crashDir.string();
 #else

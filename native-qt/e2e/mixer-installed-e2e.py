@@ -5,7 +5,7 @@ must be inside native-qt/e2e/reports; no user shows or recordings are removed.
 """
 from pathlib import Path
 import os,json,subprocess,time,hashlib,zipfile,winreg,urllib.request,psutil,argparse,re
-parser=argparse.ArgumentParser();parser.add_argument('--report',required=True);args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--report',required=True);parser.add_argument('--package',default='dist/desktop-studio-portable');parser.add_argument('--archive');parser.add_argument('--chat',action='store_true');args=parser.parse_args()
 base=Path(args.report).resolve();base.mkdir(parents=True,exist_ok=True)
 version=re.search(r'project\(video-mixer-native-qt VERSION ([0-9.]+)',Path('CMakeLists.txt').read_text()).group(1)
 dest=base/'app';workspace=Path.cwd().resolve()
@@ -14,7 +14,8 @@ try:
  with winreg.OpenKey(winreg.HKEY_CURRENT_USER,r'Software\VideoMixer') as k:raise RuntimeError('An existing installation must not be replaced by this test')
 except FileNotFoundError:pass
 shortcuts=Path(os.environ['APPDATA'])/'Microsoft/Windows/Start Menu/Programs/Desktop Studio';assert not shortcuts.exists()
-setup=Path(f'dist/desktop-studio-{version}-setup.exe').resolve();package=Path('dist/desktop-studio-portable').resolve()
+setup=Path(f'dist/desktop-studio-{version}-setup.exe').resolve();package=Path(args.package).resolve()
+os.environ['VIDEO_MIXER_DATA_DIR']=str(base/'profile')
 def run(argv,**opts):return subprocess.run([str(a) for a in argv],capture_output=True,creationflags=subprocess.CREATE_NO_WINDOW,**opts)
 def wait(fn):
  for _ in range(100):
@@ -32,8 +33,18 @@ try:
  assert (dest/'tools/mcp/node_modules/@modelcontextprotocol/sdk/package.json').exists()
  executable_hash=hashlib.sha256((dest/'desktop-studio.exe').read_bytes()).hexdigest()
  assert executable_hash==hashlib.sha256((package/'desktop-studio.exe').read_bytes()).hexdigest()
- with zipfile.ZipFile(f'dist/desktop-studio-{version}-windows-x64.zip') as z:
-  assert hashlib.sha256(z.read('desktop-studio-portable/desktop-studio.exe')).hexdigest()==executable_hash
+ with zipfile.ZipFile(args.archive or f'dist/desktop-studio-{version}-windows-x64.zip') as z:
+  assert hashlib.sha256(z.read(package.name+'/desktop-studio.exe')).hexdigest()==executable_hash
+ if args.chat:
+  stale=dest/'ssn/obsolete-qa-file.js';stale.write_text('// obsolete asset')
+  upgraded=run([setup,'/S','/D='+str(dest)],timeout=120);assert upgraded.returncode==0,upgraded.stderr
+  assert not stale.exists(),'Upgrade retained a stale chat asset'
+  integrity=run(['node','tools/chat-pack-integrity-e2e.mjs',dest/'desktop-studio.exe',base/'integrity'],text=True,encoding='utf-8',timeout=100)
+  (base/'integrity.log').write_text(integrity.stdout+integrity.stderr,encoding='utf-8')
+  assert integrity.returncode==0,integrity.stdout+integrity.stderr
+  chat_run=run(['node','tools/chat-review-e2e.mjs','--exe',dest/'desktop-studio.exe','--out',base/'chat'],text=True,encoding='utf-8',timeout=180)
+  (base/'chat-workflow.log').write_text(chat_run.stdout+chat_run.stderr,encoding='utf-8')
+  assert chat_run.returncode==0,chat_run.stdout+chat_run.stderr
  cli=dest/'tools/mcp/studio-cli.mjs'
  result=run(['node',cli,'launch','--headless','--show',base/'installed.mixer.json'],text=True,encoding='utf-8',timeout=50);assert result.returncode==0,result.stderr;target=json.loads(result.stdout)
  proc=psutil.Process(target['pid'])

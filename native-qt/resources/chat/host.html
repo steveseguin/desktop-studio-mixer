@@ -1,0 +1,37 @@
+<!doctype html><meta charset="utf-8"><title>Engine spike host feed</title>
+<style>body{font:16px system-ui;background:#18202b;color:#eee}pre{white-space:pre-wrap}iframe{display:none}</style>
+<h1>Processed host feed</h1><div id="feed"></div><pre id="state"></pre><pre id="debugger"></pre>
+<script>
+const params=new URLSearchParams(location.search), session=params.get('session');
+const frame=document.createElement('iframe');
+frame.src='https://vdo.socialstream.ninja/?room='+encodeURIComponent(session)+'&password=false&label=dock&push=engine-spike-host&view='+encodeURIComponent(session);
+document.body.append(frame);
+window.feed=[];window.peers={};
+addEventListener('host.debugger',e=>document.querySelector('#debugger').textContent+=JSON.stringify(e.detail[0])+'\n');
+addEventListener('message',e=>{
+  if(e.source!==frame.contentWindow)return;
+  const p=e.data;
+  if(p.action?.endsWith('connection-info'))peers[p.UUID]=p.value.label;
+  if(p.action?.endsWith('connection') && p.value===false)delete peers[p.UUID];
+  if(p.dataReceived && 'overlayNinja' in p.dataReceived){
+    const m=p.dataReceived.overlayNinja;
+    if(m && typeof m.chatmessage==='string') {
+      const text=s=>{
+        const doc=new DOMParser().parseFromString(String(s||''),'text/html');
+        // SSN represents emotes as images. Preserve their accessible text when
+        // converting the rich message into Studio's plain-text comment model.
+        for(const img of doc.querySelectorAll('img'))img.replaceWith(doc.createTextNode(img.getAttribute('alt')||''));
+        for(const br of doc.querySelectorAll('br'))br.replaceWith(doc.createTextNode('\n'));
+        return doc.body.textContent;
+      };
+      window.__engineSpike.rpc('host.comment',[{id:m.id,tid:m.tid,type:m.type,
+        chatname:text(m.chatname),chatmessage:m.textonly?m.chatmessage:text(m.chatmessage),
+        hasDonation:text(m.hasDonation),membership:text(m.membership),textonly:true}]).catch(()=>{});
+    }
+    feed.push(p.dataReceived.overlayNinja); if(feed.length>100)feed.shift();
+    const row=document.createElement('pre');row.textContent=JSON.stringify(p.dataReceived.overlayNinja);document.querySelector('#feed').replaceChildren(row);
+  }
+});
+window.feature=(data,uuid)=>frame.contentWindow.postMessage({sendData:{overlayNinja:data},type:'pcs',UUID:uuid},'https://vdo.socialstream.ninja');
+window.engineCommand=data=>frame.contentWindow.postMessage({sendData:{overlayNinja:data},type:'rpcs'},'https://vdo.socialstream.ninja');
+</script>

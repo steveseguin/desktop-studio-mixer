@@ -19,7 +19,7 @@ class StudioTranslator final : public QTranslator {
     QJsonObject strings_;
 public:
     explicit StudioTranslator(QObject *parent) : QTranslator(parent) {
-        const auto language = QSettings("VDO.Ninja", "Video Mixer").value("ui/language", "en").toString();
+        const auto language = QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").value("ui/language", "en").toString();
         qApp->setProperty("studioLanguage", language);
         if (language != "es" && language != "fr") return;
         QFile file(":/mixer/studio-"+language+".json");

@@ -170,8 +170,9 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
 #ifdef _WIN32
         const auto safeId = !QUuid(id).isNull() ? QUuid(id).toString(QUuid::WithoutBraces) :
             QString::fromLatin1(QCryptographicHash::hash(id.toUtf8(), QCryptographicHash::Sha256).toHex());
-        const auto profile = QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation))
-            .filePath("VideoMixer/browser/" + safeId);
+        const auto data = qEnvironmentVariable("VIDEO_MIXER_DATA_DIR");
+        const auto profile = data.isEmpty() ? QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)).filePath("VideoMixer/browser/"+safeId)
+            : QDir(data).filePath("browser/"+safeId);
         QDir().mkpath(profile);
         auto options = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
         options->put_AdditionalBrowserArguments(L"--autoplay-policy=no-user-gesture-required --disable-backgrounding-occluded-windows --disable-renderer-backgrounding");

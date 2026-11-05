@@ -156,6 +156,12 @@ endif()
 set(VERSUS_SOURCES
     src/main.cpp
     src/mixer/process_worker.cpp
+    src/mixer/chat_data.cpp
+    src/mixer/chat_engine.cpp
+    src/mixer/chat_engine.h
+    src/mixer/chat_worker.cpp
+    src/mixer/chat_panel.cpp
+    src/mixer/chat_panel.h
     src/mixer/isolated_source.cpp
     src/mixer/encoder_worker.cpp
     src/mixer/guest_return.cpp
@@ -354,6 +360,14 @@ if(WIN32)
 endif()
 
 # Testing
+option(VERSUS_BUILD_CHAT_GATES "Build focused chat gates" OFF)
+if(VERSUS_BUILD_CHAT_GATES)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    add_executable(chat_gate tests/chat_gate.cpp src/mixer/chat_data.cpp)
+    target_include_directories(chat_gate PRIVATE src/mixer)
+    target_link_libraries(chat_gate PRIVATE Qt6::Test Qt6::Gui)
+    set_target_properties(chat_gate PROPERTIES AUTOMOC ON)
+endif()
 option(VERSUS_BUILD_TESTS "Build tests" OFF)
 
 if(VERSUS_BUILD_TESTS)
