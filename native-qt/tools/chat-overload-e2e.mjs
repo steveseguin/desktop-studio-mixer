@@ -8,25 +8,31 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import {createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
-import {discovery,request} from './mcp/studio-client.mjs';
+import {discovery,health,request} from './mcp/studio-client.mjs';
 
 const exec=promisify(execFile);
 const flag=(name,fallback)=>{const i=process.argv.indexOf('--'+name);return i<0?fallback:process.argv[i+1];};
 const twitch=flag('twitch','xqc'),port=Number(flag('port',9391));
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
-const dist=path.join(root,'native-qt/dist/desktop-studio-portable');
+const exe=process.env.VIDEO_MIXER_CHAT_EXE||path.join(root,'native-qt/dist/desktop-studio-portable/desktop-studio.exe');
+const dist=path.dirname(exe);
 const out=path.join(root,'native-qt/build-chat/overload',new Date().toISOString().replaceAll(/[:.]/g,'-'));
 await fs.mkdir(out,{recursive:true});
+await fs.writeFile(path.join(out,'artifact.json'),JSON.stringify({exe,sha256:createHash('sha256').update(await fs.readFile(exe)).digest('hex'),startedUtc:new Date().toISOString()},null,2));
 const control=path.join(out,'control.json');
-const child=spawn(path.join(dist,'desktop-studio.exe'),['--studio-headless',`--studio-show=${path.join(out,'show.mixer.json')}`,'--local-control-port=0',`--local-control-discovery=${control}`],{env:{...process.env,VIDEO_MIXER_DATA_DIR:out,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:`--remote-debugging-port=${port}`},windowsHide:true,stdio:'ignore'});
-let target;for(let i=0;i<120&&!target;i++){try{target=await discovery(control);}catch{await delay(250);}}
+const child=spawn(exe,['--studio-headless',`--studio-show=${path.join(out,'show.mixer.json')}`,'--local-control-port=0',`--local-control-discovery=${control}`],{env:{...process.env,VIDEO_MIXER_DATA_DIR:out,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:`--remote-debugging-port=${port}`},windowsHide:true,stdio:'ignore'});
+let target;
 const raw=c=>request(target,'/studio/command',c);
 const status=()=>raw({command:'chat.status'});
 const results=[];let failed=0;
 const check=(ok,name,detail)=>{results.push({ok:!!ok,name,detail});if(!ok)failed++;console.log((ok?'PASS ':'FAIL ')+name+(detail===undefined?'':' :: '+JSON.stringify(detail)));};
 const until=async(fn,what,ms=60000)=>{const s=Date.now();while(Date.now()-s<ms){const v=await fn();if(v)return v;await delay(500);}throw Error('Timed out: '+what);};
 try{
+  const startupDeadline=Date.now()+60000;
+  while(!target&&Date.now()<startupDeadline){try{const candidate=await discovery(control);await health(candidate);target=candidate;}catch{await delay(250);}}
+  if(!target)throw Error('App control did not become ready');
   await raw({command:'chat.channel.add',input:`https://www.twitch.tv/${twitch}`});
   await until(async()=>(await raw({command:'chat.messages'})).messages.length>0,'first comment',90000);
   const before=await status();

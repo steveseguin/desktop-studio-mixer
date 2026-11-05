@@ -8,7 +8,7 @@ import {fileURLToPath} from 'node:url';
 import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {setTimeout as delay} from 'node:timers/promises';
-import {discovery,request,screenshot} from './mcp/studio-client.mjs';
+import {discovery,health,request,screenshot} from './mcp/studio-client.mjs';
 
 const exec=promisify(execFile);
 const flag=(name,fallback)=>{const i=process.argv.indexOf('--'+name);return i<0?fallback:process.argv[i+1];};
@@ -33,7 +33,7 @@ const normal=t=>String(t??'').normalize('NFC').replace(/[\u200B\uFEFF]/g,'').rep
 const launch=async()=>{
   await fs.rm(control,{force:true});
   child=spawn(exe,['--studio-headless',`--studio-show=${show}`,'--local-control-port=0',`--local-control-discovery=${control}`],{env:{...process.env,VIDEO_MIXER_DATA_DIR:out},windowsHide:true,stdio:'ignore'});
-  target=await until(async()=>{try{return await discovery(control);}catch{return false;}},'control server');
+  target=await until(async()=>{try{const candidate=await discovery(control);await health(candidate);return candidate;}catch{return false;}},'control server',60000);
 };
 const quit=async()=>{try{await request(target,'/commands',{command:'quit'});}catch{}await Promise.race([new Promise(r=>child.once('exit',r)),delay(8000)]);if(child.exitCode===null){child.kill();return false;}return true;};
 const tree=async()=>{

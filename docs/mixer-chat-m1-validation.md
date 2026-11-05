@@ -2,7 +2,52 @@
 
 Updated 2026-11-05 UTC. Worktree: `C:\Users\Steve\code\video-mixer-chat`. The integration base is `90caa70` on `feature/studio-chat-spike` (07:56 local); the follow-up fixes and this report are recorded together in a later local commit on that branch. Main's application edits were not changed. The runs below exercised real WebView2, the portable app, Windows accessibility controls, recordings, and an installed release.
 
-## Current package, qualification follow-up
+## Integration and sustained validation, 18:15 UTC
+
+The new integration checkout is `C:\Users\Steve\code\video-mixer-chat-integration`, branch `feature/studio-chat-integration`. It combines current main (including the CLA) with the chat branch. Three existing local application edits from main were copied into this checkout for compatibility testing: the named 192 kbps recording AAC default, the file-output default, and the canvas-rate keyframe interval. The original main checkout and its unrelated deleted report ignore-file remain untouched.
+
+**Try:** `C:\Users\Steve\code\video-mixer-chat-integration\native-qt\dist\desktop-studio-chat-integration-nov5\desktop-studio.exe`.
+
+- Integration executable SHA-256: `2b0bca270ef351e8268897b0f791ae72651e77f3d74763d42df7fe87e4f9ce9c`.
+- Integration installer `native-qt/dist/desktop-studio-0.9.4-setup.exe` SHA-256: `b3e6ac16bb041607c38264b18127afccfebc3bacffe4b297bf41d8b506676bba`.
+- Complete integration ZIP: `native-qt/dist/desktop-studio-0.9.4-integration-windows-x64.zip`. The earlier ZIP without `integration` in its filename was created before FFmpeg was staged and is not a qualified artifact.
+- The existing qualified SSN pack and FFmpeg bundle were reused. No upstream capture script was changed. Signing uses the same local certificate, with trust status `UnknownError`.
+
+### Findings that remain open
+
+1. **Memory growth reproduced.** A two-hour three-platform run on the earlier `4ecfce8d...` executable kept receiving comments without a restart, but mean chat-process memory increased from **990 MiB** in minutes 2–5 to **2,172 MiB** in the final three minutes. Peak job memory was **2,207 MiB**, below the 3,072 MiB cap. This is not a memory-stability pass. CPU averaged 0.196 core. The run observed 13,054 Twitch, 6,494 YouTube and 9,345 Kick comments; each platform's longest observed gap was 31 seconds. One oversized capture packet was rejected/countable. This was a chat soak, not a two-hour recording. Evidence: original chat checkout, `native-qt/build-chat/soak/2026-11-05T14-34-16-283Z/`.
+2. **Intermittent Twitch loss remains unresolved.** Ten-minute runs matched 822/823 eligible comments on `4ecfce8d...` and 749/750 on the integration executable. Each missed one ordinary comment, after documented moderation exclusions. The second comment reached the page DOM and capture API, narrowing the loss to later processing. A subsequent integration run matched 636/636 and passed 20/20 workflows, but it had diagnostic JavaScript wrappers in the capture/engine/host pages and does not erase the failures. Nothing was posted to Twitch. Evidence: original chat checkout, `build-chat/live-e2e/2026-11-05T14-34-36-676Z/`, `2026-11-05T14-48-36-674Z/`, and `2026-11-05T15-07-44-604Z/`.
+3. **Kick spacing fidelity.** The 30-minute independent comparison on `4ecfce8d...` matched 2,174/2,179 author/content occurrences: all 946 plain-text and 1,228/1,233 emote-containing comments, with no stalls and a connected reference. Inspection found the five remaining comments in Studio with spaces between adjacent emotes removed. They are formatting mismatches, not evidence of five dropped comments; the strict check still fails. This does not resolve the previously observed intermittent losses. Evidence: original chat checkout, `build-chat/kick/2026-11-05T14-32-41-400Z/`.
+4. **Real broadcast rollover and remaining platforms remain unqualified.** Controlled rollover below substitutes a local ended signal. Rumble's Newsmax popout was empty in both the actual page and Studio for four minutes. TikTok produced seven visible authored comments plus one fan-club notice in three minutes, but did not establish sustained viewer-comment delivery. A separate five-minute diagnostic with explicit scroll pulses produced four ordinary text comments, two empty/unsupported items, gifts and notices; timed source screenshots also stopped showing new viewer comments. Do not count its 29 items as 29 viewer comments. Facebook, Instagram and X still need sign-in support.
+
+A separate integration per-page diagnostic showed growing YouTube DOM/listener counts despite a roughly 250-row visible list. Explicit garbage collection reduced 67,447 nodes to 67,111 and 19,661 listeners to 19,527. This is a lead, not a root-cause finding. A heap-snapshot attempt timed out and coincided with capture-page restarts, so that diagnostic cannot qualify natural stability. The two-hour soak above had no DevTools attachment or forced collection. Evidence: original chat checkout, `build-chat/page-metrics/2026-11-05T14-58-03-597Z/` and ignored `build-chat/youtube-gc-diagnostic.json`.
+
+### Completed application workflows
+
+| Workflow | Result | Evidence |
+| --- | --- | --- |
+| Original package, live YouTube, 30 minutes | 677/677 eligible plain-text comments; independent Live chat reference held; one page load. Non-plain content was not scored in this run. | Original checkout `build-chat/youtube/2026-11-05T14-35-25-691Z/` |
+| Integration package, live YouTube including emoji, 10 minutes | 424/424 eligible comments, including 95/95 with emoji; reference held; one page load. One additional whitespace-only reference item was not scored. | Original checkout `build-chat/youtube/2026-11-05T15-06-19-928Z/` |
+| Original package, forced chat-memory overload while recording | 8/8; chat recovered in 17.475 seconds, peak measured 2,963 MiB, worst control response 21 ms; full recording decoded and covered recovery. | Original checkout `build-chat/overload/2026-11-05T14-43-56-412Z/` |
+| Integration package, controlled YouTube rollover | 7/7. Local old-page status changed to ended; native recovery reached another real live broadcast on the same channel in 11.751 seconds, preserved one channel and showed a real comment. Restart restored identity and comments on the original still-live video. | Original checkout `build-chat/rollover/2026-11-05T14-51-34-676Z/` |
+| Integration package, Windows UI Automation | 22/22; screenshots visually reviewed at 1280 px. Amber on-screen band and actions remain legible. Wider Studio source controls are still cramped. | Original checkout `build-chat/ui-walkthrough/20261105-094608/` |
+| Integration installer, installed chat | 21/21; 500/500 distinct tokens at 50/s; Show Bar/Bubble/Big 313/244/300 ms, worst command 8 ms; browser recovery 1,416 ms; recording fully decoded. | Integration checkout `e2e/reports/chat-integration-nov5-qualified/chat/` |
+| Integration install/upgrade, damaged pack, CLI/MCP, recording, uninstall | Pass. Stale assets removed on upgrade; missing/tampered pack does not stop recording; portable/ZIP/installed executable hashes match; 12 distinct motion screenshots, maximum frame gap 34 ms; no owned descendants or installer registration left. | Integration checkout `e2e/reports/chat-integration-nov5-qualified/` |
+
+Evidence paths in this table are relative to each checkout's `native-qt/`. Real usernames, screenshots and capture profiles stay in ignored evidence directories. The recorded live-comment frame was also visually reviewed. No public chat messages were sent. Public Rumble discovery used its [live directory](https://rumble.com/browse/live); qualification relies on the actual source-page observations, not search snippets.
+
+### Fixes and harness corrections in this follow-up
+
+- A fresh build exposed a stale relay-patch checksum after a branding-only comment change. Restoring the original dependency comment makes the existing pinned checksum valid; the integrity guard remains in place.
+- Release packaging now refuses a missing FFmpeg bundle before signing or archiving. The fresh integration worktree initially lacked that ignored dependency; the qualified package uses the existing bundle.
+- Live harnesses now wait for the control server's actual health response, rather than treating discovery-file creation as readiness. Soak/page diagnostics accept the intended executable, record artifact metadata, support Kick and preserve incremental evidence.
+- YouTube comparisons now retain and score emoji accessibility text, including emoji-only comments. Unknown message runs fail qualification rather than silently becoming plain text.
+- The recorded-output decoder check now uses timestamp passthrough and a microsecond time base. Its default null encoder had rounded distinct 33/34 ms source timestamps into duplicate DTS warnings. Inspection of all 200 source frames confirmed increasing timestamps; decoding at full precision succeeds. The installer workflow was repeated successfully afterward.
+- The initial controlled-rollover harness wrongly expected a still-live original video to be treated as ended after restarting. That expectation was corrected explicitly; no product behavior was changed to satisfy it.
+
+The integration remains on a separate local branch. The next release blocker to investigate is sustained memory growth, followed by the intermittent Twitch loss and remaining platform/real-rollover qualification.
+
+## Earlier package, qualification follow-up
 
 Use `native-qt/dist/desktop-studio-chat-qualification-nov5/desktop-studio.exe`. It replaces the review build as the current artifact, while both earlier portable folders remain available. The only application change since the 13:00 review is honest setup wording: Twitch, YouTube and Kick are named; other platforms are experimental and sign-in is unavailable. English, Spanish and French text was updated. The SSN capture pack's `SHA256SUMS` is identical to the review package.
 
