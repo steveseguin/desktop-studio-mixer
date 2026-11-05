@@ -3,6 +3,7 @@
 #include "versus/video/window_capture.h"
 #include "versus/video/frame_waiter.h"
 #include "versus/app/encoder_recovery_policy.h"
+#include "versus/media_defaults.h"
 #include <QFileInfo>
 #include <QDir>
 #include <windows.h>
@@ -21,7 +22,7 @@ bool ProgramRecorder::start(const QString &path, int width, int height, int fps,
     if (busy_) return false;
     if (worker_.joinable()) worker_.join();
     output::Config config; config.protocol = output::Protocol::Recording; config.url = path.toStdString();
-    config.aacBitrateKbps = 192; // Local recording keeps its independent quality budget.
+    config.aacBitrateKbps = defaults::RecordingAacBitrateKbps;
     const auto error = output::validateConfig(config);
     { std::lock_guard lock(mutex_);
       if (!error.empty()) { status_ = QString::fromStdString(error); return false; }

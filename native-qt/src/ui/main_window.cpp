@@ -3285,6 +3285,8 @@ void MainWindow::onGoLiveClicked() {
         if (sourceModeValue == "mixer") if (const auto *studio = findChild<versus::mixer::MixerWidget*>()) {
             config.width = studio->canvasSize().width(); config.height = studio->canvasSize().height();
             config.frameRate = studio->canvasFrameRate();
+            // Keep the one-second keyframe interval chosen above for the canvas rate.
+            config.gopSize = config.frameRate;
         }
         if (!config.enableAlpha &&
             config.alphaBackgroundMode != versus::video::AlphaBackgroundMode::None &&
@@ -3875,7 +3877,11 @@ void MainWindow::switchOutputProtocol() {
         outputProfiles_.insert(previousOutput_, old);
     }
     previousOutput_ = outputSelect_->currentData().toString();
-    const auto config = outputProfiles_.value(previousOutput_);
+    auto config = outputProfiles_.value(previousOutput_);
+    if (previousOutput_ == "file" && !outputProfiles_.contains("file")) {
+        // Match the Studio recorder: local recordings do not inherit the streaming AAC default.
+        config.aacBitrateKbps = versus::defaults::RecordingAacBitrateKbps;
+    }
     outputUrlInput_->setText(QString::fromStdString(config.url));
     outputSecretInput_->setText(QString::fromStdString(previousOutput_ == "whip" ? config.bearerToken :
         previousOutput_ == "srt" ? config.passphrase : config.streamKey));

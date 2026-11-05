@@ -10,6 +10,8 @@ inline constexpr int VideoHeight = 720;
 inline constexpr int VideoFps = 30;
 inline constexpr int VideoBitrateKbps = 3000;
 inline constexpr int AudioBitrateKbps = 128;
+// Local MKV recordings keep a quality budget independent of the streaming default.
+inline constexpr int RecordingAacBitrateKbps = 192;
 // RTP codec fragment, not the complete encrypted IP packet. Leave room for
 // RTP extensions, RTX and SRTP on ordinary IPv6/UDP paths.
 inline constexpr std::size_t RtpVideoFragmentBytes = 1200;
