@@ -2,6 +2,44 @@
 
 Updated 2026-11-06 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
 
+## Visual and workflow review, 2026-11-06 UTC
+
+Review package: `native-qt/dist/desktop-studio-ui-review-nov6/desktop-studio.exe`, SHA-256 `0f7b9419e918fc184ecb365f451b783306e244b71b9aa6347d254822de8386aa`. This is an **unsigned portable review build**. It uses the unchanged runtime files and verified SSN pack from the Kick package below, with the rebuilt release executable substituted. A full file comparison found only the executable different among 4,062 files. The installer and ZIP have not been updated.
+
+This pass operated the visible packaged application through Windows UI Automation, real pointer clicks and keyboard input. It used an isolated show/profile and pretend chat; no messages were posted publicly and no stream or recording was started. The control API read outcomes and seeded three synthetic comments. Window/dialog screenshots and actual Program frames were inspected visually. Builds and whitespace checks were separate gates, not application testing.
+
+### Defects fixed during exploration
+
+- **Unintended on-air action:** Return had window-wide shortcut scope, so pressing it on an unrelated control could show a privately selected comment. It now applies only while the comment list has focus.
+- **Chat disappearing:** shrinking below 1,240 px closed chat. Switching to Output settings also fed the dock's temporary parent-hidden state back into the Chat toggle, leaving it closed on return. Both now preserve the operator's visibility choice.
+- **Source discoverability and navigation:** Add source was below the list; wide inspector rows required sideways scrolling. Actions now precede the list and those rows wrap. With a larger show, tabbing into a selected source row could leave it clipped below the surrounding panel; focus and row changes now reveal the row through the enclosing scroll areas. Accessible selection also now synchronizes the current keyboard row for sources and scenes, so switching input methods keeps the same selection.
+- **Silent position validation:** an out-of-bounds Comments layer position closed its dialog and wrote the explanation into hidden channel setup. Validation now keeps the dialog open with a visible message and permits correction in place.
+- **Search recovery:** no matches previously left an unexplained blank panel. Search has a clear control, and empty search/saved/donation views explain their state. The explanation is exposed outside the list's row-only accessibility provider.
+- **Accessible donations:** comment accessibility text now includes donation amounts and membership text.
+- **Clipped private comments:** the fixed-height painted preview hid long messages with no way to inspect the end. The preview scrolls with the keyboard, exposes its full text to accessibility tools, and elides long author headings. Inspection of a 1,740-character fixture reached its final marker without putting it on Program.
+
+### Packaged workflows
+
+The reproducible walkthrough is `native-qt/tools/studio-ui-workflows.ps1`. It covers selection/privacy, Return scope, Show/Keep/Hide, Private break, saved/search/donation filters, three display styles, window resizing, chat visibility, fifteen malformed channel inputs, position correction, scene creation/cancellation/rename/duplicate/removal/undo/redo, source validation and title creation, settings navigation, Unicode/literal-markup/long-comment fixtures, Studio mode, Take/Fade, seventy keyboard tab stops at 1280x720, and restarting the edited show. Restart must preserve scenes/source identities and must not rebroadcast the previous comment.
+
+**Final result: 77/77 checks passed, exit code 0**, on the executable identified above. The final run saved 25 window/dialog/Program screenshots and the full keyboard route. Evidence: `native-qt/build-integration/ui-exploration/20261106-005807/workflows-20261106-013433-827/`, including `workflow-results.json` and `keyboard-stops.json`. The larger reused show contained multiple previously added title sources, so the keyboard route exercised the previously clipped lower row. Earlier iterations failed the row visibility and mixed accessibility/keyboard selection checks; both pass on the final package. An overly immediate empty-state assertion was also corrected to wait for the visible explanation.
+
+Each run now uses a fresh evidence subdirectory even when reusing the isolated profile, and a failed Program screenshot fails the walkthrough. Earlier exploratory runs exposed the defects above and automation timing/popup issues; they are not release qualification.
+
+### Remaining limits
+
+- **1024x768 still needs horizontal scrolling.** Chat remains open, but the complete workspace does not fit. At 1280x720, nested panel/workspace scrolling remains visually busy. The audio panel still needs horizontal scrolling in narrow columns.
+- Long scene names remain clipped in the canvas heading and horizontally scrollable in the scene list. Bare channel names default to Twitch and `@handles` to YouTube; that distinction could be clearer in setup.
+- UI Automation checks do not replace a walkthrough with an actual screen reader. This pass did not qualify alternate display scaling, all themes/languages, hardware inputs, live publishing, or the installer.
+- These UI results do not change the unresolved live-platform, real-rollover, intermittent-loss and long recording/memory-soak limits below. C: had about 270 MiB free near the end, so another long recording was not attempted.
+
+To run against this portable artifact from the integration checkout:
+
+```powershell
+$env:VIDEO_MIXER_CHAT_EXE = "$PWD/native-qt/dist/desktop-studio-ui-review-nov6/desktop-studio.exe"
+powershell -NoProfile -ExecutionPolicy Bypass -File native-qt/tools/studio-ui-workflows.ps1
+```
+
 ## Kick whitespace fix, 2026-11-06 UTC
 
 Latest review package: `C:\Users\Steve\code\video-mixer-chat-integration\native-qt\dist\desktop-studio-chat-kick-nov6\desktop-studio.exe`. The executable remains `e1657afcd5d705d93a1589f192482f76d2a65865e75252fee08231588d1488a0`; the change is in the bundled SSN `sources/kick.js`, SHA-256 `d55d2d9be5133da5059adc1f552f825bcbc8d88283fb50554acd4fcaab25f5d3`. The prior source hash was `5b816a56609586ab656387184acaafcf4d91f0a1f58eca8dae47f4638a85a499`. The pack's checksums differ only for that source file. The source fix is committed locally as `9ad2e78e` in the sibling `social_stream` checkout on `beta` and preserves whitespace-only text nodes in both literal-text and HTML capture paths. It does not insert spaces where no separator exists.

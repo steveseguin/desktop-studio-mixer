@@ -6,6 +6,7 @@
 class QLabel;
 class QListView;
 class QLineEdit;
+class QScrollArea;
 class QPushButton;
 class QButtonGroup;
 class QProgressBar;
@@ -33,6 +34,7 @@ public:
 private:
     ChatFilter *filter_;
     ChatCard *card_;
+    QScrollArea *previewScroll_;
     QListView *list_;
     QLineEdit *input_, *search_;
     QButtonGroup *styles_;
@@ -40,7 +42,7 @@ private:
     QAction *practiceAction_;
     QWidget *airBand_, *feedControls_;
     QLabel *airComment_;
-    QLabel *notice_, *air_, *hint_;
+    QLabel *notice_, *air_, *hint_, *empty_;
     QLabel *practiceBanner_;
     QPushButton *new_, *practice_, *save_, *show_, *keep_, *hide_;
     QWidget *tray_;

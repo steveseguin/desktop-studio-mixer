@@ -6,6 +6,7 @@
 #include <QDialog>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QDialogButtonBox>
 #include <QHBoxLayout>
 #include <QJsonDocument>
@@ -72,13 +73,20 @@ class ChatCard : public QWidget {
 public:
     QJsonObject message;QString style="bar";
     using QWidget::QWidget;
+    void fitContent() {
+        auto f=font();if(style=="big")f.setPointSizeF(f.pointSizeF()*1.25);
+        const int textHeight=QFontMetrics(f).boundingRect(QRect(0,0,std::max(1,width()-24),200000),Qt::TextWordWrap,message["chatmessage"].toString()).height();
+        setMinimumHeight(std::max(92,textHeight+44));
+    }
 protected:
+    void resizeEvent(QResizeEvent *event) override {QWidget::resizeEvent(event);fitContent();}
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);p.setRenderHint(QPainter::Antialiasing);
         const bool bubble=style=="bubble";p.setBrush(bubble?QColor(Qt::white):QColor("#0d1620"));p.setPen(Qt::NoPen);
         p.drawRoundedRect(rect().adjusted(2,2,-2,-2),bubble?22:6,bubble?22:6);
         p.setPen(bubble?QColor("#51606e"):QColor("#ffb454"));auto f=font();f.setBold(true);p.setFont(f);
-        p.drawText(rect().adjusted(12,8,-12,-8),Qt::AlignTop|Qt::TextSingleLine,message["chatname"].toString()+" · "+chatPlatformName(message["type"].toString()));
+        const auto heading=message["chatname"].toString()+" · "+chatPlatformName(message["type"].toString());
+        p.drawText(rect().adjusted(12,8,-12,-8),Qt::AlignTop|Qt::TextSingleLine,p.fontMetrics().elidedText(heading,Qt::ElideRight,std::max(0,width()-24)));
         f.setBold(false);if(style=="big")f.setPointSizeF(f.pointSizeF()*1.25);p.setFont(f);p.setPen(bubble?QColor("#10202e"):QColor(Qt::white));
         p.drawText(rect().adjusted(12,32,-12,-8),Qt::AlignTop|Qt::TextWordWrap,message["chatmessage"].toString());
     }
@@ -106,10 +114,13 @@ ChatPanel::ChatPanel(QWidget *parent) : QWidget(parent),engine(this) {
         auto b=new QPushButton(studioText(mode.toUtf8().constData()),this);b->setCheckable(true);b->setChecked(mode=="All");filters->addWidget(b);
         connect(b,&QPushButton::clicked,this,[this,b,mode,filters]{filter_->mode=mode.toLower();filter_->refresh();for(int i=0;i<filters->count();++i)if(auto other=qobject_cast<QPushButton*>(filters->itemAt(i)->widget()))other->setChecked(other==b);});
     }
-    search_=new QLineEdit(this);search_->setPlaceholderText(studioText("Search"));search_->setAccessibleName(studioText("Search comments"));feedControls->addWidget(search_);
+    search_=new QLineEdit(this);search_->setPlaceholderText(studioText("Search"));search_->setAccessibleName(studioText("Search comments"));search_->setClearButtonEnabled(true);feedControls->addWidget(search_);
     connect(search_,&QLineEdit::textChanged,this,[this](QString text){filter_->query=text;filter_->refresh();});
     list_=new QListView(this);list_->setObjectName("chatMessages");list_->setAccessibleName(studioText("Comments"));list_->setModel(filter_);list_->setItemDelegate(new ChatDelegate(list_));
-    list_->setUniformItemSizes(true);list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);list_->setSelectionMode(QAbstractItemView::SingleSelection);root->addWidget(list_,1);
+    list_->setUniformItemSizes(true);list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);list_->setSelectionMode(QAbstractItemView::SingleSelection);
+    auto listSlot=new QGridLayout;listSlot->setContentsMargins(0,0,0,0);listSlot->addWidget(list_,0,0);root->addLayout(listSlot,1);
+    // A sibling remains accessible; Qt's list provider only exposes rows inside its viewport.
+    empty_=plainLabel(this);empty_->setAlignment(Qt::AlignCenter);empty_->setAttribute(Qt::WA_TransparentForMouseEvents);empty_->setContentsMargins(16,16,16,16);listSlot->addWidget(empty_,0,0,Qt::AlignVCenter);
     watchChatSelection(list_->selectionModel(),this,[this](const QString &id){if(syncingSelection_)return;if(id.isEmpty())jump();else select(id);});
     // Layout and model insertions also move the scrollbar. Only a user's scroll
     // action may freeze the feed; otherwise deselection immediately pauses it again.
@@ -130,7 +141,8 @@ ChatPanel::ChatPanel(QWidget *parent) : QWidget(parent),engine(this) {
     auto styleRow=new QHBoxLayout;tray->addLayout(styleRow);styles_=new QButtonGroup(this);styles_->setExclusive(true);
     for(const auto &name:QStringList{"Bar","Bubble","Big"}) {auto button=new QPushButton(studioText(name.toUtf8().constData()),tray_);button->setCheckable(true);button->setProperty("chatStyle",name.toLower());button->setAccessibleName(studioText(name.toUtf8().constData()));styles_->addButton(button);styleRow->addWidget(button);
         connect(button,&QPushButton::clicked,this,[this,button]{layer.style=button->property("chatStyle").toString();card_->style=layer.style;card_->update();if(changed)changed();});}
-    card_=new ChatCard(tray_);card_->setFixedHeight(92);card_->setAccessibleName(studioText("Private comment preview"));tray->addWidget(card_);
+    previewScroll_=new QScrollArea(tray_);previewScroll_->setWidgetResizable(true);previewScroll_->setFrameShape(QFrame::NoFrame);previewScroll_->setFixedHeight(110);previewScroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);previewScroll_->setFocusPolicy(Qt::StrongFocus);previewScroll_->setAccessibleName(studioText("Private comment preview"));tray->addWidget(previewScroll_);
+    card_=new ChatCard(previewScroll_);previewScroll_->setWidget(card_);
     auto actions=new QHBoxLayout;tray->addLayout(actions);
     show_=new QPushButton(studioText("Show on screen"),tray_);show_->setObjectName("showComment");show_->setMinimumHeight(44);actions->addWidget(show_,1);
     save_=new QPushButton(studioText("Save"),tray_);save_->setMinimumHeight(44);actions->addWidget(save_);
@@ -147,10 +159,12 @@ ChatPanel::ChatPanel(QWidget *parent) : QWidget(parent),engine(this) {
         QDialog dialog(this);dialog.setWindowTitle(studioText("Comments layer position"));QFormLayout form(&dialog);QDoubleSpinBox values[4];
         const double current[]{layer.rect.x(),layer.rect.y(),layer.rect.width(),layer.rect.height()};const char *labels[]{"Left","Top","Width","Height"};
         for(int i=0;i<4;++i){values[i].setRange(i<2?0:1,100);values[i].setValue(current[i]*100);values[i].setSuffix("%");form.addRow(studioText(labels[i]),&values[i]);}
-        QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);form.addRow(&buttons);connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
-        if(dialog.exec()==QDialog::Accepted){auto data=layer.json();const char *keys[]{"x","y","w","h"};for(int i=0;i<4;++i)data[keys[i]]=values[i].value()/100;CommentsLayer candidate;if(CommentsLayer::read(data,candidate)){layer=candidate;if(changed)changed();}else hint_->setText(studioText("Keep the Comments layer inside the video."));}
+        auto error=plainLabel(&dialog);error->hide();form.addRow(error);
+        QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);form.addRow(&buttons);connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+        connect(&buttons,&QDialogButtonBox::accepted,&dialog,[&]{auto data=layer.json();const char *keys[]{"x","y","w","h"};for(int i=0;i<4;++i)data[keys[i]]=values[i].value()/100;CommentsLayer candidate;if(!CommentsLayer::read(data,candidate)){error->setText(studioText("Keep the Comments layer inside the video."));error->show();return;}layer=candidate;if(changed)changed();dialog.accept();});
+        dialog.exec();
     });
-    auto enter=new QShortcut(QKeySequence(Qt::Key_Return),list_);connect(enter,&QShortcut::activated,show_,&QPushButton::click);
+    auto enter=new QShortcut(QKeySequence(Qt::Key_Return),list_);enter->setContext(Qt::WidgetShortcut);connect(enter,&QShortcut::activated,show_,&QPushButton::click);
     auto escape=new QShortcut(QKeySequence(Qt::Key_Escape),this);escape->setContext(Qt::WidgetWithChildrenShortcut);connect(escape,&QShortcut::activated,this,&ChatPanel::hideComment);
     clock_.start();practiceClock_.start();connect(&engine,&ChatEngine::updated,this,&ChatPanel::refresh);
     connect(&engine,&ChatEngine::commentDeleted,this,[this](const QJsonObject &deletion){
@@ -236,6 +250,8 @@ void ChatPanel::refresh() {
     setup_->setVisible(setupOpen_||(engine.settings.channels.isEmpty()&&!engine.settings.practice));
     const bool firstRun=engine.settings.channels.isEmpty()&&!engine.settings.practice;
     feedControls_->setVisible(!firstRun);list_->setVisible(!firstRun);practice_->setVisible(engine.settings.channels.isEmpty());practiceAction_->setVisible(!firstRun);
+    empty_->setVisible(!firstRun&&filter_->rowCount()==0);
+    empty_->setText(!filter_->query.isEmpty()?studioText("No matching comments. Clear Search to see comments again."):filter_->mode=="saved"?studioText("No saved comments yet. Select a comment, then choose Save."):filter_->mode=="thanks"?studioText("Donations and membership messages will appear here."):studioText("Waiting for comments."));
     practiceAction_->setText(studioText(engine.settings.practice?"Stop practising":"Try it with pretend chat"));
     addMore_->setVisible(!engine.settings.channels.isEmpty()||engine.settings.practice);
     practiceBanner_->setVisible(engine.settings.practice);
@@ -245,7 +261,9 @@ void ChatPanel::refresh() {
     }
     if(!waitingToken_.isEmpty()&&!engine.health["error"].toString().isEmpty()){waitingToken_.clear();requested_={};}
     new_->setVisible(engine.model.paused());new_->setText(engine.model.pendingCount()>0?studioText("%1 new comments").arg(engine.model.pendingCount()):studioText("Back to live"));new_->setAccessibleName(studioText("Back to live"));
-    const auto m=engine.model.message(selected_);tray_->setVisible(!m.isEmpty());card_->message=m;card_->style=layer.style;card_->update();
+    const auto m=engine.model.message(selected_);tray_->setVisible(!m.isEmpty());const bool newPreview=card_->message["id"]!=m["id"];card_->message=m;card_->style=layer.style;card_->fitContent();card_->update();
+    if(newPreview)previewScroll_->verticalScrollBar()->setValue(0);
+    const auto previewText=m["chatname"].toString()+"\n"+m["chatmessage"].toString();previewScroll_->setAccessibleDescription(previewText);card_->setAccessibleName(previewText);card_->setToolTip(m["chatname"].toString());
     for(auto button:styles_->buttons()){QSignalBlocker block(button);button->setChecked(button->property("chatStyle").toString()==layer.style);}
     save_->setText(studioText(m["saved"].toBool()?"Saved":"Save"));
     show_->setEnabled(engine.health["ready"].toBool()&&waitingToken_.isEmpty()&&layer.enabled);

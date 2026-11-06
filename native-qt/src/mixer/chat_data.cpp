@@ -217,7 +217,11 @@ QVariant ChatMessageModel::data(const QModelIndex &index, int role) const {
     if (!index.isValid() || index.row()<0 || index.row()>=rows_.size()) return {};
     const auto &m=rows_[index.row()];
     if (role==Qt::UserRole) return m;
-    if (role==Qt::DisplayRole || role==Qt::AccessibleTextRole) return m["chatname"].toString()+" · "+m["type"].toString()+"\n"+m["chatmessage"].toString();
+    if (role==Qt::DisplayRole || role==Qt::AccessibleTextRole) {
+        auto text=m["chatname"].toString()+" · "+m["type"].toString();
+        for(const auto &key:{"hasDonation","membership"})if(!m[key].toString().isEmpty())text+=" · "+m[key].toString();
+        return text+"\n"+m["chatmessage"].toString();
+    }
     return {};
 }
 void ChatMessageModel::append(QJsonObject message) {

@@ -674,7 +674,11 @@ struct MixerWidget::Impl {
         QObject::connect(invite, &QPushButton::clicked, q, [this] { addInvite(false); });
         QObject::connect(wireless, &QPushButton::clicked, q, [this] { addInvite(true); });
         QObject::connect(chat, &QPushButton::toggled, nativeChatDock, &QDockWidget::setVisible);
-        QObject::connect(nativeChatDock, &QDockWidget::visibilityChanged,chat,&QPushButton::setChecked);
+        QObject::connect(nativeChatDock, &QDockWidget::visibilityChanged,chat,[this,chat](bool){
+            // Hiding the Studio tab hides its children without changing the user's choice.
+            // Feeding that temporary visibility back into toggled() would close chat.
+            const QSignalBlocker block(chat);chat->setChecked(!nativeChatDock->isHidden());
+        });
         chat->setStyleSheet("QPushButton:checked { background:palette(highlight); color:palette(highlighted-text); border:2px solid palette(highlight); }");
         QObject::connect(&chatPanel->engine,&ChatEngine::updated,chat,[this,chat]{const int count=chatPanel->engine.model.rowCount()+chatPanel->engine.model.pendingCount();chat->setText(nativeChatDock->isVisible()||!count?studioText("Chat"):studioText("Chat")+" ("+QString::number(count)+")");});
         talk->setText(studioText("Private talkback")); talk->setCheckable(true);
@@ -897,6 +901,7 @@ struct MixerWidget::Impl {
         QObject::connect(sceneList, &QListWidget::itemSelectionChanged, q, [this] {
             const int row = sceneList->selectedItems().isEmpty() ? -1 : sceneList->row(sceneList->selectedItems().front());
             if (rebuilding || row < 0 || row >= static_cast<int>(scenes.size())) return;
+            if(sceneList->currentRow()!=row){const QSignalBlocker block(sceneList);sceneList->setCurrentRow(row,QItemSelectionModel::NoUpdate);}
             selectedScene = row; rebuildSources(); syncInspector(); changed();
         });
         QObject::connect(newScene, &QPushButton::clicked, q, [this] {
@@ -930,7 +935,7 @@ struct MixerWidget::Impl {
         auto *add = button("+ Add source", "addSource", sourceButtons, q);
         auto *remove = button("Remove", "removeSource", sourceButtons, q);
         auto *interact = button("Open / Invite", "interactSource", sourceButtons, q);
-        sourceLayout->addLayout(sourceButtons);
+        sourceLayout->insertLayout(0,sourceButtons);
         auto *editButtons = new QHBoxLayout;
         auto *edit = button("Edit source", "editSource", editButtons, q);
         auto *reconnect = button("Reconnect", "reconnectSource", editButtons, q);
@@ -1022,6 +1027,7 @@ struct MixerWidget::Impl {
         QObject::connect(sourceList, &QListWidget::itemSelectionChanged, q, [this] {
             if (rebuilding) return;
             auto *item = sourceList->selectedItems().isEmpty() ? nullptr : sourceList->selectedItems().front();
+            if(item&&sourceList->currentItem()!=item){const QSignalBlocker block(sourceList);sourceList->setCurrentItem(item,QItemSelectionModel::NoUpdate);}
             selectedSource = item ? item->data(Qt::UserRole).toString() : QString(); syncInspector();
             if (auto selected = source(selectedSource); selected && !selected->error.isEmpty()) message(selected->error);
         });
@@ -1179,6 +1185,17 @@ struct MixerWidget::Impl {
         QObject::connect(monitorVolume, &QSlider::valueChanged, q, [this](int value) { monitorGain = value/100.0f; });
         auto *monitorHelp = new QLabel(studioText("Scene follows Program. Listen also hears sources off air. Use headphones for monitoring and guest talkback. Mics start with Listen off."), q);
         monitorHelp->setWordWrap(true); audioLayout->addWidget(monitorHelp);
+        // Keep source actions and inspector fields within a narrow column.
+        // Four-button and four-coordinate rows otherwise force sideways scrolling.
+        for(int row=0;row<sourceLayout->count();++row) {
+            auto *line=qobject_cast<QHBoxLayout*>(sourceLayout->itemAt(row)->layout());
+            if(!line || line->count()<4)continue;
+            const int columns=line->count()>4?4:2;
+            sourceLayout->takeAt(row);
+            auto *grid=new QGridLayout;int cell=0;
+            while(auto *item=line->takeAt(0)){grid->addItem(item,cell/columns,cell%columns);++cell;}
+            delete line;sourceLayout->insertLayout(row,grid);
+        }
         // Each tool panel has its own bounded scroll surface. The canvas stays
         // in view on laptop displays while inspectors can scroll independently.
         for (auto *group : {sceneBox, sourceBox, audioBox}) {
@@ -1188,6 +1205,22 @@ struct MixerWidget::Impl {
             group->setObjectName(group == sceneBox ? "studioScenesPanel" : group == sourceBox ? "studioSourcesPanel" : "studioAudioPanel");
             group->setStyleSheet(QString("QGroupBox#%1 { background:#0b141e; border:1px solid #50667b; border-radius:4px; margin-top:8px; } QGroupBox#%1::title { subcontrol-origin:margin; left:8px; padding:0 3px; }").arg(group->objectName()));
             scroll->setWidget(group); panels->addWidget(scroll);
+            auto *focusList=group==sourceBox?sourceList:group==sceneBox?sceneList:nullptr;
+            if(focusList) {
+                // A focused row can be visible to its list but clipped by the outer
+                // inspector. Reveal that row through every enclosing scroll area.
+                auto reveal=[scroll,focusList]{QTimer::singleShot(0,scroll,[focusList]{
+                    if(!focusList->hasFocus()||!focusList->currentItem())return;
+                    focusList->scrollToItem(focusList->currentItem());
+                    const auto row=focusList->visualItemRect(focusList->currentItem());
+                    for(auto parent=focusList->parentWidget();parent;parent=parent->parentWidget())if(auto area=qobject_cast<QScrollArea*>(parent)) {
+                        const auto point=focusList->viewport()->mapTo(area->widget(),QPoint(8,row.center().y()));
+                        area->ensureVisible(point.x(),point.y(),12,row.height()/2+4);
+                    }
+                });};
+                QObject::connect(qApp,&QApplication::focusChanged,scroll,[focusList,reveal](QWidget*,QWidget *now){if(now==focusList)reveal();});
+                QObject::connect(focusList,&QListWidget::currentRowChanged,scroll,[reveal](int){reveal();});
+            }
         }
         panels->setSizes({220, 680, 380}); root->addWidget(panels, 4);
         status = new QLabel(studioText("Add cameras, windows, audio, or browser sources to get started."), q);
@@ -2482,7 +2515,8 @@ MixerWidget::MixerWidget(app::VersusApp *core, QWidget *parent) : QWidget(parent
 MixerWidget::~MixerWidget() = default;
 void MixerWidget::resizeEvent(QResizeEvent *event) {
     QWidget::resizeEvent(event);
-    if(impl_&&impl_->nativeChatDock&&window()->width()<1240)impl_->nativeChatDock->hide();
+    // Chat visibility is the operator's choice, including on smaller displays.
+    // The workspace scroll host keeps controls reachable when space is limited.
 }
 bool MixerWidget::confirmPracticeOutput() { return impl_->chatPanel->confirmPracticeOutput(); }
 bool MixerWidget::practiceMode() const { return impl_->chatPanel->engine.settings.practice; }
