@@ -190,6 +190,9 @@ void ProcessWorker::terminate() {
     }
 }
 QString ProcessWorker::error() const { return impl_->error; }
+void ProcessWorker::allowForegroundActivation() {
+    if(impl_->process)AllowSetForegroundWindow(GetProcessId(impl_->process));
+}
 QJsonObject ProcessWorker::resourceUsage() {
     auto &s=*impl_;if(!s.job)return {};
     JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION accounting{};

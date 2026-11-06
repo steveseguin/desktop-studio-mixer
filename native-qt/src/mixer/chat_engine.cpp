@@ -57,7 +57,7 @@ ChatEngine::ChatEngine(QObject *parent) : QObject(parent), model(this), impl_(st
                     if(now>=resourceAt){resources=worker.resourceUsage();resourceAt=now+std::chrono::seconds(1);if(resources["limit_exceeded"].toBool()){recoveryUntil=now+std::chrono::seconds(10);nextStart=now+std::chrono::seconds(3);}}
                     if(resources["limit_exceeded"].toBool()&&!worker.alive()){{std::lock_guard lock(state->mutex);state->health={{"ready",false},{"resources",resources},{"error","Chat used too many resources. Restarting chat; your output continues."}};}std::this_thread::sleep_for(std::chrono::milliseconds(50));continue;}
                     if(wanted!=configured){auto c=wanted;c["op"]="configure";worker.call(c);configured=wanted;}
-                    for(const auto &c:commands) {const auto reply=worker.call(c);if(reply.contains("error")){std::lock_guard lock(state->mutex);state->health["error"]=reply["error"];}}
+                    for(const auto &c:commands) {if(c["op"]=="signin")worker.allowForegroundActivation();const auto reply=worker.call(c);if(reply.contains("error")){std::lock_guard lock(state->mutex);state->health["error"]=reply["error"];}}
                     auto result=worker.call({{"op","poll"}});
                     QElapsedTimer transfer;transfer.start();QString imageToken;auto image=worker.image(false,&imageToken);if(imageToken!=transferredToken){transferMs=transfer.elapsed();transferredToken=imageToken;}
                     const auto heartbeat=worker.status()["heartbeat"].toInteger();

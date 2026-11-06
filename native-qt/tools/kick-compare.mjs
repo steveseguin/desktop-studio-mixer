@@ -1,5 +1,6 @@
 // Compares Kick comments in the packaged app against Kick's own public chat socket.
-// Read-only and isolated: nothing is sent to a chat. DevTools is enabled only for this QA launch.
+// Read-only: nothing is sent to chat. Public reference requests do not require browser debugging.
+// --session PATH attaches to an existing isolated QA app and leaves it running.
 //   node native-qt/tools/kick-compare.mjs [--channel NAME] [--seconds 300]
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -10,44 +11,40 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {discovery,health,request} from './mcp/studio-client.mjs';
 
 const flag=(name,fallback)=>{const i=process.argv.indexOf('--'+name);return i<0?fallback:process.argv[i+1];};
-const seconds=Number(flag('seconds',300)),port=Number(flag('port',9395));
+const seconds=Number(flag('seconds',300));
+if(!Number.isFinite(seconds)||seconds<30)throw Error('Comparison requires at least 30 seconds');
+const attached=flag('session')?JSON.parse((await fs.readFile(flag('session'),'utf8')).replace(/^\uFEFF/,'')):null;
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
-const exe=process.env.VIDEO_MIXER_CHAT_EXE||path.join(root,'native-qt/dist/desktop-studio-portable/desktop-studio.exe');
+const exe=attached?.exe||process.env.VIDEO_MIXER_CHAT_EXE||path.join(root,'native-qt/dist/desktop-studio-portable/desktop-studio.exe');
 const out=path.join(root,'native-qt/build-chat/kick',new Date().toISOString().replaceAll(/[:.]/g,'-'));
 await fs.mkdir(out,{recursive:true});
 const sha=async p=>createHash('sha256').update(await fs.readFile(p)).digest('hex');
 await fs.writeFile(path.join(out,'artifact.json'),JSON.stringify({exe,exeSha256:await sha(exe),sourceSha256:await sha(path.join(path.dirname(exe),'ssn/sources/kick.js'))},null,2));
-const control=path.join(out,'control.json');
-const flags=`--remote-debugging-port=${port} --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding`;
-const child=spawn(exe,['--studio-headless',`--studio-show=${path.join(out,'show.mixer.json')}`,'--local-control-port=0',`--local-control-discovery=${control}`],{env:{...process.env,VIDEO_MIXER_DATA_DIR:out,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:flags},windowsHide:true,stdio:'ignore'});
+const control=attached?.control||path.join(out,'control.json');
+const child=attached?null:spawn(exe,['--studio-headless',`--studio-show=${path.join(out,'show.mixer.json')}`,'--local-control-port=0',`--local-control-discovery=${control}`],{env:{...process.env,VIDEO_MIXER_DATA_DIR:out},windowsHide:true,stdio:'ignore'});
 let target;const startupDeadline=Date.now()+60000;
 while(!target&&Date.now()<startupDeadline){try{const candidate=await discovery(control);await health(candidate);target=candidate;}catch{await delay(250);}}
 const raw=c=>request(target,'/studio/command',c);
 const normal=t=>String(t??'').normalize('NFC').replace(/[​﻿]/g,'').replace(/\s+/gu,' ').trim();
-const kickPage=async()=>(await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(p=>/kick\.com/.test(p.url)&&p.type==='page');
-async function inPage(page,expression){
-  const ws=new WebSocket(page.webSocketDebuggerUrl);await new Promise((r,x)=>{ws.onopen=r;ws.onerror=x;});
-  const result=await new Promise((r,x)=>{ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id===1)r(m.result);};ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{expression,awaitPromise:true,returnByValue:true}}));setTimeout(()=>x(Error('page timeout')),20000);});
-  ws.close();return result?.result?.value;
+async function publicJson(url){
+ const response=await fetch(url,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(15000)});
+ if(!response.ok)throw Error(`Public Kick reference HTTP ${response.status}`);
+ return response.json();
 }
 const until=async(fn,ms=60000)=>{const s=Date.now();while(Date.now()-s<ms){const v=await fn().catch(()=>null);if(v)return v;await delay(1000);}return null;};
 let summary={},socket;
 try{
   let channel=flag('channel');
-  let added=await raw({command:'chat.channel.add',input:`https://kick.com/${channel||'kick'}`});
-  if(!added.channel?.id)throw Error(added.error||'Kick channel was not added');
-  let page=await until(kickPage);
-  if(!page)throw Error('no Kick page opened');
   if(!channel){
-    const listing=await until(()=>inPage(page,`fetch('/stream/livestreams/en?page=1&limit=8&sort=desc').then(r=>r.json()).then(j=>JSON.stringify((j.data||[]).map(s=>({slug:s.channel?.slug,viewers:s.viewer_count})))).catch(e=>'')`).then(v=>{const a=v?JSON.parse(v):[];return a.length?a:null;}),30000);
-    if(!listing)throw Error('could not list live Kick channels');
-    console.log('live channels',JSON.stringify(listing));
-    channel=listing.find(s=>s.viewers>=500&&s.viewers<=20000)?.slug||listing[0].slug;
-    added=await raw({command:'chat.channel.add',input:`https://kick.com/${channel}`});
-    if(!added.channel?.id)throw Error(added.error||'Live Kick channel was not added');
-    page=await until(async()=>(await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(p=>p.url.includes(`/${channel}/`)||p.url.endsWith(`/${channel}`)));
+    const listing=(await publicJson('https://kick.com/stream/livestreams/en?page=1&limit=8&sort=desc')).data||[];
+    channel=(listing.find(s=>s.viewer_count>=500&&s.viewer_count<=20000)||listing[0])?.channel?.slug;
   }
-  const info=await until(()=>inPage(page,`fetch('/api/v2/channels/${channel}').then(r=>r.json()).then(j=>JSON.stringify({id:j.chatroom?.id,viewers:j.livestream?.viewer_count??null,live:!!j.livestream})).catch(e=>'')`).then(v=>{const o=v?JSON.parse(v):null;return o?.id?o:null;}),30000);
+  if(!/^[a-z0-9_-]{1,50}$/i.test(channel||''))throw Error('Choose a public Kick channel name');
+  const existing=(await raw({command:'chat.status'})).channels.find(c=>c.platform==='Kick'&&c.name.toLowerCase()===channel.toLowerCase());
+  const added=existing?{channel:existing}:await raw({command:'chat.channel.add',input:`https://kick.com/${channel}`});
+  if(!added.channel?.id)throw Error(added.error||'Kick channel was not added');
+  const data=await publicJson(`https://kick.com/api/v2/channels/${channel}`);
+  const info=data?.chatroom?.id?{id:data.chatroom.id,viewers:data.livestream?.viewer_count??null,live:!!data.livestream}:null;
   if(!info)throw Error('could not read the chatroom id');
   if(!info.live)throw Error('Selected Kick channel is not live');
   console.log('channel',channel,JSON.stringify(info));
@@ -116,7 +113,9 @@ finally{
   if(socket){socket.onclose=null;socket.close();}
   console.log('SUMMARY',JSON.stringify(summary));
   await fs.writeFile(path.join(out,'summary.json'),JSON.stringify(summary,null,1));
-  try{await request(target,'/commands',{command:'quit'});}catch{}
-  await Promise.race([new Promise(r=>child.once('exit',r)),delay(8000)]);if(child.exitCode===null)child.kill();
+  if(child){
+    try{await request(target,'/commands',{command:'quit'});}catch{}
+    if(child.exitCode===null)await Promise.race([new Promise(r=>child.once('exit',r)),delay(8000)]);if(child.exitCode===null)child.kill();
+  }
   console.log('dir',out);
 }

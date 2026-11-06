@@ -69,7 +69,7 @@ private slots:
     }
     void platformPageStates() {
         QCOMPARE(chatPageStatus({{"notFound",true}}),QString("We could not find that channel. Check the link."));
-        QCOMPARE(chatPageStatus({{"login",true}}),QString("This channel needs sign-in. Sign-in is not available in Studio yet."));
+        QCOMPARE(chatPageStatus({{"login",true}}),QString("This channel needs sign-in. Open Accounts to continue."));
         QCOMPARE(chatPageStatus({{"ended",true}}),QString("Waiting for your stream"));
         QCOMPARE(chatPageStatus({{"offline",true}}),QString("Waiting for your stream"));
         QCOMPARE(chatPlatformName("youtube"),QString("YouTube"));
@@ -83,6 +83,30 @@ private slots:
         QUrl ebay("https://www.ebay.com/ebaylive/events/123"),frame("https://ir.ebaystatic.com/cr/ebaylivepubweb/liveassets/shoplive/chat");
         QVERIFY(chatCaptureAllowed(manifest,ebay,frame,true));
         QVERIFY(!chatCaptureAllowed(manifest,ebay,QUrl("https://ir.ebaystatic.com/advertisement"),true));
+    }
+    void accountNavigationBoundaries() {
+        QVERIFY(chatSignInAllowed("Twitch",QUrl("https://passport.twitch.tv/login")));
+        QVERIFY(chatSignInAllowed("Instagram",QUrl("https://www.facebook.com/login/")));
+        for(const auto &url:QStringList{"https://twitch.tv.evil.test/login","https://evil-twitch.tv/login","http://www.twitch.tv/login","https://user:secret@www.twitch.tv/login","https://www.twitch.tv:444/login","file:///C:/secret","javascript:alert(1)","https://accounts.google.com/o/oauth2/auth","https://www.instagram.com/accounts/login/"})QVERIFY2(!chatSignInAllowed("Twitch",QUrl(url)),qPrintable(url));
+        QVERIFY(chatSignInUrl("YouTube").isEmpty());
+        QVERIFY(chatSignInUrl("unknown").isEmpty());
+        QVERIFY(!chatSignInAllowed("unknown",QUrl("https://example.com")));
+    }
+    void giftStreakIsolation() {
+        ChatMessageModel model;
+        auto gift=[](QString id,QString channel,QString epoch,int count){return QJsonObject{{"id",id},{"channel",channel},{"capture_epoch",epoch},{"type","tiktok"},{"event","gift"},{"chatmessage",QString::number(count)},{"meta",QJsonObject{{"tiktokGiftStreakId","same-streak"},{"tiktokGiftCount",count}}}};};
+        model.append(gift("first","one","session",1));model.toggleSaved("first");model.setPaused(true);
+        model.append(gift("later","one","session",5));model.append(gift("stale","one","session",3));
+        QCOMPARE(model.rowCount(),1);QCOMPARE(model.message("first")["chatmessage"].toString(),QString("5"));QVERIFY(model.message("first")["saved"].toBool());
+        model.append(gift("other-channel","two","session",2));model.append(gift("other-session","one","new-session",2));
+        QCOMPARE(model.pendingCount(),2);model.setPaused(false);QCOMPARE(model.rowCount(),3);
+    }
+    void supportEventClassification() {
+        QVERIFY(!chatIsSupportEvent({{"type","twitch"},{"membership","SUBSCRIBER"},{"chatmessage","ordinary comment"}}));
+        QVERIFY(chatIsSupportEvent({{"type","twitch"},{"membership","SUBSCRIBER"},{"event","subscription_gift"}}));
+        QVERIFY(chatIsSupportEvent({{"type","youtube"},{"membership","6 months"},{"event","membermilestone"}}));
+        QVERIFY(chatIsSupportEvent({{"type","tiktok"},{"event","gift"}}));
+        QVERIFY(chatIsSupportEvent({{"hasDonation","100 KICKs"}}));
     }
     void verifiedPack() {
         QVERIFY(verifyChatPack(QCoreApplication::applicationDirPath()+"/ssn"));

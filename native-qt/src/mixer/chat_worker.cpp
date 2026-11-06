@@ -12,6 +12,14 @@
 #include <QUrl>
 #include <QUuid>
 #include <QWidget>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPushButton>
+#include <QCloseEvent>
+#include <QResizeEvent>
+#include <QMoveEvent>
+#include <QScreen>
 #include <windows.h>
 #include <shlwapi.h>
 #include <wrl.h>
@@ -22,6 +30,7 @@
 #include <set>
 #include <vector>
 #include <stdexcept>
+#include <cmath>
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 
@@ -44,10 +53,31 @@ struct Page:QWidget {
     std::map<QString,ComPtr<ICoreWebView2Frame2>> captureFrames;
     QSet<qint64> deletedIds;
     qint64 probeAt=0, retryAt=0;int retrySeconds=60;bool probePending=false, terminal=false;
-    Page(Host &h,int i,QString r,QString u):host(h),id(i),role(r),url(u){resize(1280,720);setWindowTitle("Desktop Studio chat");winId();}
+    QWidget *browserArea=nullptr;QLabel *accountLocation=nullptr,*accountHelp=nullptr;
+    Page(Host &h,int i,QString r,QString u):host(h),id(i),role(r),url(u){
+        resize(1280,720);setWindowTitle("Desktop Studio chat");setAttribute(Qt::WA_QuitOnClose,false);
+        if(role=="signin") {
+            const auto available=QGuiApplication::primaryScreen()->availableGeometry();
+            resize(std::min(1120,available.width()-60),std::min(800,available.height()-60));setMinimumSize(540,480);move(available.center()-rect().center());
+            auto *layout=new QVBoxLayout(this);layout->setContentsMargins(12,10,12,10);
+            auto *bar=new QHBoxLayout;auto *back=new QPushButton("Back",this);bar->addWidget(back);auto *reload=new QPushButton("Reload",this);bar->addWidget(reload);
+            accountLocation=new QLabel(this);accountLocation->setTextFormat(Qt::PlainText);bar->addWidget(accountLocation,1);
+            auto *done=new QPushButton("Return to chat",this);bar->addWidget(done);layout->addLayout(bar);
+            accountHelp=new QLabel("Sign in on the platform's page, then Return to chat. This session is remembered on this device. Use email, username or QR sign-in; third-party sign-in providers are not supported here.",this);
+            accountHelp->setTextFormat(Qt::PlainText);accountHelp->setWordWrap(true);layout->addWidget(accountHelp);setProperty("defaultAccountHelp",accountHelp->text());
+            browserArea=new QWidget(this);browserArea->setMinimumSize(500,360);browserArea->installEventFilter(this);layout->addWidget(browserArea,1);
+            QObject::connect(done,&QPushButton::clicked,this,&QWidget::close);
+            QObject::connect(back,&QPushButton::clicked,this,[this]{if(web){BOOL available=FALSE;web->get_CanGoBack(&available);if(available)web->GoBack();}});
+            QObject::connect(reload,&QPushButton::clicked,this,[this]{if(web)web->Reload();});
+        }
+        winId();
+    }
     ~Page(){if(controller)controller->Close();}
     QJsonObject tab(){return {{"id",id},{"url",url},{"title",role},{"active",active},{"windowId",1},{"status",web?"complete":"loading"}};}
-    void start();void configure(); void snapshot(QString token);
+    void start();void configure();void configureSignIn();void closeEvent(QCloseEvent *event) override;
+    bool eventFilter(QObject *object,QEvent *event) override {if(object==browserArea&&event->type()==QEvent::Resize&&controller){RECT b{0,0,browserArea->width(),browserArea->height()};controller->put_Bounds(b);}return QWidget::eventFilter(object,event);}
+    void moveEvent(QMoveEvent *event) override {QWidget::moveEvent(event);if(controller)controller->NotifyParentWindowPositionChanged();}
+    void snapshot(QString token);
     void receiveNative(ICoreWebView2WebMessageReceivedEventArgs *args,ICoreWebView2Frame *sender=nullptr);
     void post(QJsonObject o){const auto bytes=QString::fromUtf8(json(o)).toStdWString();auto it=captureFrames.find(o["frame"].toString());if(it!=captureFrames.end())it->second->PostWebMessageAsJson(bytes.c_str());else if(web)web->PostWebMessageAsJson(bytes.c_str());}
 };
@@ -58,6 +88,7 @@ struct Host {
     QString root,profile,session,shim;QJsonObject manifest,storage,diagnostic; qint64 startedAt=0;
     std::map<QString,qint64> lastComment;
     qint64 oversizedMessages=0;
+    QString accountNotice;bool clearingAccounts=false;
     QJsonArray feed; QJsonObject states; QJsonArray channels; bool practice=false, ready=false; QString error, renderedToken, pendingToken; QJsonObject pendingCard; qint64 requestedAt=0; std::function<void(QImage,QString)> frame; QTimer timer;ComPtr<ICoreWebView2Environment> environment;
     std::map<int,std::unique_ptr<Page>> pages;std::map<QString,Peer> peers;std::map<QString,Pending> pending;
     int nextTab=1;quint64 sequence=0;UINT32 browserPid=0;
@@ -70,6 +101,9 @@ struct Host {
     QTimer snapshots;
     void setup(const QJsonObject &c);
     void configureChannels(const QJsonObject &c);
+    void finishSignIn(int id);
+    void reloadCaptures(const QString &platform={});
+    void clearAccountData(Page *holder);
     void tick();
     QJsonObject command(const QJsonObject &c);
     bool check(HRESULT hr,QString op,int tab=0){if(SUCCEEDED(hr))return true;log("native-error",{{"operation",op},{"tab",tab},{"hresult",QString::number(quint32(hr),16)}});return false;}
@@ -136,11 +170,16 @@ struct Host {
                 const auto comment=chatCommentText(input);
                 if(input["chatmessage"].toString().size()>8000||comment.size()>8000||input["chatname"].toString().size()>256){++oversizedMessages;fail("Comment exceeds the size limit");return;}
                 QJsonObject clean;
-                for (const auto &key : {"chatname","hasDonation","membership"}) if(input[key].isString()) clean[key]=input[key].toString().left(256);
+                for (const auto &key : {"chatname","hasDonation","membership","event"}) if(input[key].isString()) clean[key]=input[key].toString().left(256);
+                if(input["event"].isBool()&&input["event"].toBool())clean["event"]="notice";
+                QJsonObject meta;const auto incomingMeta=input["meta"].toObject();
+                for(const auto *key:{"tiktokGiftStreakId","giftName"})if(incomingMeta[key].isString()&&incomingMeta[key].toString().size()<=256)meta[key]=incomingMeta[key];
+                const auto count=incomingMeta["tiktokGiftCount"].toDouble();if(std::isfinite(count)&&count>0&&count<=1e9)meta["tiktokGiftCount"]=count;
+                if(!meta.isEmpty())clean["meta"]=meta;
                 clean["chatmessage"]=comment;
                 clean["textonly"]=input["textonly"].toBool();
                 const auto practiceType=input["type"].toString("twitch");
-                clean["type"]=p.role=="practice"?(QStringList{"twitch","youtube"}.contains(practiceType)?practiceType:QString("twitch")):p.property("platform").toString().toLower();
+                clean["type"]=p.role=="practice"?(QStringList{"twitch","youtube","kick","tiktok","facebook","instagram","x","rumble"}.contains(practiceType)?practiceType:QString("twitch")):p.property("platform").toString().toLower();
                 clean["tid"]=p.id;
                 packet["message"]=clean;
             }
@@ -203,16 +242,90 @@ struct Host {
         log("missing-api",{{"name",method},{"tab",p.id}});fail("Unsupported API: "+method);
     }
 };
+void Host::reloadCaptures(const QString &platform) {
+    for(auto &[id,p]:pages)if(p->role=="capture"&&p->web&&(platform.isEmpty()||p->property("platform").toString()==platform)) {
+        p->terminal=false;p->failures=0;p->retrySeconds=60;p->retryAt=0;p->probeAt=0;
+        states[p->channel]="Checking chat after account change";
+        p->web->Navigate(p->property("captureUrl").toString().toStdWString().c_str());
+    }
+}
+void Host::finishSignIn(int id) {
+    auto p=page(id);if(!p||p->role!="signin")return;
+    const auto platform=p->property("platform").toString();pages.erase(id);
+    accountNotice="Chat rechecked. If sign-in is still requested, reopen Accounts.";
+    reloadCaptures(platform);
+}
+void Host::clearAccountData(Page *holder) {
+    // Keep one inert view alive while WebView2 clears its shared profile. Closing
+    // the last view first invalidates the asynchronous profile operation.
+    ComPtr<ICoreWebView2Profile2> profile;ComPtr<ICoreWebView2_13> view;holder->web.As(&view);
+    if(view){ComPtr<ICoreWebView2Profile> base;view->get_Profile(&base);if(base)base.As(&profile);}
+    QPointer<QTimer> owner(&timer);const int tab=holder->id;
+    const auto finish=[this,owner,tab](HRESULT result){
+        if(!owner)return;clearingAccounts=false;
+        accountNotice=SUCCEEDED(result)?"Signed out of chat accounts on this device.":"Could not clear account sessions. Try Accounts again.";
+        QTimer::singleShot(0,&timer,[this,tab]{pages.erase(tab);configureChannels({{"channels",channels},{"practice",practice}});});
+    };
+    if(!profile){finish(E_NOINTERFACE);return;}
+    const auto kinds=static_cast<COREWEBVIEW2_BROWSING_DATA_KINDS>(COREWEBVIEW2_BROWSING_DATA_KINDS_COOKIES|COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_DOM_STORAGE);
+    const auto hr=profile->ClearBrowsingData(kinds,Callback<ICoreWebView2ClearBrowsingDataCompletedHandler>([finish](HRESULT result)->HRESULT {finish(result);return S_OK;}).Get());
+    if(FAILED(hr))finish(hr);
+}
+void Page::closeEvent(QCloseEvent *event) {
+    event->accept();hide();
+    if(role=="signin") {auto *owner=&host;const int tab=id;QTimer::singleShot(0,&host.timer,[owner,tab]{owner->finishSignIn(tab);});}
+}
+void Page::configureSignIn() {
+    // A normal platform window sharing only the capture browser profile. No
+    // extension shim, host bridge, script injection or credential inspection.
+    RECT bounds{0,0,browserArea->width(),browserArea->height()};controller->put_Bounds(bounds);controller->put_IsVisible(TRUE);
+    ComPtr<ICoreWebView2Settings> settings;web->get_Settings(&settings);settings->put_AreHostObjectsAllowed(FALSE);settings->put_IsWebMessageEnabled(FALSE);settings->put_AreDevToolsEnabled(FALSE);
+    ComPtr<ICoreWebView2Settings4> autofill;settings.As(&autofill);if(autofill){autofill->put_IsPasswordAutosaveEnabled(FALSE);autofill->put_IsGeneralAutofillEnabled(FALSE);}
+    ComPtr<ICoreWebView2_8> audio;web.As(&audio);if(audio)audio->put_IsMuted(TRUE);
+    EventRegistrationToken token{};
+    const auto navigate=[this](const QString &target){
+        if(chatSignInAllowed(property("platform").toString(),QUrl(target)))return true;
+        setProperty("signInBlocked",true);
+        accountHelp->setText("This sign-in provider is not supported in Studio. Choose Reload and use the platform's email, username or QR code option.");
+        return false;
+    };
+    web->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>([this,navigate](ICoreWebView2*,ICoreWebView2NavigationStartingEventArgs *args)->HRESULT {
+        LPWSTR raw=nullptr;args->get_Uri(&raw);const auto target=take(raw);
+        if(!navigate(target)){args->put_Cancel(TRUE);return S_OK;}
+        setProperty("signInBlocked",false);accountHelp->setText(property("defaultAccountHelp").toString());url=target;accountLocation->setText("https://"+QUrl(target).host());return S_OK;
+    }).Get(),&token);
+    web->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>([this](ICoreWebView2*,ICoreWebView2NavigationCompletedEventArgs *args)->HRESULT {
+        BOOL success=FALSE;args->get_IsSuccess(&success);
+        if(!success&&!property("signInBlocked").toBool())accountHelp->setText("The sign-in page could not load. Use Reload, or Return to chat and try Accounts again.");
+        return S_OK;
+    }).Get(),&token);
+    web->add_NewWindowRequested(Callback<ICoreWebView2NewWindowRequestedEventHandler>([this,navigate](ICoreWebView2*,ICoreWebView2NewWindowRequestedEventArgs *args)->HRESULT {
+        args->put_Handled(TRUE);LPWSTR raw=nullptr;args->get_Uri(&raw);const auto target=take(raw);
+        if(navigate(target))web->Navigate(target.toStdWString().c_str());return S_OK;
+    }).Get(),&token);
+    web->add_WindowCloseRequested(Callback<ICoreWebView2WindowCloseRequestedEventHandler>([this](ICoreWebView2*,IUnknown*)->HRESULT {close();return S_OK;}).Get(),&token);
+    web->add_PermissionRequested(Callback<ICoreWebView2PermissionRequestedEventHandler>([](ICoreWebView2*,ICoreWebView2PermissionRequestedEventArgs *args)->HRESULT {args->put_State(COREWEBVIEW2_PERMISSION_STATE_DENY);return S_OK;}).Get(),&token);
+    ComPtr<ICoreWebView2_4> downloads;web.As(&downloads);if(downloads)downloads->add_DownloadStarting(Callback<ICoreWebView2DownloadStartingEventHandler>([](ICoreWebView2*,ICoreWebView2DownloadStartingEventArgs *args)->HRESULT {args->put_Cancel(TRUE);return S_OK;}).Get(),&token);
+    web->Navigate(url.toStdWString().c_str());
+}
 void Page::start(){
     ComPtr<ICoreWebView2Environment10> env; host.environment.As(&env);
     if(!env){host.error="Chat needs a newer Microsoft Edge WebView2 Runtime.";return;}
     ComPtr<ICoreWebView2ControllerOptions> options;env->CreateCoreWebView2ControllerOptions(&options);
-    options->put_ProfileName(role=="capture"?L"capture":L"engine");
+    options->put_ProfileName(role=="capture"||role=="signin"||role=="account-clear"?L"capture":L"engine");
     QPointer<Page> self(this);
-    host.check(env->CreateCoreWebView2ControllerWithOptions(reinterpret_cast<HWND>(winId()),options.Get(),Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>([self](HRESULT hr,ICoreWebView2Controller*c)->HRESULT{
-        if(!self)return S_OK; if(!self->host.check(hr,"controller",self->id)||!c)return S_OK;
+    const auto completed=[self](HRESULT hr,ICoreWebView2Controller*c)->HRESULT{
+        if(!self)return S_OK;
+        if(FAILED(hr)||!c) {
+            if(self->role=="account-clear") {auto *owner=&self->host;const int tab=self->id;owner->clearingAccounts=false;owner->accountNotice="Could not clear account sessions. Try Accounts again.";QTimer::singleShot(0,&owner->timer,[owner,tab]{owner->pages.erase(tab);owner->configureChannels({{"channels",owner->channels},{"practice",owner->practice}});});}
+            else if(self->role=="signin")self->accountHelp->setText("The sign-in window could not start. Return to chat, then try Accounts again.");
+            else self->host.check(hr,"controller",self->id);
+            return S_OK;
+        }
         self->controller=c;c->get_CoreWebView2(&self->web);self->configure();return S_OK;
-    }).Get()),"create-controller",id);
+    };
+    const auto result=env->CreateCoreWebView2ControllerWithOptions(reinterpret_cast<HWND>(browserArea?browserArea->winId():winId()),options.Get(),Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(completed).Get());
+    if(!host.check(result,"create-controller",id))completed(result,nullptr);
 }
 void Page::receiveNative(ICoreWebView2WebMessageReceivedEventArgs *a,ICoreWebView2Frame *sender) {
     if(!messageClock.isValid()||messageClock.elapsed()>1000){messageClock.restart();messageCount=0;}
@@ -235,6 +348,8 @@ void Page::receiveNative(ICoreWebView2WebMessageReceivedEventArgs *a,ICoreWebVie
     host.receive(*this,m);
 }
 void Page::configure(){
+    if(role=="account-clear"){controller->put_IsVisible(FALSE);host.clearAccountData(this);return;}
+    if(role=="signin"){configureSignIn();return;}
     // Capture documents need animation frames for platform rendering and DOM
     // cleanup. Hiding the controller suspends those frames even when the SSN
     // source reports document.visibilityState as visible. The owning QWidget
@@ -272,7 +387,7 @@ void Page::configure(){
             bool path=false;for(const auto &v:host.manifest["content_scripts"].toArray())path|=chatScriptMatches(v.toObject(),next);
             // A resolver may visit its own channel or a watch page before opening chat.
             allowed &= path || (next.host()=="www.youtube.com"&&(next.path()=="/watch"||next.path()==QUrl(property("resolve").toString()).path()));
-            if(!allowed)host.states[channel]=next.path().contains("login")?"This channel needs sign-in. Sign-in is not available in Studio yet.":"Chat could not open that page. Check the channel link.";
+            if(!allowed)host.states[channel]=next.path().contains("login")||next.host()=="accounts.google.com"?"This channel needs sign-in. Open Accounts to continue.":"Chat could not open that page. Check the channel link.";
         }else allowed &= next.host()==old.host();
         if(!allowed){a->put_Cancel(TRUE);return S_OK;}
         url=target;captureFrames.clear();setProperty("practiceReady",false);host.leaveTab(id);mainFrame.clear();host.log("navigation",{{"tab",id},{"url",url}});return S_OK;}).Get(),&token);
@@ -374,13 +489,13 @@ void Host::setup(const QJsonObject &c) {
 }
 void Host::configureChannels(const QJsonObject &c) {
     channels=c["channels"].toArray();practice=c["practice"].toBool();
-    if(!environment||!ready)return;
+    if(!environment||!ready||clearingAccounts)return;
     QSet<QString> wanted;for(const auto &v:channels)wanted.insert(v.toObject()["id"].toString());if(practice)wanted.insert("practice");
-    std::vector<int> remove;for(auto &[id,p]:pages)if((p->role=="capture"||p->role=="practice")&&!wanted.contains(p->channel))remove.push_back(id);
+    std::vector<int> remove;for(auto &[id,p]:pages)if((p->role=="capture"||p->role=="practice"||p->role=="signin")&&!wanted.contains(p->channel))remove.push_back(id);
     for(int id:remove){states.remove(page(id)->channel);leaveTab(id);pages.erase(id);}
     QJsonArray incoming=channels;if(practice)incoming.append(QJsonObject{{"id","practice"},{"url","https://studio-chat.invalid/test-source.html"},{"platform","Twitch"}});
     for(const auto &v:incoming) {
-        const auto ch=v.toObject();const auto key=ch["id"].toString();bool found=false;for(auto &[id,p]:pages)found|=p->channel==key;
+        const auto ch=v.toObject();const auto key=ch["id"].toString();bool found=false;for(auto &[id,p]:pages)found|=(p->role=="capture"||p->role=="practice")&&p->channel==key;
         if(found)continue;
         auto id=open(key=="practice"?"practice":"capture",ch["url"].toString());auto p=page(id);p->channel=key;
         p->setProperty("captureUrl",ch["url"].toString());p->retryAt=QDateTime::currentMSecsSinceEpoch()+60000;
@@ -392,7 +507,7 @@ void Host::tick() {
     const auto now=QDateTime::currentMSecsSinceEpoch();
     if(!ready && now-startedAt>20000 && error.isEmpty())error="Chat is unavailable. Restart Studio to try again.";
     for(auto &[id,p]:pages) {
-        if(!p->web||p->terminal)continue;
+        if(!p->web||p->terminal||p->role=="signin"||p->role=="account-clear")continue;
         const auto ping=p->property("pingAt").toLongLong();
         if(p->property("pingPending").toBool() && now-ping>10000) {
             p->setProperty("pingPending",false);p->setProperty("pingAt",now);
@@ -462,8 +577,14 @@ void Host::tick() {
     // Keep retrying until the exact text has rendered and output opacity is visible.
     auto packet=pendingCard;packet.remove("style");packet["textonly"]=true;
     packet["chatname"]=packet["chatname"].toString().toHtmlEscaped();
+    // The native integration renders a complete, plain-text support label.
+    // featured.html's generic metadata chooses donation OR membership.
+    const auto support=chatSupportLabel(pendingCard);
+    packet["hasDonation"]="";packet["membership"]="";packet["studioSupport"]=support;
     const auto token=pendingToken;QPointer<Page> target(overlay);
-    const QString script="(()=>{const o=document.getElementById('output'),m=document.querySelector('#output .hl-message');return !!(o&&m&&Number(getComputedStyle(o).opacity)>.9&&m.textContent==="+
+    const QString script="(()=>{const o=document.getElementById('output'),m=document.querySelector('#output .hl-message'),s=document.querySelector('#output .studio-support');const expected="+
+        QString::fromUtf8(QJsonDocument(QJsonArray{support}).toJson(QJsonDocument::Compact)).mid(1).chopped(1)+
+        ";return !!(o&&m&&(!expected||(s&&s.textContent===expected))&&Number(getComputedStyle(o).opacity)>.9&&m.textContent==="+
         QString::fromUtf8(QJsonDocument(QJsonArray{pendingCard["chatmessage"]}).toJson(QJsonDocument::Compact)).mid(1).chopped(1)+
         "&&document.documentElement.dataset.studioCard==="+QString::fromUtf8(QJsonDocument(QJsonArray{token}).toJson(QJsonDocument::Compact)).mid(1).chopped(1)+
         ");})()";
@@ -481,6 +602,27 @@ QJsonObject Host::command(const QJsonObject &c) {
     const auto op=c["op"].toString();
     if(op=="start"){setup(c);return {{"ok",true}};}
     if(op=="configure"){configureChannels(c);return {{"ok",true}};}
+    if(op=="signin") {
+        if(!ready||!environment||clearingAccounts)return {{"error","Wait for chat to finish connecting, then try Accounts again."}};
+        QJsonObject channel;for(const auto &v:channels)if(v.toObject()["id"]==c["channel"])channel=v.toObject();
+        if(channel.isEmpty())return {{"error","Add a channel before signing in."}};
+        const auto platform=channel["platform"].toString(),target=chatSignInUrl(platform);
+        if(target.isEmpty())return {{"error","YouTube public chat works without sign-in. Google account sign-in is not supported in Studio yet."}};
+        for(auto &[id,p]:pages)if(p->role=="signin") {p->show();p->raise();p->activateWindow();accountNotice="Finish or close the existing sign-in window before opening another account.";return {{"ok",true}};}
+        const int tab=open("signin",target);auto p=page(tab);p->channel=channel["id"].toString();p->setProperty("platform",platform);
+        p->setWindowTitle("Sign in to "+platform+" - Desktop Studio");p->show();p->raise();p->activateWindow();
+        QTimer::singleShot(150,p,[p]{p->raise();p->activateWindow();}); // Let the parent menu finish closing first.
+        accountNotice="Sign-in window open. Return to chat when you have finished.";return {{"ok",true}};
+    }
+    if(op=="signout") {
+        if(clearingAccounts)return {{"error","Sign-out is already in progress."}};
+        if(!environment||!ready)return {{"error","Wait for chat to finish connecting before signing out."}};
+        // Close site documents before clearing so an active page cannot restore
+        // its old session from in-memory state while deletion is in flight.
+        std::vector<int> windows;for(auto &[id,p]:pages)if(p->role=="signin"||p->role=="capture")windows.push_back(id);for(int id:windows)pages.erase(id);
+        clearingAccounts=true;accountNotice="Signing out of chat accounts...";open("account-clear","about:blank");
+        return {{"ok",true}};
+    }
     if(op=="poll") {
         QJsonArray batch;int bytes=0;
         while(!feed.isEmpty() && bytes<24000){auto item=feed.takeAt(0);bytes+=json(item.toObject()).size();batch.append(item);}
@@ -489,7 +631,8 @@ QJsonObject Host::command(const QJsonObject &c) {
         // A channel that has gone quiet, or a capture that has stopped, must not look like it is still reading.
         auto shownStates=states;const auto now=QDateTime::currentMSecsSinceEpoch();
         for(const auto &[channel,at]:lastComment)if(now-at>300000&&shownStates[channel].toString()=="Reading comments")shownStates[channel]="No new comments in 5 minutes";
-        return {{"ok",true},{"ready",ready&&practiceReady&&overlayReady},{"error",error},{"oversizedMessages",oversizedMessages},{"channels",shownStates},{"names",names},{"timing",timing},{"startup_timing",startupTiming},{"messages",batch},{"renderedToken",renderedToken},{"pendingToken",pendingToken},{"browserPid",int(browserPid)},{"diagnostic",diagnostic},{"pageCount",int(pages.size())}};
+        QString accountPlatform;for(auto &[id,p]:pages)if(p->role=="signin")accountPlatform=p->property("platform").toString();
+        return {{"ok",true},{"ready",ready&&practiceReady&&overlayReady},{"error",error},{"account",QJsonObject{{"open",!accountPlatform.isEmpty()},{"platform",accountPlatform},{"clearing",clearingAccounts},{"notice",accountNotice}}},{"oversizedMessages",oversizedMessages},{"channels",shownStates},{"names",names},{"timing",timing},{"startup_timing",startupTiming},{"messages",batch},{"renderedToken",renderedToken},{"pendingToken",pendingToken},{"browserPid",int(browserPid)},{"diagnostic",diagnostic},{"pageCount",int(pages.size())}};
     }
     if(op=="inject") {
         if(!practice||!ready)return {{"error","Practice chat is not ready."}};
@@ -506,6 +649,8 @@ QJsonObject Host::command(const QJsonObject &c) {
             QString css="#output,#output *{transition:none!important;animation:none!important}html,body{background:transparent!important}#output{position:fixed!important;left:36px!important;right:36px!important;bottom:36px!important;width:auto!important} .hl-c-cont{padding:20px!important;border-radius:10px!important;background:rgba(13,22,32,.94)!important;display:flex!important;flex-direction:column!important} .hl-name{position:static!important;background:transparent!important;color:#ffb454!important;padding:0!important;font-size:24px!important;order:0!important}.hl-message{background:transparent!important;color:white!important;padding:8px 0 0!important;font-size:30px!important;box-shadow:none!important;width:auto!important;order:1!important}.hl-img,.sourcetype{display:none!important}";
             if(style=="bubble")css+="#output{right:auto!important;max-width:760px!important}.hl-c-cont{background:white!important;border-radius:40px!important}.hl-message,.hl-name{color:#10202e!important}";
             if(style=="big")css+="#output{left:126px!important;right:126px!important;top:198px!important;bottom:auto!important}.hl-message{font-size:44px!important}.hl-c-cont{padding:40px!important}";
+            css+=".studio-support{position:static!important;order:1!important;color:#ffcf86;font-size:20px;line-height:1.3;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:6px}.hl-message{order:2!important}";
+            if(style=="bubble")css+=".studio-support{color:#725018}";
             const auto quoted=QString::fromUtf8(QJsonDocument(QJsonArray{css}).toJson(QJsonDocument::Compact)).mid(1).chopped(1);
             p->web->ExecuteScript(("(()=>{let s=document.getElementById('studio-style');if(!s){s=document.createElement('style');s.id='studio-style';document.head.append(s)}s.textContent="+quoted+";})()").toStdWString().c_str(),nullptr);
         }

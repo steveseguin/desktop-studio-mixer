@@ -33,10 +33,50 @@ QString chatPlatformName(const QString &type) {
 }
 QString chatPageStatus(const QJsonObject &probe) {
     if(probe["notFound"].toBool())return "We could not find that channel. Check the link.";
-    if(probe["login"].toBool())return "This channel needs sign-in. Sign-in is not available in Studio yet.";
+    if(probe["login"].toBool())return "This channel needs sign-in. Open Accounts to continue.";
     if(probe["ended"].toBool()||probe["offline"].toBool())return "Waiting for your stream";
     if(probe["unavailable"].toBool())return "Chat is unavailable for this stream.";
     return {};
+}
+QString chatSupportLabel(const QJsonObject &message) {
+    QStringList labels;
+    if(message["event"].toString().contains("gift",Qt::CaseInsensitive))labels<<"Gift";
+    for(const auto *key:{"hasDonation","membership"}) {
+        const auto value=message[key].toString().trimmed();
+        if(!value.isEmpty()&&!labels.contains(value))labels<<value;
+    }
+    return labels.join(" · ");
+}
+bool chatIsSupportEvent(const QJsonObject &message) {
+    if(!message["hasDonation"].toString().trimmed().isEmpty())return true;
+    const auto event=message["event"].toString().toLower();
+    if(event.contains("gift"))return true;
+    // A regular subscriber's badge is author status, not a new membership.
+    return !message["membership"].toString().isEmpty()&&QStringList{"notice","subscription","resub","sponsorship","membermilestone","membership"}.contains(event);
+}
+QString chatSignInUrl(const QString &platform) {
+    if(platform=="Twitch")return "https://www.twitch.tv/login";
+    if(platform=="Kick")return "https://kick.com/";
+    if(platform=="TikTok")return "https://www.tiktok.com/login";
+    if(platform=="Facebook")return "https://www.facebook.com/login/";
+    if(platform=="Instagram")return "https://www.instagram.com/accounts/login/";
+    if(platform=="X")return "https://x.com/i/flow/login";
+    if(platform=="Rumble")return "https://rumble.com/login.php";
+    return {}; // Google account authorization needs an external-browser integration.
+}
+bool chatSignInAllowed(const QString &platform,const QUrl &url) {
+    if(url.scheme()!="https"||!url.userInfo().isEmpty()||url.port()!=-1)return false;
+    const auto host=url.host().toLower();
+    QStringList sites;
+    if(platform=="Twitch")sites={"twitch.tv"};
+    else if(platform=="Kick")sites={"kick.com"};
+    else if(platform=="TikTok")sites={"tiktok.com"};
+    else if(platform=="Facebook")sites={"facebook.com"};
+    else if(platform=="Instagram")sites={"instagram.com","facebook.com"};
+    else if(platform=="X")sites={"x.com","twitter.com"};
+    else if(platform=="Rumble")sites={"rumble.com"};
+    for(const auto &site:sites)if(host==site||host.endsWith('.'+site))return true;
+    return false;
 }
 // SSN quotes the parent comment inside a reply. Keep the reply, led by who it answers.
 QString chatCommentText(const QJsonObject &captured) {
@@ -219,7 +259,7 @@ QVariant ChatMessageModel::data(const QModelIndex &index, int role) const {
     if (role==Qt::UserRole) return m;
     if (role==Qt::DisplayRole || role==Qt::AccessibleTextRole) {
         auto text=m["chatname"].toString()+" · "+m["type"].toString();
-        for(const auto &key:{"hasDonation","membership"})if(!m[key].toString().isEmpty())text+=" · "+m[key].toString();
+        const auto support=chatSupportLabel(m);if(!support.isEmpty())text+=" · "+support;
         return text+"\n"+m["chatmessage"].toString();
     }
     return {};
@@ -229,7 +269,25 @@ void ChatMessageModel::append(QJsonObject message) {
 }
 void ChatMessageModel::appendBatch(const QList<QJsonObject> &messages) {
     if(messages.isEmpty())return;
-    const auto batch=messages.last(std::min<qsizetype>(messages.size(),2000));
+    QList<QJsonObject> batch;
+    for(auto message:messages.last(std::min<qsizetype>(messages.size(),2000))) {
+        const auto meta=message["meta"].toObject();const auto streak=meta["tiktokGiftStreakId"].toString();
+        bool replaced=false;
+        if(message["type"]=="tiktok"&&message["event"]=="gift"&&!streak.isEmpty()) {
+            auto update=[&](QList<QJsonObject> &items,bool visible){
+                for(int i=0;i<items.size();++i)if(items[i]["type"]=="tiktok"&&items[i]["event"]=="gift"&&items[i]["channel"]==message["channel"]&&items[i]["capture_epoch"]==message["capture_epoch"]&&items[i]["meta"].toObject()["tiktokGiftStreakId"].toString()==streak) {
+                    if(meta["tiktokGiftCount"].toDouble()>=items[i]["meta"].toObject()["tiktokGiftCount"].toDouble()) {
+                        message["id"]=items[i]["id"];if(items[i].contains("saved"))message["saved"]=items[i]["saved"];items[i]=message;
+                        if(visible)emit dataChanged(index(i),index(i));
+                    }
+                    return true;
+                }return false;
+            };
+            replaced=update(rows_,true)||update(pending_,false)||update(batch,false);
+        }
+        if(!replaced)batch.append(message);
+    }
+    if(batch.isEmpty())return;
     if(paused_){pending_.append(batch);if(pending_.size()>2000)pending_.remove(0,pending_.size()-2000);return;}
     const int remove=int(std::max<qsizetype>(0,rows_.size()+batch.size()-2000));
     if(remove){beginRemoveRows({},0,remove-1);rows_.remove(0,remove);endRemoveRows();}

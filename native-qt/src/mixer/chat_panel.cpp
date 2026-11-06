@@ -40,8 +40,8 @@ protected:
     bool filterAcceptsRow(int row,const QModelIndex &parent) const override {
         const auto m=sourceModel()->index(row,0,parent).data(Qt::UserRole).toJsonObject();
         return !hidden.contains(m["channel"].toString()) && (mode!="saved"||m["saved"].toBool()) &&
-            (mode!="thanks"||!m["hasDonation"].toString().isEmpty()||!m["membership"].toString().isEmpty()) &&
-            (query.isEmpty()||(m["chatname"].toString()+" "+m["chatmessage"].toString()).contains(query,Qt::CaseInsensitive));
+            (mode!="thanks"||chatIsSupportEvent(m)) &&
+            (query.isEmpty()||(m["chatname"].toString()+" "+m["chatmessage"].toString()+" "+chatSupportLabel(m)).contains(query,Qt::CaseInsensitive));
     }
 };
 class ChatDelegate : public QStyledItemDelegate {
@@ -58,7 +58,7 @@ public:
         auto font=o.font;font.setBold(true);p->setFont(font);p->setPen(QColor("#10202e"));p->drawText(avatar,Qt::AlignCenter,m["chatname"].toString().left(1).toUpper());
         auto r=o.rect.adjusted(44,5,-8,-5);const int line=o.fontMetrics.height();
         auto small=o.font;small.setPointSizeF(std::max(7.0,small.pointSizeF()-1));
-        const auto amount=m["hasDonation"].toString();const int platformWidth=QFontMetrics(small).horizontalAdvance(type)+8;
+        const auto amount=chatSupportLabel(m);const int platformWidth=QFontMetrics(small).horizontalAdvance(type)+8;
         const int amountWidth=amount.isEmpty()?0:std::min(75,QFontMetrics(small).horizontalAdvance(amount)+10);
         const int nameWidth=std::max(24,r.width()-platformWidth-amountWidth-6);
         p->setPen(fg);p->drawText(QRect(r.left(),r.top(),nameWidth,line),Qt::AlignVCenter,p->fontMetrics().elidedText(m["chatname"].toString(),Qt::ElideRight,nameWidth));
@@ -74,10 +74,11 @@ class ChatCard : public QWidget {
 public:
     QJsonObject message;QString style="bar";
     using QWidget::QWidget;
+    int supportHeight() const {const auto text=chatSupportLabel(message);return text.isEmpty()?0:QFontMetrics(font()).boundingRect(QRect(0,0,std::max(1,width()-24),200000),Qt::TextWordWrap,text).height()+6;}
     void fitContent() {
         auto f=font();if(style=="big")f.setPointSizeF(f.pointSizeF()*1.25);
         const int textHeight=QFontMetrics(f).boundingRect(QRect(0,0,std::max(1,width()-24),200000),Qt::TextWordWrap,message["chatmessage"].toString()).height();
-        setMinimumHeight(std::max(92,textHeight+44));
+        setMinimumHeight(std::max(92,textHeight+44+supportHeight()));
     }
 protected:
     void resizeEvent(QResizeEvent *event) override {QWidget::resizeEvent(event);fitContent();}
@@ -88,8 +89,10 @@ protected:
         p.setPen(bubble?QColor("#51606e"):QColor("#ffb454"));auto f=font();f.setBold(true);p.setFont(f);
         const auto heading=message["chatname"].toString()+" · "+chatPlatformName(message["type"].toString());
         p.drawText(rect().adjusted(12,8,-12,-8),Qt::AlignTop|Qt::TextSingleLine,p.fontMetrics().elidedText(heading,Qt::ElideRight,std::max(0,width()-24)));
-        f.setBold(false);if(style=="big")f.setPointSizeF(f.pointSizeF()*1.25);p.setFont(f);p.setPen(bubble?QColor("#10202e"):QColor(Qt::white));
-        p.drawText(rect().adjusted(12,32,-12,-8),Qt::AlignTop|Qt::TextWordWrap,message["chatmessage"].toString());
+        f.setBold(false);p.setFont(f);p.setPen(bubble?QColor("#725018"):QColor("#ffcf86"));
+        if(supportHeight())p.drawText(QRect(12,32,width()-24,supportHeight()),Qt::AlignTop|Qt::TextWordWrap,chatSupportLabel(message));
+        if(style=="big")f.setPointSizeF(f.pointSizeF()*1.25);p.setFont(f);p.setPen(bubble?QColor("#10202e"):QColor(Qt::white));
+        p.drawText(rect().adjusted(12,32+supportHeight(),-12,-8),Qt::AlignTop|Qt::TextWordWrap,message["chatmessage"].toString());
     }
 };
 static QLabel *plainLabel(QWidget *parent) { auto label=new QLabel(parent);label->setTextFormat(Qt::PlainText);label->setWordWrap(true);label->setMinimumWidth(0);label->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Maximum);return label; }
@@ -97,17 +100,30 @@ ChatPanel::ChatPanel(QWidget *parent) : QWidget(parent),engine(this) {
     setObjectName("chatPanel");setMinimumWidth(300);setMaximumWidth(360);
     setStyleSheet("QWidget#chatPanel QPushButton, QWidget#chatPanel QToolButton { background:#192b3d; color:#eaf4ff; border:1px solid #304358; border-radius:3px; padding:5px 8px; } QWidget#chatPanel QPushButton:checked, QWidget#chatPanel QToolButton:checked { background:#16435a; color:#eaf4ff; } QWidget#chatPanel QPushButton#showComment { background:#9fd2f7; color:#10202e; font-weight:bold; } QWidget#chatPanel QPushButton#showComment:disabled { background:palette(button); color:palette(mid); }");
     auto root=new QVBoxLayout(this);root->setContentsMargins(12,10,12,10);root->setSpacing(8);
-    addMore_=new QPushButton(studioText("+ Add"),this);root->addWidget(addMore_);
+    auto *connections=new QHBoxLayout;root->addLayout(connections);
+    addMore_=new QPushButton(studioText("+ Add"),this);connections->addWidget(addMore_,1);
+    auto *accounts=new QPushButton(studioText("Accounts"),this);accounts->setAccessibleName(studioText("Chat accounts"));accounts->setToolTip(studioText("Sign in to a connected channel's platform, or clear saved chat account sessions."));connections->addWidget(accounts);
+    auto *accountMenu=new QMenu(accounts);accounts->setMenu(accountMenu);
+    connect(accountMenu,&QMenu::aboutToShow,this,[this,accountMenu]{
+        accountMenu->clear();QSet<QString> platforms;
+        for(const auto &value:engine.settings.channels){const auto channel=value.toObject();const auto platform=channel["platform"].toString();if(platforms.contains(platform))continue;platforms.insert(platform);
+            auto *action=accountMenu->addAction(studioText("Sign in to ")+platform+"...",this,[this,channel]{const auto result=command({{"command","chat.signin"},{"id",channel["id"]}});if(result.contains("error"))QMessageBox::information(this,studioText("Chat account"),result["error"].toString());});action->setEnabled(engine.health["ready"].toBool());
+        }
+        if(platforms.isEmpty()){auto *empty=accountMenu->addAction(studioText("Add a channel first"));empty->setEnabled(false);}
+        accountMenu->addSeparator();auto *clear=accountMenu->addAction(studioText("Sign out of all chat accounts..."),this,[this]{
+            if(QMessageBox::question(this,studioText("Sign out of chat accounts"),studioText("Clear saved sign-in sessions for all chat platforms on this device? Your channels and show are kept."),QMessageBox::Yes|QMessageBox::Cancel,QMessageBox::Cancel)==QMessageBox::Yes)command({{"command","chat.signout"},{"confirmed",true}});
+        });clear->setEnabled(!platforms.isEmpty()&&engine.health["ready"].toBool()&&!engine.health["account"].toObject()["clearing"].toBool());
+    });
     connect(addMore_,&QPushButton::clicked,this,[this]{setupOpen_=!setupOpen_;refresh();if(setupOpen_)input_->setFocus();});
     setup_=new QWidget(this);auto setup=new QVBoxLayout(setup_);setup->setContentsMargins(0,0,0,0);root->addWidget(setup_);
     auto title=plainLabel(this);title->setText(studioText("See your comments here"));auto titleFont=title->font();titleFont.setPointSize(15);titleFont.setBold(true);title->setFont(titleFont);setup->addWidget(title);
-    input_=new QLineEdit(this);input_->setPlaceholderText(studioText("Channel link or @YouTube handle"));input_->setAccessibleName(studioText("Your channel link or name"));input_->setMinimumHeight(38);input_->setToolTip(studioText("A plain channel name connects to Twitch. Use a link for Kick. Sign-in is not available yet."));setup->addWidget(input_);
+    input_=new QLineEdit(this);input_->setPlaceholderText(studioText("Channel link or @YouTube handle"));input_->setAccessibleName(studioText("Your channel link or name"));input_->setMinimumHeight(38);input_->setToolTip(studioText("A plain channel name connects to Twitch. Use a link for Kick. After adding a channel, open Accounts if sign-in is needed."));setup->addWidget(input_);
     auto add=new QPushButton(studioText("Add this channel"),this);setup->addWidget(add);
     connect(add,&QPushButton::clicked,this,[this]{if(input_->text().trimmed().isEmpty())return;auto result=engine.addChannel(input_->text());if(result.contains("error"))hint_->setText(studioText(result["error"].toString().toUtf8().constData()));else{setupOpen_=false;input_->clear();hint_->setText(studioText("Comments will appear here as soon as they arrive."));}refresh();});
     connect(input_,&QLineEdit::returnPressed,add,&QPushButton::click);
     hint_=plainLabel(this);hint_->setText(studioText("Twitch, YouTube and Kick. Plain names use Twitch; @handles use YouTube. Other platforms are experimental."));setup->addWidget(hint_);
     feedControls_=new QWidget(this);auto feedControls=new QVBoxLayout(feedControls_);feedControls->setContentsMargins(0,0,0,0);feedControls->setSpacing(8);root->addWidget(feedControls_);
-    auto chipsScroll=new QScrollArea(this);chipsScroll_=chipsScroll;chipsScroll->setWidgetResizable(true);chipsScroll->setFixedHeight(38);chipsScroll->setFrameShape(QFrame::NoFrame);
+    auto chipsScroll=new QScrollArea(this);chipsScroll_=chipsScroll;chipsScroll->setWidgetResizable(true);chipsScroll->setFixedHeight(52);chipsScroll->setFrameShape(QFrame::NoFrame);
     chipsScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);auto chipsWidget=new QWidget(chipsScroll);chips_=new QHBoxLayout(chipsWidget);chipsScroll->setWidget(chipsWidget);feedControls->addWidget(chipsScroll);
     auto filters=new QHBoxLayout;feedControls->addLayout(filters);
     filter_=new ChatFilter(this);filter_->setSourceModel(&engine.model);
@@ -220,7 +236,7 @@ bool ChatPanel::practice(bool enabled,bool acknowledged) {
 QJsonObject ChatPanel::state() const {
     QJsonArray channels;for(const auto &v:engine.settings.channels){auto c=v.toObject();const auto name=engine.health["names"].toObject()[c["id"].toString()].toString();if(!name.isEmpty())c["name"]=name;c["status"]=engine.health["channels"].toObject()[c["id"].toString()].toString("Connecting to chat");channels.append(c);}
     return {{"available",engine.packAvailable},{"ready",engine.health["ready"].toBool()},{"problem",engine.settingsError.isEmpty()?engine.health["error"]:QJsonValue(engine.settingsError)},
-        {"channels",channels},{"practice",engine.settings.practice},{"count",engine.model.rowCount()},{"pending_comments",engine.model.pendingCount()},
+        {"channels",channels},{"account",engine.health["account"]},{"practice",engine.settings.practice},{"count",engine.model.rowCount()},{"pending_comments",engine.model.pendingCount()},
         {"selected",selected_},{"pending_show",waitingToken_},{"on_screen",composed_&&!privateBreak_&&layer.enabled&&!onAir_.isEmpty()},
         {"hidden_by_private_break",privateBreak_&&!onAir_.isEmpty()},{"on_air",onAir_},{"remaining_ms",remainingMs_},{"kept",pinned_},{"layer",layer.json()},
         {"oversized_messages",engine.health["oversizedMessages"].toInteger()},{"browser_pid",engine.health["browserPid"]},{"page_count",engine.health["pageCount"]},{"diagnostic",engine.health["diagnostic"]},{"resources",engine.health["resources"]},{"timing",QJsonObject{{"startup",engine.health["startup_timing"]},{"worker",engine.health["timing"]},{"frame_received_ms",frameReceivedMs_},{"composed_ms",composedMs_}}}};
@@ -229,6 +245,18 @@ QJsonObject ChatPanel::command(const QJsonObject &c) {
     const auto op=c["command"].toString();auto fail=[](QString e){return QJsonObject{{"error",e}};};
     if(op=="chat.status")return state();
     if(op=="chat.channel.add")return engine.addChannel(c["input"].toString());
+    if(op=="chat.signin") {
+        if(!engine.health["ready"].toBool())return fail("Wait for chat to finish connecting, then try Accounts again.");
+        QJsonObject channel;for(const auto &v:engine.settings.channels)if(v.toObject()["id"]==c["id"])channel=v.toObject();
+        if(channel.isEmpty())return fail("Add a channel before signing in.");
+        if(chatSignInUrl(channel["platform"].toString()).isEmpty())return fail("YouTube public chat works without sign-in. Google account sign-in is not supported in Studio yet.");
+        engine.send({{"op","signin"},{"channel",channel["id"]}});return {{"ok",true},{"pending",true}};
+    }
+    if(op=="chat.signout") {
+        if(!c["confirmed"].toBool())return fail("Confirm sign-out for all chat accounts. Channels and shows will be kept.");
+        if(!engine.health["ready"].toBool()||engine.settings.channels.isEmpty())return fail("Connect a channel before clearing saved account sessions.");
+        engine.send({{"op","signout"}});return {{"ok",true},{"pending",true}};
+    }
     if(op=="chat.channel.remove") {if(!engine.removeChannel(c["id"].toString()))return fail("Channel could not be removed.");}
     else if(op=="chat.practice.set") {
         if(c["enabled"].toBool()&&outputActive&&outputActive()&&!c["acknowledgeOutput"].toBool())return fail("Output is running. Pretend comments will reach output. Set acknowledgeOutput to true to continue.");
@@ -254,7 +282,7 @@ void ChatPanel::refresh() {
     feedControls_->setVisible(!firstRun);list_->setVisible(!firstRun);practice_->setVisible(engine.settings.channels.isEmpty());practiceAction_->setVisible(!firstRun);
     chipsScroll_->setVisible(!engine.settings.channels.isEmpty());
     empty_->setVisible(!firstRun&&filter_->rowCount()==0);
-    empty_->setText(!filter_->query.isEmpty()?studioText("No matching comments. Clear Search to see comments again."):filter_->mode=="saved"?studioText("No saved comments yet. Select a comment, then choose Save."):filter_->mode=="thanks"?studioText("Donations and membership messages will appear here."):studioText("Waiting for comments."));
+    empty_->setText(!filter_->query.isEmpty()?studioText("No matching comments. Clear Search to see comments again."):filter_->mode=="saved"?studioText("No saved comments yet. Select a comment, then choose Save."):filter_->mode=="thanks"?studioText("Gifts, donations and membership messages will appear here."):studioText("Waiting for comments."));
     practiceAction_->setText(studioText(engine.settings.practice?"Stop practising":"Try it with pretend chat"));
     addMore_->setVisible(!engine.settings.channels.isEmpty()||engine.settings.practice);
     practiceBanner_->setVisible(engine.settings.practice);
@@ -266,7 +294,7 @@ void ChatPanel::refresh() {
     new_->setVisible(engine.model.paused());new_->setText(engine.model.pendingCount()>0?studioText("%1 new comments").arg(engine.model.pendingCount()):studioText("Back to live"));new_->setAccessibleName(studioText("Back to live"));
     const auto m=engine.model.message(selected_);tray_->setVisible(!m.isEmpty());const bool newPreview=card_->message["id"]!=m["id"];card_->message=m;card_->style=layer.style;card_->fitContent();card_->update();
     if(newPreview)previewScroll_->verticalScrollBar()->setValue(0);
-    const auto previewText=m["chatname"].toString()+"\n"+m["chatmessage"].toString();previewScroll_->setAccessibleDescription(previewText);card_->setAccessibleName(previewText);card_->setToolTip(m["chatname"].toString());
+    const auto support=chatSupportLabel(m);const auto previewText=m["chatname"].toString()+"\n"+(support.isEmpty()?QString():support+"\n")+m["chatmessage"].toString();previewScroll_->setAccessibleDescription(previewText);card_->setAccessibleName(previewText);card_->setToolTip(previewText);
     for(auto button:styles_->buttons()){QSignalBlocker block(button);button->setChecked(button->property("chatStyle").toString()==layer.style);}
     save_->setText(studioText(m["saved"].toBool()?"Saved":"Save"));
     show_->setEnabled(engine.health["ready"].toBool()&&waitingToken_.isEmpty()&&layer.enabled);
@@ -289,6 +317,8 @@ void ChatPanel::refresh() {
     for(auto it=connectionStates.begin();it!=connectionStates.end();++it)if(it.value().toString().contains("sign-in")||it.value().toString().contains("could not")||it.value().toString().contains("unavailable"))notice=studioText(it.value().toString().toUtf8().constData());
     if(notice==studioText("Comments will appear here as soon as they arrive."))for(auto it=connectionStates.begin();it!=connectionStates.end();++it)
         if(it.value()=="Waiting for your stream")notice=studioText("Waiting for your stream");
+    const auto account=engine.health["account"].toObject();
+    if(account["open"].toBool()||account["clearing"].toBool()||notice.isEmpty())if(!account["notice"].toString().isEmpty())notice=account["notice"].toString();
     notice_->setText(notice);notice_->setVisible(!notice.isEmpty());practice_->setText(studioText(engine.settings.practice?"Stop practising":"Try it with pretend chat"));
     auto channels=state()["channels"].toArray();
     if(channels!=chipsState_) {

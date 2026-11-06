@@ -24,9 +24,13 @@ addEventListener('message',e=>{
         for(const br of doc.querySelectorAll('br'))br.replaceWith(doc.createTextNode('\n'));
         return doc.body.textContent;
       };
+      const event=typeof m.event==='string'?m.event:'';
+      const donation=text(m.hasDonation),membership=text(m.membership);
+      let body=m.textonly?m.chatmessage:text(m.chatmessage);
+      if(!body.trim()&&(donation||membership||event.includes('gift')))body=event.includes('gift')?'Sent a gift':membership?'Membership update':'Sent a donation';
       window.__engineSpike.rpc('host.comment',[{id:m.id,tid:m.tid,type:m.type,
-        chatname:text(m.chatname),chatmessage:m.textonly?m.chatmessage:text(m.chatmessage),
-        hasDonation:text(m.hasDonation),membership:text(m.membership),textonly:true}]).catch(()=>{});
+        chatname:text(m.chatname),chatmessage:body,
+        hasDonation:donation,membership,event,meta:m.meta||{},textonly:true}]).catch(()=>{});
     }
     feed.push(p.dataReceived.overlayNinja); if(feed.length>100)feed.shift();
     const row=document.createElement('pre');row.textContent=JSON.stringify(p.dataReceived.overlayNinja);document.querySelector('#feed').replaceChildren(row);

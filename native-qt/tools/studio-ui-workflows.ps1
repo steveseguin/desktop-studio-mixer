@@ -98,7 +98,7 @@ function ChooseSourceType($name) {
 }
 if ($FunctionsOnly) {$discovery=Get-Content -LiteralPath $control -Raw | ConvertFrom-Json; return}
 try {
-    if (!(WaitFor {Test-Path $control} 30)) {throw 'No control discovery'}
+    if (!(WaitFor {try {$current=Get-Content -LiteralPath $control -Raw|ConvertFrom-Json;return $current.pid -eq $app.Id -and @(Roots).Count -gt 0} catch {return $false}} 30)) {throw 'No control discovery or visible window for this Studio process'}
     $discovery=Get-Content -LiteralPath $control -Raw | ConvertFrom-Json
     if ($discovery.pid -ne $app.Id) {throw 'Discovery PID mismatch'}
     Resize 1280 900

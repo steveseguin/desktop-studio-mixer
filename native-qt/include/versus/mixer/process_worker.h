@@ -17,6 +17,7 @@ public:
     ~ProcessWorker();
     bool start(const QString &kind);
     bool alive() const;
+    void allowForegroundActivation();
     void terminate();
     QJsonObject stop();
     QJsonObject call(const QJsonObject &command, const void *data = nullptr,

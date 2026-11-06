@@ -71,7 +71,14 @@
       const cb = typeof args.at(-1)==='function' ? args.pop() : undefined;
       if (typeof args[0] === 'string') args.shift();
       // Badges and avatars can embed whole images, enough to exceed the host's message limit. Send only what it reads.
-      if (cfg.role === 'capture' && args[0]?.message) args[0] = {message:Object.fromEntries(['chatname','chatmessage','hasDonation','membership','textonly','type','reply','initial'].filter(k => k in args[0].message).map(k => [k, args[0].message[k]]))};
+      if (cfg.role === 'capture' && args[0]?.message) {
+        const source=args[0].message;
+        const message=Object.fromEntries(['chatname','chatmessage','hasDonation','membership','textonly','type','reply','initial','event'].filter(k => k in source).map(k => [k,source[k]]));
+        // Keep bounded gift identity/counts, without transporting avatars, badge
+        // images or arbitrary platform metadata through the native message pipe.
+        if(source.meta)message.meta=Object.fromEntries(['tiktokGiftStreakId','tiktokGiftCount','giftName'].filter(k=>typeof source.meta[k]==='number'||typeof source.meta[k]==='string'&&source.meta[k].length<=256).map(k=>[k,source.meta[k]]));
+        args[0]={message};
+      }
       return rpc('runtime.sendMessage',[args[0]],cb);
     }
   };
@@ -132,8 +139,17 @@
     setInterval(()=>{
       const output=document.getElementById('output'), message=output?.querySelector('.hl-message'), name=output?.querySelector('.hl-name');
       const expectedName=expected?new DOMParser().parseFromString(expected.chatname,'text/html').body.textContent:'';
-      if(expected && output && message && name && getComputedStyle(output).opacity>.9 && message.textContent===expected.chatmessage && name.textContent.trim()===expectedName)
+      if(expected && output && message && name && getComputedStyle(output).opacity>.9 && message.textContent===expected.chatmessage && name.textContent.trim()===expectedName) {
+        // Keep the complete Studio support label as plain text. The generic SSN
+        // card otherwise chooses donation OR membership and adds platform titles.
+        const parent=message.closest('.hl-c-cont');if(!parent)return;
+        let support=parent.querySelector('.studio-support');
+        if(expected.studioSupport){
+          if(!support){support=document.createElement('div');support.className='studio-support';parent.append(support);}
+          if(support.textContent!==expected.studioSupport)support.textContent=expected.studioSupport;
+        }else support?.remove();
         document.documentElement.dataset.studioCard=expected.studioToken;
+      }
     },16);
   }
 })();
