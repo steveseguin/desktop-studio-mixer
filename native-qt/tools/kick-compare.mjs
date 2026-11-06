@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {discovery,health,request} from './mcp/studio-client.mjs';
 
@@ -14,6 +15,8 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const exe=process.env.VIDEO_MIXER_CHAT_EXE||path.join(root,'native-qt/dist/desktop-studio-portable/desktop-studio.exe');
 const out=path.join(root,'native-qt/build-chat/kick',new Date().toISOString().replaceAll(/[:.]/g,'-'));
 await fs.mkdir(out,{recursive:true});
+const sha=async p=>createHash('sha256').update(await fs.readFile(p)).digest('hex');
+await fs.writeFile(path.join(out,'artifact.json'),JSON.stringify({exe,exeSha256:await sha(exe),sourceSha256:await sha(path.join(path.dirname(exe),'ssn/sources/kick.js'))},null,2));
 const control=path.join(out,'control.json');
 const flags=`--remote-debugging-port=${port} --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding`;
 const child=spawn(exe,['--studio-headless',`--studio-show=${path.join(out,'show.mixer.json')}`,'--local-control-port=0',`--local-control-discovery=${control}`],{env:{...process.env,VIDEO_MIXER_DATA_DIR:out,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:flags},windowsHide:true,stdio:'ignore'});
@@ -66,12 +69,14 @@ try{
   const seen=new Map();
   const collect=async()=>{for(const m of (await raw({command:'chat.messages'})).messages)if(m.channel===added.channel.id&&!seen.has(m.id))seen.set(m.id,{...m,seenMs:Date.now()});};
   await collect();
+  const initialIds=new Set(seen.keys());
   const started=Date.now();
   while(Date.now()-started<seconds*1000){await delay(3000);await collect();}
   const referenceHeld=!socketLost;
   socket.onclose=null;socket.close();
   const stopped=Date.now();
-  const rows=[...seen.values()].filter(r=>r.seenMs>=started);
+  const rows=[...seen.values()].filter(r=>!initialIds.has(r.id));
+  await fs.writeFile(path.join(out,'window.json'),JSON.stringify({started,stopped,scoredUntil:stopped-15000,deleted:[...deleted],banned:[...banned]},null,2));
   await fs.writeFile(path.join(out,'captured.json'),JSON.stringify(rows,null,1));
   await fs.writeFile(path.join(out,'truth.json'),JSON.stringify(truth,null,1));
   const inWindow=truth.filter(t=>t.at>=started&&t.at<=stopped-15000);
@@ -81,6 +86,14 @@ try{
   // tokens into their names; preserve the surrounding text and punctuation.
   const plain=inWindow.filter(t=>!/\[emote:/.test(t.text||''));
   const expectedText=t=>String(t.text??'').replace(/\[emote:\d+:([^\]]+)\]/g,(_,name)=>name);
+  // Use the full independently observed interval for surplus detection so the
+  // unscored warmup/drain messages cannot be mistaken for duplicates. This is
+  // an occurrence comparison: separate equal author/text inputs each count.
+  const referenceCounts=new Map(),outputCounts=new Map();
+  for(const t of truth){const k=key(t.user,expectedText(t));referenceCounts.set(k,(referenceCounts.get(k)||0)+1);}
+  for(const r of rows){const k=key(r.chatname,r.chatmessage);outputCounts.set(k,(outputCounts.get(k)||0)+1);}
+  let duplicateOccurrences=0,unexpectedOccurrences=0;
+  for(const[k,n]of outputCounts){const expected=referenceCounts.get(k)||0;if(!expected)unexpectedOccurrences+=n;else duplicateOccurrences+=Math.max(0,n-expected);}
   let matched=0,emoteMatched=0,removedByModerators=0;const missed=[],buckets={};
   // Moderators can remove a comment before the page shows it. Those are correct omissions, and are counted separately.
   const soonAfter=(at,t)=>at>=t.at&&at-t.at<=5000;
@@ -96,8 +109,8 @@ try{
   // A reference with no matches in any 30 seconds means capture stopped, whatever the average says.
   const stalled=Object.values(buckets).filter(([hit,miss])=>miss>=5&&hit===0).length;
   const eligible=inWindow.length-removedByModerators;
-  if(!referenceHeld||!eligible||matched!==eligible||stalled)process.exitCode=1;
-  summary={referenceHeld,stalled,channel,viewers:info.viewers,live:info.live,seconds,comparison:'author-text-and-emote-names',firstComment:!!first,referenceTotal:inWindow.length,referencePlainText:plain.length,referenceEmoteMessages:inWindow.length-plain.length,emoteMatched,removedByModerators,matched,rate:eligible?matched/eligible:null,panelKick:rows.length,status:status.channels?.map(c=>({name:c.name,status:c.status})),missed};
+  if(!referenceHeld||!eligible||matched!==eligible||stalled||duplicateOccurrences||unexpectedOccurrences)process.exitCode=1;
+  summary={referenceHeld,stalled,channel,viewers:info.viewers,live:info.live,seconds,comparison:'author-text-and-emote-names',firstComment:!!first,referenceTotal:inWindow.length,referencePlainText:plain.length,referenceEmoteMessages:inWindow.length-plain.length,emoteMatched,removedByModerators,matched,missing:eligible-matched,duplicateOccurrences,unexpectedOccurrences,rate:eligible?matched/eligible:null,panelKick:rows.length,status:status.channels?.map(c=>({name:c.name,status:c.status})),missed};
 }catch(e){summary.error=e.message;process.exitCode=1;}
 finally{
   if(socket){socket.onclose=null;socket.close();}
