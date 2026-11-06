@@ -1,5 +1,6 @@
 // Measures the packaged app's chat cost over time on real public chat. Read-only and isolated.
 //   node native-qt/tools/chat-soak.mjs --twitch xqc [--youtube VIDEO_ID] [--minutes 15]
+// Add --record to verify continuous moving output; the disk preflight must pass.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -7,16 +8,18 @@ import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {discovery,health,request} from './mcp/studio-client.mjs';
+import {prepareRecording,startRecording,checkRecording,finishRecording} from './soak-recording.mjs';
 
 const flag=(name,fallback)=>{const i=process.argv.indexOf('--'+name);return i<0?fallback:process.argv[i+1];};
-const twitch=flag('twitch','xqc'),youtube=flag('youtube'),kick=flag('kick'),minutes=Number(flag('minutes',15)),maxSilence=Number(flag('max-silence',300));
+const youtube=flag('youtube'),kick=flag('kick'),twitch=flag('twitch',youtube||kick?undefined:'xqc'),minutes=Number(flag('minutes',15)),maxSilence=Number(flag('max-silence',300));
 if(!Number.isFinite(minutes)||minutes<1||minutes>240||!Number.isFinite(maxSilence)||maxSilence<1)throw Error('Invalid soak duration/silence limit');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const exe=process.env.VIDEO_MIXER_CHAT_EXE||path.join(root,'native-qt/dist/desktop-studio-portable/desktop-studio.exe');
 const out=path.join(root,'native-qt/build-chat/soak',new Date().toISOString().replaceAll(/[:.]/g,'-'));
 await fs.mkdir(out,{recursive:true});
+const recording=process.argv.includes('--record')?await prepareRecording(exe,out,minutes):null;
 const control=path.join(out,'control.json');
-const artifact={exe,sha256:createHash('sha256').update(await fs.readFile(exe)).digest('hex'),startedUtc:new Date().toISOString(),twitch,youtube,kick};
+const artifact={exe,sha256:createHash('sha256').update(await fs.readFile(exe)).digest('hex'),startedUtc:new Date().toISOString(),twitch,youtube,kick,recording:!!recording};
 await fs.writeFile(path.join(out,'artifact.json'),JSON.stringify(artifact,null,2));
 const child=spawn(exe,['--studio-headless',`--studio-show=${path.join(out,'show.mixer.json')}`,'--local-control-port=0',`--local-control-discovery=${control}`],{env:{...process.env,VIDEO_MIXER_DATA_DIR:out},windowsHide:true,stdio:'ignore'});
 let target;
@@ -25,9 +28,10 @@ const startupDeadline=Date.now()+60000;
 while(!target&&Date.now()<startupDeadline){try{const candidate=await discovery(control);await health(candidate);target=candidate;}catch{await delay(250);}}
 if(!target)throw Error('App control did not become ready');
 const raw=c=>request(target,'/studio/command',c);
-for(const input of [`https://www.twitch.tv/${twitch}`,...(youtube?[`https://www.youtube.com/watch?v=${youtube}`]:[]),...(kick?[`https://kick.com/${kick}`]:[])]){
+for(const input of [...(twitch?[`https://www.twitch.tv/${twitch}`]:[]),...(youtube?[`https://www.youtube.com/watch?v=${youtube}`]:[]),...(kick?[`https://kick.com/${kick}`]:[])]){
  const added=await raw({command:'chat.channel.add',input});if(!added.channel?.id)throw Error(added.error||'Channel was not added');
 }
+if(recording)await startRecording(target,recording);
 const samples=[],start=Date.now(),pids=new Set();let notReady=0;
 // The panel keeps 2,000 comments, so its count can't show flow. Track new comment ids per platform.
 const wanted=[...(twitch?['twitch']:[]),...(youtube?['youtube']:[]),...(kick?['kick']:[])];
@@ -41,6 +45,7 @@ while(Date.now()-start<minutes*60000){
   if(!s.ready&&t>120)notReady++;
   for(const c of s.channels||[]){const row=reading[c.name]??={reading:0,other:{}};if(c.status==='Reading comments')row.reading++;else row.other[c.status]=(row.other[c.status]||0)+1;}
   if(samples.length%6===0) {
+    if(recording)await checkRecording(target,recording);
     const newest={};
     const reply=await raw({command:'chat.messages'}).catch(()=>null);
     for(const m of reply?.messages||[])(newest[m.type]??=new Set()).add(m.id);
@@ -56,6 +61,7 @@ while(Date.now()-start<minutes*60000){
   await delay(5000);
 }
 const elapsedSeconds=Math.round((Date.now()-start)/1000);
+const recordingSummary=recording?await finishRecording(target,recording):null;
 const channels=Object.fromEntries(Object.entries(flow).map(([k,f])=>[k,{comments:f.total,firstAt:f.firstAt,lastAt:f.lastAt,longestSilence:Math.max(f.longestSilence,elapsedSeconds-(f.lastAt??0))}]));
 const privates=samples.filter(s=>s.ready&&s.private>0).map(s=>s.private).sort((a,b)=>a-b);
 const pick=p=>privates[Math.floor((privates.length-1)*p)];
@@ -70,9 +76,10 @@ if(pids.size!==1)failures.push(`chat browser changed ${pids.size-1} times`);
 if(notReady)failures.push(`chat not ready in ${notReady} samples after the first two minutes`);
 for(const f of failures)console.log('FAIL '+f);
 if(failures.length)process.exitCode=1;
-await fs.writeFile(path.join(out,'soak.json'),JSON.stringify({artifact,summary,failures,samples},null,1));
+await fs.writeFile(path.join(out,'soak.json'),JSON.stringify({artifact,summary,recording:recordingSummary,failures,samples},null,1));
 }catch(e){process.exitCode=1;await fs.writeFile(path.join(out,'failure.json'),JSON.stringify({error:e.stack,artifact},null,2));console.error(e.stack);}
 finally{
+try{if(target&&recording)await request(target,'/studio/command',{command:'record.stop'});}catch{}
 try{if(target)await request(target,'/commands',{command:'quit'});}catch{}
 if(child.exitCode===null)await Promise.race([new Promise(r=>child.once('exit',r)),delay(8000)]);if(child.exitCode===null)child.kill();
 console.log('dir',out);

@@ -1,8 +1,42 @@
 ﻿# Native chat integration: packaged validation
 
-Updated 2026-11-05 UTC. Worktree: `C:\Users\Steve\code\video-mixer-chat`. The integration base is `90caa70` on `feature/studio-chat-spike` (07:56 local); the follow-up fixes and this report are recorded together in a later local commit on that branch. Main's application edits were not changed. The runs below exercised real WebView2, the portable app, Windows accessibility controls, recordings, and an installed release.
+Updated 2026-11-06 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
 
-## Integration and sustained validation, 18:15 UTC
+## Capture rendering follow-up, 2026-11-06 UTC
+
+Worktree: `C:\Users\Steve\code\video-mixer-chat-integration`, branch `feature/studio-chat-integration`, based on `eb8ee2b`. Main's existing edits remain untouched. This section supersedes the artifact selection below; historical results still apply only to their recorded builds.
+
+Current review package: `native-qt/dist/desktop-studio-chat-memory-nov6/desktop-studio.exe`, SHA-256 `e1657afcd5d705d93a1589f192482f76d2a65865e75252fee08231588d1488a0`. The standard `desktop-studio-0.9.4-windows-x64.zip` now contains this package. The explicitly named integration ZIP and installer remain the November 5 build; the installer has not been rebuilt for this change. The same verified SSN pack was reused without capture-script changes. Signing still uses the local certificate with trust status `UnknownError`.
+
+### Change and evidence
+
+Capture pages previously set their native WebView2 controller to invisible. SSN's JavaScript reported the document as visible, but animation callbacks were suspended: zero callbacks in a five-second probe, versus 302 in an ordinary Studio browser source. The capture controller now stays visible inside its hidden owner window. The patched capture ran 302 callbacks in the same probe. Windows enumeration found no visible top-level windows for any of the three running patched chat workers. Engine/host visibility settings and resource limits are unchanged.
+
+The old/new live YouTube comparison reproduced and stopped one source of retention. At 6.5 minutes both pages held about 35,000 DOM nodes and 250 visible chat rows. By minute 20, the old page held 70,616 nodes and a 69 MiB JavaScript heap; the patched page held 35,288 nodes and a 42 MiB heap. Across minutes 6.5–20 the patched page stayed between 34,796–35,680 nodes and 40–42 MiB of heap. The old run continued to minute 25, reaching 81,875 nodes and 77 MiB. An ordinary browser-source control without SSN also levelled off after its visible list filled.
+
+**Total memory is not qualified as fixed.** In the patched run, overall chat private memory rose from 658 MiB at minute 6.5 to 717 MiB at minute 20, with a final-three-minute mean of 711 MiB. Rendering may add costs beyond retained JavaScript objects. This is diagnostic evidence, with DevTools attached, and does not replace the uninstrumented two-hour recording soak. The old run also used allocation sampling and a detached-node query. No forced garbage collection or heap snapshot was used in this comparison. Evidence: `native-qt/build-chat/page-metrics/2026-11-06T04-29-39-242Z/` (old), `2026-11-06T04-35-15-723Z/` (patched), and `native-qt/build-integration/youtube-control/` (ordinary browser).
+
+Completed workflows on this exact package (all paths below are in this integration checkout):
+
+| Workflow | Result | Evidence under `native-qt/` |
+| --- | --- | --- |
+| Live YouTube, ten minutes | 329/329 reference comments, including 155/155 containing emoji; reference held, no unscorable items, one page load | `build-chat/youtube/2026-11-06T04-35-25-910Z/` |
+| Live Twitch plus YouTube, ten minutes | Twitch 2,748/2,748 eligible reference occurrences; four moderation exclusions. Show reached composition in 268 ms; chat recovered after browser termination in 1.941 seconds. Original workflow result was 19/20 because of the capped-count harness defect described below | `build-chat/live-e2e/2026-11-06T04-45-51-602Z/` |
+| Corrected live workflow, two-minute comparison plus recovery/restart | 20/20; Twitch 556/556 eligible reference occurrences, one moderation exclusion; Show 266 ms, recovery 1.936 seconds, fresh comments after recovery, saved channels after full restart, recording decoded | `build-chat/live-e2e/2026-11-06T04-57-49-296Z/` |
+| Live Kick, ten minutes, channel live with 41,144 viewers at start | Strict comparison failed: 1,834/1,894 eligible occurrences after five moderation exclusions; no stalls and reference held. All 744 plain-text occurrences matched; 60 eligible emote-containing mismatches remain. Eight reported examples were found in captured data with spacing differences; that diagnostic does not prove all 60 are formatting-only | `build-chat/kick/2026-11-06T04-45-51-602Z/` |
+| Moving-picture recording with live YouTube capture | 60 seconds decoded for 60.615 seconds wall time; seven distinct repeating reference frames, no consecutive identical one-second samples, no decode errors | `build-chat/soak/2026-11-06T04-44-30-472Z/` |
+| Windows accessible UI walkthrough | 22/22; screenshots visually reviewed at 1280 px. Chat selection and amber on-screen actions are legible; wider mixer source controls remain cramped | `build-chat/ui-walkthrough/20261105-234507/` |
+| Forced chat-memory overload while recording | 8/8; recovery 16.392 seconds, peak 3,004 MiB against 3,072 MiB cap, worst control response 7 ms; recording fully decoded and covered recovery | `build-chat/overload/2026-11-06T04-49-29-788Z/` |
+
+The soak harness now accepts `--record`: it generates a moving reference using the package's FFmpeg, records through the real application, checks recording status and disk space, then decodes the entire video and checks duration and frozen-picture intervals. A full 120-minute run requires 12.5 GiB free; its preflight correctly refused to start with about 1.4 GiB available. Two initial short harness attempts failed before validation (the LGPL FFmpeg lacks libx264; recording-active precedes file creation); the harness now uses MPEG-4 for the input fixture and waits for the recording file. The successful run above followed those corrections.
+
+The busy Twitch run exposed another harness defect: recovery waited for the panel's comment count to increase even after reaching its 2,000-comment cap. The application was still receiving comments: a direct check during the failed wait found 16 new IDs in three seconds with both counts fixed at 2,000 (`capped-recovery-check.json` in that run). `chat-live-e2e.mjs` now checks for fresh IDs. The original 19/20 result is preserved; the independent ten-minute delivery comparison was unaffected. This passing delivery window does not establish that the previously intermittent Twitch loss is fixed.
+
+The package and ZIP executable hashes match. All 28 chat code gates passed with exit code 0; JavaScript syntax and whitespace gates passed. These are gates, separate from the packaged application workflows above.
+
+The full two-hour recording remains blocked by disk capacity. Cleanup inventory identified 6.42 GiB in 120 inactive QA browser profiles, but automatic approval review rejected both the bounded batch and a single explicitly named profile, despite user authorization, with only `blocked by policy`. No files were deleted. Reports, screenshots, recordings and profile data remain present. Real stream rollover, other-platform qualification, intermittent Twitch losses and Kick spacing fidelity remain open until supported by new evidence.
+
+## Integration and sustained validation, November 5, 18:15 UTC
 
 The new integration checkout is `C:\Users\Steve\code\video-mixer-chat-integration`, branch `feature/studio-chat-integration`. It combines current main (including the CLA) with the chat branch. Three existing local application edits from main were copied into this checkout for compatibility testing: the named 192 kbps recording AAC default, the file-output default, and the canvas-rate keyframe interval. The original main checkout and its unrelated deleted report ignore-file remain untouched.
 

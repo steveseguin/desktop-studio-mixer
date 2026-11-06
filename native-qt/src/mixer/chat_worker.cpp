@@ -235,7 +235,11 @@ void Page::receiveNative(ICoreWebView2WebMessageReceivedEventArgs *a,ICoreWebVie
     host.receive(*this,m);
 }
 void Page::configure(){
-    RECT bounds{0,0,width(),height()};controller->put_Bounds(bounds);controller->put_IsVisible(role=="overlay" ? TRUE : FALSE);
+    // Capture documents need animation frames for platform rendering and DOM
+    // cleanup. Hiding the controller suspends those frames even when the SSN
+    // source reports document.visibilityState as visible. The owning QWidget
+    // remains hidden; this does not open a capture window on the desktop.
+    RECT bounds{0,0,width(),height()};controller->put_Bounds(bounds);controller->put_IsVisible(role=="overlay" || role=="capture" ? TRUE : FALSE);
     if(role=="overlay"){ComPtr<ICoreWebView2Controller2> c2;controller.As(&c2);if(c2)c2->put_DefaultBackgroundColor({0,0,0,0});}
     UINT32 pid=0;web->get_BrowserProcessId(&pid);host.browserPid=pid;host.log("controller-ready",{{"tab",id},{"role",role},{"browserPid",int(pid)}});
     ComPtr<ICoreWebView2_3>w3;web.As(&w3);if(!w3||!host.check(w3->SetVirtualHostNameToFolderMapping(L"socialstream.ninja",host.root.toStdWString().c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW),"mapping",id))return;

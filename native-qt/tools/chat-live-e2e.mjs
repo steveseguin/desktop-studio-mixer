@@ -125,9 +125,9 @@ try{
   if(recovered){
     result.measurements.recoverySeconds=(Date.now()-killedAt)/1000;
     check(true,'Chat engine restarts by itself',{seconds:result.measurements.recoverySeconds});
-    const count=(await command('chat.messages')).messages.length;
+    const previousIds=new Set((await command('chat.messages')).messages.map(m=>m.id));
     await command('chat.hide');
-    await until(async()=>(await command('chat.messages')).messages.length>count,'comments flow again after restart',60000).then(()=>check(true,'Comments flow again after restart')).catch(e=>check(false,e.message));
+    await until(async()=>(await command('chat.messages')).messages.some(m=>!previousIds.has(m.id)),'comments flow again after restart',60000).then(()=>check(true,'Comments flow again after restart')).catch(e=>check(false,e.message));
   }
   await delay(3000);
   await command('record.stop');
