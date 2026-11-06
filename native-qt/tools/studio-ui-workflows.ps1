@@ -33,6 +33,8 @@ if ($SessionFile) {
     $Out = (Resolve-Path $Out).Path; $control = Join-Path $Out 'control.json'
     $env:VIDEO_MIXER_DATA_DIR = $Out
     $app = Start-Process $Exe -PassThru -ArgumentList "--studio-show=$Out/show.mixer.json", '--local-control-port=0', "--local-control-discovery=$control"
+    $SessionFile=Join-Path $Out 'ui-session.json'
+    $session=@{out=$Out;control=$control;pid=$app.Id;exe=$Exe};$session|ConvertTo-Json|Set-Content -LiteralPath $SessionFile
 }
 $checks = [Collections.ArrayList]::new()
 $Evidence=Join-Path $Out ('workflows-'+(Get-Date -Format yyyyMMdd-HHmmss-fff))

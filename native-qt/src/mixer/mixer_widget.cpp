@@ -10,6 +10,7 @@
 #include "versus/mixer/global_hotkeys.h"
 #include "versus/mixer/show_files.h"
 #include "chat_panel.h"
+#include "studio_icons.h"
 #include <QDockWidget>
 #include <QDateTime>
 #include <QKeySequenceEdit>
@@ -62,6 +63,7 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStandardPaths>
+#include <QStyle>
 #include <QTimer>
 #include <QUrlQuery>
 #include <QUuid>
@@ -247,6 +249,19 @@ QPushButton *button(const QString &text, const QString &name, QBoxLayout *layout
     if (text.size() > 1) result->setAccessibleName(result->text());
     ui::accessibleWidget(result);
     layout->addWidget(result); return result;
+}
+void buttonIcon(QAbstractButton *button, StudioIcon symbol, const char *color="#bed0e2", bool iconOnly=false) {
+    button->setIcon(studioIcon(symbol,QColor(color)));button->setIconSize(QSize(18,18));
+    if(button->toolTip().isEmpty())button->setToolTip(button->text());
+    if(iconOnly){if(button->accessibleName().isEmpty())button->setAccessibleName(button->text());button->setText({});button->setFixedWidth(34);}
+}
+void elidedCaption(QLabel *label, const QString &text) {
+    label->setToolTip(text);label->setAccessibleName(text);
+    label->setText(label->fontMetrics().elidedText(text,Qt::ElideRight,std::max(0,label->width())));
+}
+void activeButton(QAbstractButton *button, bool active) {
+    if(button->property("active").toBool()==active)return;
+    button->setProperty("active",active);button->style()->unpolish(button);button->style()->polish(button);
 }
 bool webUrl(const QString &value) {
     const QUrl url(value, QUrl::StrictMode);
@@ -564,13 +579,15 @@ struct MixerWidget::Impl {
         message(exportStatus); return {};
     }
     void updateModeUi() {
-        audioBox->setMinimumWidth(340);
+        audioBox->setMinimumWidth(180);
         audioBox->show();
         programPanel->setVisible(studioMode);
         takeButton->setVisible(studioMode); fadeButton->setVisible(studioMode);
-        brand->setText(QString("<b style='font-size:22px'>Desktop Studio</b><br>") +
-            (studioMode ? "Studio mode: prepare in Preview, then Take to output." : "Single canvas: scene changes and edits go straight to output."));
-        sourceBox->setTitle(studioMode ? "Sources - checked items appear in Preview" : "Sources - checked items appear in output");
+        brand->setText(QString("<b style='font-size:17px'>Desktop Studio</b><br><span style='font-size:11px;color:%1'>%2</span>")
+            .arg(studioMode?"#83dac7":"#edc378",studioMode?"Preview &amp; Program":"Direct to output"));
+        brand->setToolTip(studioMode?studioText("Prepare in Preview, then Take to output."):studioText("Scene changes and edits go straight to output."));
+        sourceBox->setTitle(studioText("Sources"));
+        sourceBox->setToolTip(studioMode?studioText("Checked sources appear in Preview. Take to update Program."):studioText("Checked sources appear in output immediately."));
         previewView->setAccessibleName(studioMode ? "Preview canvas" : "Output canvas - edits go live");
     }
     void message(const QString &text) {
@@ -642,20 +659,26 @@ struct MixerWidget::Impl {
     }
 
     void buildUi() {
-        q->setMinimumSize(1100, 620);
-        q->setStyleSheet("QPushButton, QToolButton#exportShow { background:#192b3d; color:#eaf4ff; border:1px solid #304358; border-radius:4px; padding:8px; }"
+        q->setMinimumSize(900, 550);
+        q->setStyleSheet("QPushButton, QToolButton#exportShow { background:#192b3d; color:#eaf4ff; border:1px solid #304358; border-radius:5px; padding:6px 8px; }"
             "QToolButton#exportShow { padding-right:20px; font-weight:700; } QToolButton#exportShow::menu-button { width:16px; border-left:1px solid #304358; }"
-            "QPushButton:hover, QToolButton#exportShow:hover { background:#253c52; } QPushButton#takeScene, QPushButton#mixerOutput { background:#00c2ff; color:#06131a; font-weight:700; }"
+            "QPushButton:hover, QToolButton#exportShow:hover { background:#253c52; } QPushButton:focus, QToolButton:focus { border:1px solid #9fd2f7; }"
+            "QPushButton:checked { background:#21445a; border:1px solid #71bcdf; } QPushButton:disabled { color:#708397; border-color:#243444; }"
+            "QPushButton#takeScene, QPushButton#studioStartOutput { background:#126583; border-color:#359cbd; color:#f3fcff; font-weight:700; }"
+            "QPushButton#studioStartOutput[active=\"true\"], QPushButton#studioRecord[active=\"true\"] { background:#7e293b; border-color:#f28899; color:white; }"
+            "QPushButton#privateBreak:checked, QPushButton#muteMicrophones:checked, QPushButton#guestTalkback:checked { background:#654b21; border-color:#e8bd67; color:#fff1cf; }"
+            "QFrame#studioCommandBar { background:#101c2a; border:1px solid #283c50; border-radius:7px; }"
             "QListWidget::indicator { width:14px; height:14px; border:1px solid #647b91; border-radius:3px; }"
             "QListWidget::indicator:checked { background:#00c2ff; } QListWidget::indicator:unchecked { background:#101b27; }");
-        auto *workspace = new QHBoxLayout(q); workspace->setContentsMargins(0,0,0,0);
-        auto *split = new QSplitter(Qt::Horizontal,q); workspace->addWidget(split);
+        auto *workspace = new QVBoxLayout(q);workspace->setContentsMargins(10,8,10,8);workspace->setSpacing(8);
+        auto *commandBar=new QFrame(q);commandBar->setObjectName("studioCommandBar");auto *commandLayout=new QVBoxLayout(commandBar);commandLayout->setContentsMargins(12,8,12,8);commandLayout->setSpacing(8);workspace->addWidget(commandBar);
+        auto *split = new QSplitter(Qt::Horizontal,q); workspace->addWidget(split,1);
         auto *studio = new QWidget(split);
-        auto *root = new QVBoxLayout(studio); root->setContentsMargins(18, 14, 18, 14); root->setSpacing(12);
+        auto *root = new QVBoxLayout(studio); root->setContentsMargins(2,2,8,0);root->setSpacing(8);
         studioLayout = root;
         nativeChatDock = new QDockWidget(studioText("Chat"),split);
         nativeChatDock->setFeatures(QDockWidget::DockWidgetClosable);
-        nativeChatDock->setFixedWidth(372);
+        nativeChatDock->setFixedWidth(320);
         chatPanel = new ChatPanel(nativeChatDock);nativeChatDock->setWidget(chatPanel);
         split->setStretchFactor(0,1);split->setStretchFactor(1,0);
         chatPanel->advanced = [this]{addChat();};
@@ -679,7 +702,6 @@ struct MixerWidget::Impl {
             // Feeding that temporary visibility back into toggled() would close chat.
             const QSignalBlocker block(chat);chat->setChecked(!nativeChatDock->isHidden());
         });
-        chat->setStyleSheet("QPushButton:checked { background:palette(highlight); color:palette(highlighted-text); border:2px solid palette(highlight); }");
         QObject::connect(&chatPanel->engine,&ChatEngine::updated,chat,[this,chat]{const int count=chatPanel->engine.model.rowCount()+chatPanel->engine.model.pendingCount();chat->setText(nativeChatDock->isVisible()||!count?studioText("Chat"):studioText("Chat")+" ("+QString::number(count)+")");});
         talk->setText(studioText("Private talkback")); talk->setCheckable(true);
         talk->setToolTip(studioText("While enabled, microphone inputs go only to guests and are removed from Program. Add your microphone as a source first."));
@@ -688,7 +710,7 @@ struct MixerWidget::Impl {
             message(enabled ? "PRIVATE TALKBACK: microphone inputs are off air and sent only to guests. Click Private talkback again to return them to Program." : "Private talkback ended. Normal microphone routing restored.");
         });
         QObject::connect(output, &QPushButton::clicked, q, [this] { emit q->outputRequested(); });
-        root->addLayout(toolbar);
+        toolbar->setSpacing(8);commandLayout->addLayout(toolbar);
         auto *outputBar = new QHBoxLayout;
         startOutput = button("Start output", "studioStartOutput", outputBar, q);
         recordOutput = button("Record...", "studioRecord", outputBar, q);
@@ -697,6 +719,7 @@ struct MixerWidget::Impl {
         QObject::connect(breakButton, &QPushButton::toggled, q, [this](bool enabled) {
             privateBreak = enabled; breakButton->setText(enabled ? "Resume show" : "Private break");
             breakButton->setAccessibleName(breakButton->text());
+            breakButton->setIcon(studioIcon(enabled ? StudioIcon::Play : StudioIcon::Pause,QColor("#edc378")));
             message(enabled ? "PRIVATE BREAK: Program shows a slate and is silent. Guest conversation continues privately." : "Show resumed. Program picture and audio are on air.");
         });
         microphonesButton = button("Mute mics", "muteMicrophones", outputBar, q); microphonesButton->setCheckable(true);
@@ -719,17 +742,19 @@ struct MixerWidget::Impl {
             const auto error = exportRecording(input,output.endsWith(".mp4",Qt::CaseInsensitive) ? output : output+".mp4"); if (!error.isEmpty()) message(error);
         });
         outputStatus = new QLabel(studioText("Configure a destination in Output settings, or record to a file."), q);
-        outputStatus->setObjectName("studioOutputStatus"); outputStatus->setWordWrap(true);
-        outputBar->addWidget(outputStatus, 1); root->addLayout(outputBar);
+        outputStatus->setObjectName("studioOutputStatus");outputStatus->setTextFormat(Qt::PlainText);outputStatus->setMinimumWidth(0);outputStatus->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);outputStatus->setStyleSheet("color:#9fb4c8;font-size:11px;");
+        outputBar->setSpacing(8);outputBar->addWidget(outputStatus,1);commandLayout->addLayout(outputBar);
         QObject::connect(startOutput, &QPushButton::clicked, q, [this] { emit q->toggleOutputRequested(); });
         QObject::connect(recordOutput, &QPushButton::clicked, q, [this] { record(); });
-        recordingStatus = new QLabel(q); recordingStatus->setObjectName("recordingStatus"); recordingStatus->setWordWrap(true); root->addWidget(recordingStatus);
+        recordingStatus = new QLabel(q); recordingStatus->setObjectName("recordingStatus"); recordingStatus->setWordWrap(true);recordingStatus->hide();commandLayout->addWidget(recordingStatus);
         canvasFormat = new QComboBox(q); canvasFormat->setObjectName("canvasFormat");
         canvasFormat->setToolTip(studioText("Choose the show resolution and frame rate before starting outputs. Stop streaming, recording, guest returns and local outputs to change it."));
         for (const auto &format : CanvasFormats)
             canvasFormat->addItem(QString("%1x%2 / %3 fps%4").arg(format.width).arg(format.height).arg(format.fps)
                 .arg(format.height > format.width ? studioText(" (Portrait)") : QString()));
-        outputBar->addWidget(canvasFormat);
+        auto *videoSettings=button("Video", "studioVideoSettings",outputBar,q);videoSettings->setAccessibleName(studioText("Video settings"));
+        auto *videoOptions=new QDialog(q);videoOptions->setWindowTitle(studioText("Video settings"));auto *videoForm=new QFormLayout(videoOptions);videoForm->setContentsMargins(16,16,16,16);videoForm->addRow(studioText("Canvas"),canvasFormat);
+        QObject::connect(videoSettings,&QPushButton::clicked,videoOptions,[videoOptions]{videoOptions->exec();});
         auto *localBar = new QHBoxLayout;
         outputBar->removeWidget(hotkeys); outputBar->removeWidget(recordingFiles);
         spoutOutput = new QCheckBox(studioText("Spout output"), q); spoutOutput->setObjectName("spoutOutput"); localBar->addWidget(spoutOutput);
@@ -737,7 +762,16 @@ struct MixerWidget::Impl {
         auto *removeCamera = button("Unregister camera", "unregisterCamera", localBar, q);
         guestReturnEnabled = new QCheckBox(studioText("Guest Program return"), q); guestReturnEnabled->setObjectName("guestProgramReturn"); localBar->addWidget(guestReturnEnabled);
         QObject::connect(guestReturnEnabled, &QCheckBox::toggled, q, [this] { refreshGuestReturns(); changed(); });
-        localBar->addStretch(); localBar->addWidget(hotkeys); localBar->addWidget(recordingFiles); root->addLayout(localBar);
+        auto *toolsButton=button("Tools", "studioTools",outputBar,q);auto *toolsMenu=new QMenu(toolsButton);toolsButton->setMenu(toolsMenu);
+        auto *localOptions=new QDialog(q);localOptions->setWindowTitle(studioText("Local outputs"));auto *localLayout=new QVBoxLayout(localOptions);localLayout->setContentsMargins(16,16,16,16);
+        while(auto *entry=localBar->takeAt(0)){if(auto *widget=entry->widget())localLayout->addWidget(widget);delete entry;}delete localBar;
+        auto *localClose=new QDialogButtonBox(QDialogButtonBox::Close,localOptions);localLayout->addWidget(localClose);QObject::connect(localClose,&QDialogButtonBox::rejected,localOptions,&QDialog::reject);
+        toolsMenu->addAction(studioText("Local outputs..."),localOptions,[localOptions]{localOptions->exec();});
+        recordingMenu->setTitle(studioText("Recordings"));toolsMenu->addMenu(recordingMenu);recordingFiles->hide();
+        toolsMenu->addAction(studioText("Hotkeys..."),hotkeys,&QPushButton::click);hotkeys->hide();
+        buttonIcon(invite,StudioIcon::Guest,"#c9b0ff");buttonIcon(wireless,StudioIcon::Camera,"#87dbcc");buttonIcon(chat,StudioIcon::Chat,"#8bc7f1");buttonIcon(talk,StudioIcon::Mic,"#edc378");buttonIcon(output,StudioIcon::Settings);
+        buttonIcon(startOutput,StudioIcon::Live,"#bcefff");buttonIcon(recordOutput,StudioIcon::Record,"#ff8a9c");buttonIcon(breakButton,StudioIcon::Pause,"#edc378");buttonIcon(microphonesButton,StudioIcon::Mic,"#edc378");buttonIcon(videoSettings,StudioIcon::Video,"#87dbcc");buttonIcon(toolsButton,StudioIcon::Tools);
+        for(auto *control:{invite,wireless,chat,talk,output,startOutput,recordOutput,breakButton,microphonesButton,videoSettings,toolsButton})control->setFixedHeight(36);
         QObject::connect(spoutOutput, &QCheckBox::toggled, q, [this] { localOutputs.configure(spoutOutput->isChecked(), virtualCamera->isChecked(), canvasFps); });
         const auto registerCamera = [this,removeCamera](bool install) {
             virtualCamera->setEnabled(false); removeCamera->setEnabled(false);
@@ -756,7 +790,9 @@ struct MixerWidget::Impl {
             else { localOutputs.configure(spoutOutput->isChecked(),false,canvasFps); message("Virtual camera stopped."); }
         });
         QObject::connect(removeCamera, &QPushButton::clicked, q, [this,registerCamera] { virtualCamera->setChecked(false); registerCamera(false); });
-        renderer = new QComboBox(q); renderer->setObjectName("compositorBackend"); renderer->addItems({"GPU composition", "CPU composition"}); outputBar->addWidget(renderer);
+        renderer = new QComboBox(q); renderer->setObjectName("compositorBackend"); renderer->addItems({"GPU composition", "CPU composition"});videoForm->addRow(studioText("Compositor"),renderer);
+        canvasFormat->setAccessibleName(studioText("Canvas format"));renderer->setAccessibleName(studioText("Compositor"));
+        auto *videoClose=new QDialogButtonBox(QDialogButtonBox::Close,videoOptions);videoForm->addRow(videoClose);QObject::connect(videoClose,&QDialogButtonBox::rejected,videoOptions,&QDialog::reject);
         // The default 720p mix is cheaper on CPU while outputs require readback.
         // Keep GPU available for workloads where its scaling/compositing wins.
         renderer->setCurrentIndex(1);
@@ -778,7 +814,8 @@ struct MixerWidget::Impl {
         auto monitor = [&](const QString &name, Canvas *&view, QLabel *&title) {
             auto *panel = new QWidget(q);
             auto *box = new QVBoxLayout(panel); box->setContentsMargins(0, 0, 0, 0);
-            title = new QLabel(name, q); title->setStyleSheet("font-weight:700; color:#9ab5e8");
+            title = new QLabel(name, q);title->setTextFormat(Qt::PlainText);title->setMinimumWidth(0);title->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
+            title->setStyleSheet(name=="Preview"?"font-weight:700;color:#83dac7;":"font-weight:700;color:#96c6ff;");
             box->addWidget(title); view = new Canvas(q); view->setObjectName(name.toLower()+"Canvas");
             view->setAccessibleName(name+" canvas");
             view->setAccessibleDescription("Rendered scene. Select a source in the Sources list and use the position, size, crop and opacity controls to edit it with the keyboard.");
@@ -847,6 +884,11 @@ struct MixerWidget::Impl {
         });
         exportShow->setToolTip(studioText("Export a show snapshot. Later edits continue autosaving in the current workspace; save another copy to update the exported file. Local assets inside the destination folder use relative paths."));
         auto *importShow = button("Open show...", "importShow", transport, q);
+        buttonIcon(undoButton,StudioIcon::Undo,"#bed0e2",true);buttonIcon(redoButton,StudioIcon::Redo,"#bed0e2",true);
+        buttonIcon(takeButton,StudioIcon::Play,"#bcefff");buttonIcon(fadeButton,StudioIcon::Layers,"#a8ccff");
+        buttonIcon(popout,StudioIcon::Popout,"#bed0e2",true);buttonIcon(importShow,StudioIcon::Folder,"#edc378",true);
+        exportShow->setIcon(studioIcon(StudioIcon::Save));exportShow->setIconSize(QSize(18,18));exportShow->setText({});exportShow->setFixedWidth(48);
+        transport->setSpacing(6);
         QObject::connect(takeButton, &QPushButton::clicked, q, [this] { takeScene(false); });
         QObject::connect(fadeButton, &QPushButton::clicked, q, [this] { takeScene(true); });
         QObject::connect(popout, &QPushButton::clicked, q, [this] {
@@ -890,12 +932,14 @@ struct MixerWidget::Impl {
         panels = new QSplitter(Qt::Horizontal, q);
         auto *sceneBox = new QGroupBox(studioText("Scenes"), panels); auto *sceneLayout = new QVBoxLayout(sceneBox);
         sceneList = new QListWidget(sceneBox); sceneList->setObjectName("sceneList"); sceneLayout->addWidget(sceneList);
+        sceneList->setTextElideMode(Qt::ElideRight);sceneList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         auto *sceneButtons = new QHBoxLayout;
         auto *newScene = button("+", "addScene", sceneButtons, q);
         auto *duplicate = button("Duplicate", "duplicateScene", sceneButtons, q);
         auto *sceneButtons2 = new QHBoxLayout;
         auto *rename = button("Rename", "renameScene", sceneButtons2, q);
         auto *removeScene = button("-", "removeScene", sceneButtons, q); sceneLayout->addLayout(sceneButtons);
+        buttonIcon(duplicate,StudioIcon::Layers,"#bed0e2",true);
         sceneLayout->addLayout(sceneButtons2);
         auto *background = new QPushButton(studioText("Background color"), q); sceneLayout->addWidget(background);
         QObject::connect(sceneList, &QListWidget::itemSelectionChanged, q, [this] {
@@ -931,6 +975,7 @@ struct MixerWidget::Impl {
         sourceBox = new QGroupBox(studioText("Sources"), panels);
         auto *sourceLayout = new QVBoxLayout(sourceBox);
         sourceList = new QListWidget(sourceBox); sourceList->setObjectName("mixerSources"); sourceLayout->addWidget(sourceList);
+        sourceList->setTextElideMode(Qt::ElideRight);sourceList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         auto *sourceButtons = new QHBoxLayout;
         auto *add = button("+ Add source", "addSource", sourceButtons, q);
         auto *remove = button("Remove", "removeSource", sourceButtons, q);
@@ -942,6 +987,7 @@ struct MixerWidget::Impl {
         cameraSettingsButton = button("Camera settings...", "cameraSettings", editButtons, q);
         cameraSettingsButton->setEnabled(false);
         auto *admit = button("Admit / Backstage", "admitGuest", sourceButtons, q);
+        buttonIcon(add,StudioIcon::Plus,"#87dbcc");add->setText(studioText("Add source"));interact->setText(studioText("Open / Invite"));admit->setText(studioText("Guest access"));cameraSettingsButton->setText(studioText("Camera..."));
         admit->setToolTip(studioText("Admission enables guest conversation. With On air enabled, their voice can enter Program immediately, subject to Scene and Mute. Studio mode stages their picture for Take. Backstage removes picture and voice from Program."));
         QObject::connect(admit, &QPushButton::clicked, q, [this] {
             const auto item = source(selectedSource); if (!item || (item->kind != "guest" && item->kind != "wireless")) { message("Select a guest or wireless camera."); return; }
@@ -1148,7 +1194,7 @@ struct MixerWidget::Impl {
         auto *scroll = new QScrollArea(audioBox); scroll->setObjectName("audioTracksScroll"); scroll->setWidgetResizable(true);
         scroll->setStyleSheet("QScrollArea { border:1px solid #50667b; background:#101b27; }");
         scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        scroll->setMinimumHeight(170);
+        scroll->setMinimumHeight(90);
         auto *audioWidget = new QWidget(scroll); audioWidget->setObjectName("studioAudioTracks");
         audioWidget->setStyleSheet("QWidget#studioAudioTracks { background:#080f17; }");
         audioRows = new QVBoxLayout(audioWidget); scroll->setWidget(audioWidget);
@@ -1160,13 +1206,15 @@ struct MixerWidget::Impl {
         masterMeter = new AudioLevelMeter(audioBox); masterMeter->setObjectName("masterAudioMeter");
         masterMeter->setAccessibleName(studioText("Master audio level (dBFS)")); audioLayout->addWidget(masterMeter);
         QObject::connect(masterSlider, &QSlider::valueChanged, q, [this](int value) { masterGain = value/100.0f; changed(); });
-        monitorEnable = new QCheckBox(studioText("Headphone monitor"), q); monitorEnable->setObjectName("monitorEnable");
+        monitorEnable = new QCheckBox(studioText("Headphones"), q);monitorEnable->setAccessibleName(studioText("Headphone monitor"));monitorEnable->setObjectName("monitorEnable");
         monitorDevice = new QComboBox(q); monitorDevice->setObjectName("monitorDevice");
         monitorDevice->setAccessibleName(studioText("Monitoring output device"));
+        monitorDevice->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);monitorDevice->setMinimumContentsLength(9);monitorDevice->setMinimumWidth(0);monitorDevice->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Fixed);
         monitorDevice->setToolTip(studioText("Choose the headphones or speakers used for Listen. This does not change recording or streaming audio."));
         audioLayout->addWidget(monitorEnable);
         auto *monitorRow = new QHBoxLayout; monitorRow->addWidget(monitorDevice, 1);
         auto *refreshMonitor = button("Refresh", "refreshMonitorDevices", monitorRow, q);
+        buttonIcon(refreshMonitor,StudioIcon::Redo,"#bed0e2",true);
         refreshMonitor->setToolTip(studioText("Refresh playback devices after connecting headphones or an audio interface."));
         audioLayout->addLayout(monitorRow);
         refreshMonitorDevices();
@@ -1183,7 +1231,8 @@ struct MixerWidget::Impl {
         });
         QObject::connect(refreshMonitor, &QPushButton::clicked, q, [this] { refreshMonitorDevices(); });
         QObject::connect(monitorVolume, &QSlider::valueChanged, q, [this](int value) { monitorGain = value/100.0f; });
-        auto *monitorHelp = new QLabel(studioText("Scene follows Program. Listen also hears sources off air. Use headphones for monitoring and guest talkback. Mics start with Listen off."), q);
+        auto *monitorHelp = new QLabel(studioText("Listen is private. Use headphones."), q);
+        monitorHelp->setToolTip(studioText("Scene follows Program. Listen also hears sources off air. Mics start with Listen off."));monitorHelp->setStyleSheet("color:#9fb4c8;font-size:11px;");
         monitorHelp->setWordWrap(true); audioLayout->addWidget(monitorHelp);
         // Keep source actions and inspector fields within a narrow column.
         // Four-button and four-coordinate rows otherwise force sideways scrolling.
@@ -1200,10 +1249,11 @@ struct MixerWidget::Impl {
         // in view on laptop displays while inspectors can scroll independently.
         for (auto *group : {sceneBox, sourceBox, audioBox}) {
             auto *scroll = new QScrollArea(q); scroll->setObjectName(group == sceneBox ? "scenesPanelScroll" : group == sourceBox ? "sourcesPanelScroll" : "audioPanelScroll");
-            scroll->setWidgetResizable(true); scroll->setMinimumSize(180, 210);
+            scroll->setWidgetResizable(true);scroll->setMinimumSize(group==sceneBox?150:180,185);
             scroll->setStyleSheet("QScrollArea { border:1px solid #50667b; background:#101b27; }");
             group->setObjectName(group == sceneBox ? "studioScenesPanel" : group == sourceBox ? "studioSourcesPanel" : "studioAudioPanel");
-            group->setStyleSheet(QString("QGroupBox#%1 { background:#0b141e; border:1px solid #50667b; border-radius:4px; margin-top:8px; } QGroupBox#%1::title { subcontrol-origin:margin; left:8px; padding:0 3px; }").arg(group->objectName()));
+            const auto accent=group==sceneBox?"#96b8ef":group==sourceBox?"#83dac7":"#edc378";
+            group->setStyleSheet(QString("QGroupBox#%1 { background:#0e1925; border:1px solid #2b4055; border-top:2px solid %2; border-radius:5px; margin-top:10px; } QGroupBox#%1::title { subcontrol-origin:margin; left:10px; padding:0 4px;color:%2;font-weight:600; }").arg(group->objectName(),accent));
             scroll->setWidget(group); panels->addWidget(scroll);
             auto *focusList=group==sourceBox?sourceList:group==sceneBox?sceneList:nullptr;
             if(focusList) {
@@ -1222,7 +1272,7 @@ struct MixerWidget::Impl {
                 QObject::connect(focusList,&QListWidget::currentRowChanged,scroll,[reveal](int){reveal();});
             }
         }
-        panels->setSizes({220, 680, 380}); root->addWidget(panels, 4);
+        panels->setSizes({170,360,260});root->addWidget(panels,4);
         status = new QLabel(studioText("Add cameras, windows, audio, or browser sources to get started."), q);
         status->setObjectName("mixerStatus"); status->setWordWrap(true); status->setTextInteractionFlags(Qt::TextSelectableByMouse);
         status->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);
@@ -1233,6 +1283,7 @@ struct MixerWidget::Impl {
         rebuilding = true; sourceList->clear();
         for (const auto &item : sources) {
             auto *row = new QListWidgetItem(item->name + "  [" + item->kind + "]", sourceList);
+            const auto kind=item->kind;row->setIcon(studioIcon(kind=="title"?StudioIcon::Title:kind=="image"?StudioIcon::Image:kind=="microphone"||kind=="desktop"?StudioIcon::Audio:kind=="camera"||kind=="wireless"?StudioIcon::Camera:StudioIcon::Video,QColor("#83dac7")));
             row->setData(Qt::UserRole, item->id); row->setFlags(row->flags() | Qt::ItemIsUserCheckable);
             const auto found = std::find_if(preview().layers.begin(), preview().layers.end(), [&](const auto &l) { return l.source == item->id && l.visible; });
             row->setCheckState(found == preview().layers.end() ? Qt::Unchecked : Qt::Checked);
@@ -1240,6 +1291,7 @@ struct MixerWidget::Impl {
             if (item->id == selectedSource) sourceList->setCurrentItem(row);
         }
         auto *comments = new QListWidgetItem(studioText("Comments — stays on top in every scene"),sourceList);
+        comments->setIcon(studioIcon(StudioIcon::Chat,QColor("#8bc7f1")));
         comments->setData(Qt::UserRole,"comments");comments->setFlags(comments->flags()|Qt::ItemIsUserCheckable);
         comments->setCheckState(chatPanel->layer.enabled?Qt::Checked:Qt::Unchecked);
         comments->setToolTip(studioText("Choose a comment in Chat. Change its position in Advanced."));
@@ -1247,7 +1299,7 @@ struct MixerWidget::Impl {
     }
     void rebuild() {
         rebuilding = true; sceneList->clear();
-        for (const auto &scene : scenes) sceneList->addItem(scene.name);
+        for (const auto &scene : scenes) {auto *row=new QListWidgetItem(studioIcon(StudioIcon::Layers,QColor("#96b8ef")),scene.name,sceneList);row->setToolTip(scene.name);}
         sceneList->setCurrentRow(selectedScene); rebuilding = false;
         rebuildSources(); rebuildAudio(); syncInspector();
     }
@@ -1277,18 +1329,18 @@ struct MixerWidget::Impl {
             if (!item->hasAudio()) continue;
             auto *row = new QWidget(q); row->setObjectName("audioTrack_"+item->id);
             auto *layout = new QVBoxLayout(row); layout->setContentsMargins(8, 8, 8, 10); layout->setSpacing(6);
-            auto *name = new QLabel(item->name, row); name->setWordWrap(true); layout->addWidget(name);
+            auto *name = new QLabel(item->name, row);name->setTextFormat(Qt::PlainText);name->setWordWrap(true);name->setMinimumWidth(0);name->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);layout->addWidget(name);
             auto *meter = new AudioLevelMeter(row); meter->setObjectName("audioMeter_"+item->id);
             meter->setAccessibleName(item->name+" audio level (dBFS)"); layout->addWidget(meter);
             meters.emplace_back(item, meter);
-            auto *controls = new QHBoxLayout;
+            auto *controls = new QGridLayout;
             auto *gain = new QSlider(Qt::Horizontal, row); gain->setRange(0, 200); gain->setValue(qRound(item->gain*100));
             gain->setObjectName("audio_gain_"+item->id);
-            gain->setAccessibleName(item->name+" volume"); controls->addWidget(gain);
-            auto *mute = new QCheckBox(studioText("Mute"), row); mute->setChecked(item->muted); controls->addWidget(mute);
-            auto *follow = new QCheckBox(studioText("Scene"), row); follow->setChecked(item->followsScene); controls->addWidget(follow);
-            auto *listen = new QCheckBox(studioText("Listen"), row); listen->setChecked(item->monitored); controls->addWidget(listen);
-            auto *onAir = new QCheckBox(studioText("On air"), row); onAir->setChecked(item->programAudio); controls->addWidget(onAir);
+            gain->setAccessibleName(item->name+" volume");controls->addWidget(gain,0,0,1,2);
+            auto *mute = new QCheckBox(studioText("Mute"), row); mute->setChecked(item->muted);controls->addWidget(mute,1,0);
+            auto *follow = new QCheckBox(studioText("Scene"), row); follow->setChecked(item->followsScene);controls->addWidget(follow,1,1);
+            auto *listen = new QCheckBox(studioText("Listen"), row); listen->setChecked(item->monitored);controls->addWidget(listen,2,0);
+            auto *onAir = new QCheckBox(studioText("On air"), row); onAir->setChecked(item->programAudio);controls->addWidget(onAir,2,1);
             onAir->setObjectName("audio_program_"+item->id); onAir->setAccessibleName(item->name+" - On air");
             onAir->setToolTip(studioText("Allow this track into recording and streaming, subject to Mute and Scene. Turning this off keeps admitted guest conversation and headphone Listen available."));
             QObject::connect(onAir, &QCheckBox::toggled, q, [this,item](bool value) { item->programAudio = value; changed(); });
@@ -1297,12 +1349,12 @@ struct MixerWidget::Impl {
             channels->setObjectName("audio_channels_"+item->id); channels->setAccessibleName(item->name+" audio channels");
             channels->setToolTip(studioText("Choose Left or Right to both for an interface microphone heard in only one ear. Mono averages both channels. Applies to Program, guest returns and Listen.")); layout->addWidget(channels);
             QObject::connect(channels, &QComboBox::currentIndexChanged, q, [this,item](int mode) { item->channelMode = mode; changed(); });
-            auto *effects = new QHBoxLayout;
-            auto *noise = new QCheckBox(studioText("Noise suppression"), row); noise->setChecked(item->noiseSuppression); effects->addWidget(noise);
-            auto *gate = new QCheckBox(studioText("Gate"), row); gate->setChecked(item->noiseGate); effects->addWidget(gate);
-            auto *compress = new QCheckBox(studioText("Compress"), row); compress->setChecked(item->compression); effects->addWidget(compress);
+            auto *effects = new QGridLayout;
+            auto *noise = new QCheckBox(studioText("Noise filter"), row); noise->setChecked(item->noiseSuppression);effects->addWidget(noise,0,0,1,2);
+            auto *gate = new QCheckBox(studioText("Gate"), row); gate->setChecked(item->noiseGate);effects->addWidget(gate,1,0);
+            auto *compress = new QCheckBox(studioText("Compress"), row); compress->setChecked(item->compression);effects->addWidget(compress,1,1);
             for (auto *check : {mute, follow, listen, noise, gate, compress}) {
-                check->setAccessibleName(item->name+" - "+check->text());
+                check->setAccessibleName(item->name+" - "+(check==noise?studioText("Noise suppression"):check->text()));
                 check->setObjectName(QString("audio_%1_%2").arg(check == mute ? "mute" : check == follow ? "follow" : check == listen ? "listen" : check == noise ? "noise" : check == gate ? "gate" : "compress", item->id));
             }
             follow->setToolTip(studioText("Follow the source's Program scene, including fades. Leave off for podcast voices that must stay audible when their video is off-screen. Mute and Backstage still silence them."));
@@ -1318,6 +1370,7 @@ struct MixerWidget::Impl {
             QObject::connect(follow, &QCheckBox::toggled, q, [this, item](bool value) { item->followsScene = value; changed(); });
             QObject::connect(listen, &QCheckBox::toggled, q, [this, item](bool value) { item->monitored = value; changed(); });
         }
+        if(meters.empty()){auto *empty=new QLabel(studioText("Add an audio source to start mixing."),q);empty->setWordWrap(true);empty->setMinimumWidth(0);empty->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);empty->setStyleSheet("color:#9fb4c8;");audioRows->addWidget(empty);}
         audioRows->addStretch();
     }
 
@@ -2104,6 +2157,7 @@ struct MixerWidget::Impl {
             std::chrono::ceil<std::chrono::milliseconds>(nextRender-renderTime).count())));
         recordOutput->setText(recordingActive() ? studioText("Stop recording") : studioText("Record..."));
         recordOutput->setAccessibleName(recordOutput->text());
+        activeButton(recordOutput,recordingActive());
         const auto remaining = recorder.remainingSeconds();
         auto recordingState = recorder.status();
         const auto plan = recordingPlan.load();
@@ -2144,9 +2198,9 @@ struct MixerWidget::Impl {
         localOutputs.submit(frame, tick);
         for (const auto &item : sources) if (item->returnMode == "video") if (auto output = item->guestReturn.load()) output->video(frame, tick);
         const bool publishingProgram = core->isLive() && core->getSourceHealth().mode == app::VideoSourceMode::Mixer;
-        previewTitle->setText(QString(studioMode ? "PREVIEW  /  " : publishingProgram ? "LIVE OUTPUT  /  " : "OUTPUT  /  ") + preview().name);
-        programTitle->setText(privateBreak ? "PRIVATE BREAK / Program silent" : QString(publishingProgram ? "LIVE OUTPUT  /  " : "PROGRAM  /  ") + program.name);
-        if (privateBreak && !studioMode) previewTitle->setText("PRIVATE BREAK / Program silent");
+        elidedCaption(previewTitle,QString(studioMode ? "PREVIEW  /  " : publishingProgram ? "LIVE OUTPUT  /  " : "OUTPUT  /  ") + preview().name);
+        elidedCaption(programTitle,privateBreak ? "PRIVATE BREAK / Program silent" : QString(publishingProgram ? "LIVE OUTPUT  /  " : "PROGRAM  /  ") + program.name);
+        if (privateBreak && !studioMode) elidedCaption(previewTitle,"PRIVATE BREAK / Program silent");
         if (publishingProgram) {
             Profile::Scope profile(Profile::MixerSubmit);
             video::CapturedFrame captured;
@@ -2811,6 +2865,7 @@ QJsonObject MixerWidget::controlCommand(const QJsonObject &c) {
 void MixerWidget::setOutputState(const QString &label, const QString &status, bool enabled, bool active) {
     impl_->startOutput->setText(label); impl_->startOutput->setAccessibleName(label);
     impl_->startOutput->setEnabled(enabled); impl_->recordOutput->setEnabled(!impl_->recordingBusy() || impl_->recordingActive());
-    impl_->outputStatus->setText(active ? status : QString(status).replace("Select a window to capture", "Mixer ready"));
+    activeButton(impl_->startOutput,active);
+    elidedCaption(impl_->outputStatus,active ? status : QString(status).replace("Select a window to capture", "Mixer ready"));
 }
 } // namespace versus::mixer

@@ -35,6 +35,7 @@ private:
     ChatFilter *filter_;
     ChatCard *card_;
     QScrollArea *previewScroll_;
+    QScrollArea *chipsScroll_;
     QListView *list_;
     QLineEdit *input_, *search_;
     QButtonGroup *styles_;

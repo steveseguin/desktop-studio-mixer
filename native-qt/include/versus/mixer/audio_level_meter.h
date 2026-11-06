@@ -17,7 +17,7 @@ public:
     explicit AudioLevelMeter(QWidget *parent = nullptr) : QWidget(parent) {
         static const bool installed = [] { QAccessible::installFactory(audioMeterAccessibility); return true; }();
         (void)installed;
-        setMinimumWidth(200); setFixedHeight(58);
+        setMinimumWidth(140); setFixedHeight(58);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         setToolTip("Peak level after volume and mute, in dBFS. White marker holds the peak for one second. "
                    "Green below -18 dBFS, amber above -18, red above -6. CLIP indicates a level at or above 0 dBFS.");
@@ -67,6 +67,7 @@ protected:
         }
         painter.setPen(QColor("#9bb0c4"));
         for (int tick : {-60, -40, -20, -6, 0}) {
+            if(tick==-6&&width()<220)continue; // Keep the last labels distinct in narrow mixer columns.
             const double at = bar.left()+(tick+60)/60.0*bar.width();
             painter.drawLine(QPointF(at,bar.bottom()+2),QPointF(at,bar.bottom()+5));
             const double labelX = std::clamp(at-12, bar.left(), bar.right()-24);

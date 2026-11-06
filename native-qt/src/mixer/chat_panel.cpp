@@ -1,4 +1,5 @@
 #include "chat_panel.h"
+#include "studio_icons.h"
 #include "versus/ui/studio_preferences.h"
 #include <QButtonGroup>
 #include <QProgressBar>
@@ -93,20 +94,20 @@ protected:
 };
 static QLabel *plainLabel(QWidget *parent) { auto label=new QLabel(parent);label->setTextFormat(Qt::PlainText);label->setWordWrap(true);label->setMinimumWidth(0);label->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Maximum);return label; }
 ChatPanel::ChatPanel(QWidget *parent) : QWidget(parent),engine(this) {
-    setObjectName("chatPanel");setMinimumWidth(340);setMaximumWidth(372);
+    setObjectName("chatPanel");setMinimumWidth(300);setMaximumWidth(360);
     setStyleSheet("QWidget#chatPanel QPushButton, QWidget#chatPanel QToolButton { background:#192b3d; color:#eaf4ff; border:1px solid #304358; border-radius:3px; padding:5px 8px; } QWidget#chatPanel QPushButton:checked, QWidget#chatPanel QToolButton:checked { background:#16435a; color:#eaf4ff; } QWidget#chatPanel QPushButton#showComment { background:#9fd2f7; color:#10202e; font-weight:bold; } QWidget#chatPanel QPushButton#showComment:disabled { background:palette(button); color:palette(mid); }");
     auto root=new QVBoxLayout(this);root->setContentsMargins(12,10,12,10);root->setSpacing(8);
     addMore_=new QPushButton(studioText("+ Add"),this);root->addWidget(addMore_);
     connect(addMore_,&QPushButton::clicked,this,[this]{setupOpen_=!setupOpen_;refresh();if(setupOpen_)input_->setFocus();});
     setup_=new QWidget(this);auto setup=new QVBoxLayout(setup_);setup->setContentsMargins(0,0,0,0);root->addWidget(setup_);
     auto title=plainLabel(this);title->setText(studioText("See your comments here"));auto titleFont=title->font();titleFont.setPointSize(15);titleFont.setBold(true);title->setFont(titleFont);setup->addWidget(title);
-    input_=new QLineEdit(this);input_->setPlaceholderText(studioText("Your channel link or name"));input_->setAccessibleName(studioText("Your channel link or name"));input_->setMinimumHeight(44);setup->addWidget(input_);
+    input_=new QLineEdit(this);input_->setPlaceholderText(studioText("Channel link or @YouTube handle"));input_->setAccessibleName(studioText("Your channel link or name"));input_->setMinimumHeight(38);input_->setToolTip(studioText("A plain channel name connects to Twitch. Use a link for Kick. Sign-in is not available yet."));setup->addWidget(input_);
     auto add=new QPushButton(studioText("Add this channel"),this);setup->addWidget(add);
     connect(add,&QPushButton::clicked,this,[this]{if(input_->text().trimmed().isEmpty())return;auto result=engine.addChannel(input_->text());if(result.contains("error"))hint_->setText(studioText(result["error"].toString().toUtf8().constData()));else{setupOpen_=false;input_->clear();hint_->setText(studioText("Comments will appear here as soon as they arrive."));}refresh();});
     connect(input_,&QLineEdit::returnPressed,add,&QPushButton::click);
-    hint_=plainLabel(this);hint_->setText(studioText("Connect Twitch, YouTube or Kick. Other platforms are experimental. Sign-in is not available yet."));setup->addWidget(hint_);
+    hint_=plainLabel(this);hint_->setText(studioText("Twitch, YouTube and Kick. Plain names use Twitch; @handles use YouTube. Other platforms are experimental."));setup->addWidget(hint_);
     feedControls_=new QWidget(this);auto feedControls=new QVBoxLayout(feedControls_);feedControls->setContentsMargins(0,0,0,0);feedControls->setSpacing(8);root->addWidget(feedControls_);
-    auto chipsScroll=new QScrollArea(this);chipsScroll->setWidgetResizable(true);chipsScroll->setFixedHeight(46);chipsScroll->setFrameShape(QFrame::NoFrame);
+    auto chipsScroll=new QScrollArea(this);chipsScroll_=chipsScroll;chipsScroll->setWidgetResizable(true);chipsScroll->setFixedHeight(38);chipsScroll->setFrameShape(QFrame::NoFrame);
     chipsScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);auto chipsWidget=new QWidget(chipsScroll);chips_=new QHBoxLayout(chipsWidget);chipsScroll->setWidget(chipsWidget);feedControls->addWidget(chipsScroll);
     auto filters=new QHBoxLayout;feedControls->addLayout(filters);
     filter_=new ChatFilter(this);filter_->setSourceModel(&engine.model);
@@ -145,6 +146,7 @@ ChatPanel::ChatPanel(QWidget *parent) : QWidget(parent),engine(this) {
     card_=new ChatCard(previewScroll_);previewScroll_->setWidget(card_);
     auto actions=new QHBoxLayout;tray->addLayout(actions);
     show_=new QPushButton(studioText("Show on screen"),tray_);show_->setObjectName("showComment");show_->setMinimumHeight(44);actions->addWidget(show_,1);
+    show_->setIcon(studioIcon(StudioIcon::Play,QColor("#173a50")));
     save_=new QPushButton(studioText("Save"),tray_);save_->setMinimumHeight(44);actions->addWidget(save_);
     connect(show_,&QPushButton::clicked,this,[this]{auto r=showComment();if(r.contains("error"))hint_->setText(studioText(r["error"].toString().toUtf8().constData()));});
     connect(save_,&QPushButton::clicked,this,[this]{engine.model.toggleSaved(selected_);refresh();});
@@ -250,6 +252,7 @@ void ChatPanel::refresh() {
     setup_->setVisible(setupOpen_||(engine.settings.channels.isEmpty()&&!engine.settings.practice));
     const bool firstRun=engine.settings.channels.isEmpty()&&!engine.settings.practice;
     feedControls_->setVisible(!firstRun);list_->setVisible(!firstRun);practice_->setVisible(engine.settings.channels.isEmpty());practiceAction_->setVisible(!firstRun);
+    chipsScroll_->setVisible(!engine.settings.channels.isEmpty());
     empty_->setVisible(!firstRun&&filter_->rowCount()==0);
     empty_->setText(!filter_->query.isEmpty()?studioText("No matching comments. Clear Search to see comments again."):filter_->mode=="saved"?studioText("No saved comments yet. Select a comment, then choose Save."):filter_->mode=="thanks"?studioText("Donations and membership messages will appear here."):studioText("Waiting for comments."));
     practiceAction_->setText(studioText(engine.settings.practice?"Stop practising":"Try it with pretend chat"));
