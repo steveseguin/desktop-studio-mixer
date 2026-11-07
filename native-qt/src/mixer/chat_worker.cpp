@@ -53,14 +53,14 @@ struct Page:QWidget {
     std::map<QString,ComPtr<ICoreWebView2Frame2>> captureFrames;
     QSet<qint64> deletedIds;
     qint64 probeAt=0, retryAt=0;int retrySeconds=60;bool probePending=false, terminal=false;
-    QWidget *browserArea=nullptr;QLabel *accountLocation=nullptr,*accountHelp=nullptr;
+    QWidget *browserArea=nullptr;QLabel *accountLocation=nullptr,*accountHelp=nullptr;QPushButton *accountBack=nullptr;UINT64 accountNavigation=0;
     Page(Host &h,int i,QString r,QString u):host(h),id(i),role(r),url(u){
         resize(1280,720);setWindowTitle("Desktop Studio chat");setAttribute(Qt::WA_QuitOnClose,false);
         if(role=="signin") {
             const auto available=QGuiApplication::primaryScreen()->availableGeometry();
             resize(std::min(1120,available.width()-60),std::min(800,available.height()-60));setMinimumSize(540,480);move(available.center()-rect().center());
             auto *layout=new QVBoxLayout(this);layout->setContentsMargins(12,10,12,10);
-            auto *bar=new QHBoxLayout;auto *back=new QPushButton("Back",this);bar->addWidget(back);auto *reload=new QPushButton("Reload",this);bar->addWidget(reload);
+            auto *bar=new QHBoxLayout;auto *back=new QPushButton("Back",this);accountBack=back;back->setEnabled(false);bar->addWidget(back);auto *reload=new QPushButton("Reload",this);bar->addWidget(reload);
             accountLocation=new QLabel(this);accountLocation->setTextFormat(Qt::PlainText);bar->addWidget(accountLocation,1);
             auto *done=new QPushButton("Return to chat",this);bar->addWidget(done);layout->addLayout(bar);
             accountHelp=new QLabel("Sign in on the platform's page, then Return to chat. This session is remembered on this device. Use email, username or QR sign-in; third-party sign-in providers are not supported here.",this);
@@ -292,13 +292,21 @@ void Page::configureSignIn() {
     web->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>([this,navigate](ICoreWebView2*,ICoreWebView2NavigationStartingEventArgs *args)->HRESULT {
         LPWSTR raw=nullptr;args->get_Uri(&raw);const auto target=take(raw);
         if(!navigate(target)){args->put_Cancel(TRUE);return S_OK;}
+        args->get_NavigationId(&accountNavigation);
         setProperty("signInBlocked",false);accountHelp->setText(property("defaultAccountHelp").toString());url=target;accountLocation->setText("https://"+QUrl(target).host());return S_OK;
     }).Get(),&token);
     web->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>([this](ICoreWebView2*,ICoreWebView2NavigationCompletedEventArgs *args)->HRESULT {
+        UINT64 navigation=0;args->get_NavigationId(&navigation);
+        if(navigation!=accountNavigation||property("signInBlocked").toBool())return S_OK;
         BOOL success=FALSE;args->get_IsSuccess(&success);
-        if(!success&&!property("signInBlocked").toBool())accountHelp->setText("The sign-in page could not load. Use Reload, or Return to chat and try Accounts again.");
+        COREWEBVIEW2_WEB_ERROR_STATUS reason{};args->get_WebErrorStatus(&reason);
+        // Redirects and replacement navigations can cancel an earlier request.
+        // Their completion must not overwrite the state of the current page.
+        if(success)accountHelp->setText(property("defaultAccountHelp").toString());
+        else if(reason!=COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED)accountHelp->setText("The sign-in page could not load. Use Reload, or Return to chat and try Accounts again.");
         return S_OK;
     }).Get(),&token);
+    web->add_HistoryChanged(Callback<ICoreWebView2HistoryChangedEventHandler>([this](ICoreWebView2*,IUnknown*)->HRESULT {BOOL available=FALSE;web->get_CanGoBack(&available);accountBack->setEnabled(available);return S_OK;}).Get(),&token);
     web->add_NewWindowRequested(Callback<ICoreWebView2NewWindowRequestedEventHandler>([this,navigate](ICoreWebView2*,ICoreWebView2NewWindowRequestedEventArgs *args)->HRESULT {
         args->put_Handled(TRUE);LPWSTR raw=nullptr;args->get_Uri(&raw);const auto target=take(raw);
         if(navigate(target))web->Navigate(target.toStdWString().c_str());return S_OK;

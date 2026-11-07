@@ -12,7 +12,8 @@ function Choose($name,$value) {
     if(!(WaitFor {$combo.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -eq $value})){throw 'Choice was not applied'}
 }
 function HorizontalBars {
-    foreach($window in Roots){$window.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::ScrollBar))|Where-Object{!$_.Current.IsOffscreen -and $_.Current.Orientation -eq [Windows.Automation.OrientationType]::Horizontal}}
+    # Qt reports Orientation=None for some scrollbars; inspect actual geometry.
+    foreach($window in Roots){$window.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::ScrollBar))|Where-Object{!$_.Current.IsOffscreen -and $_.Current.BoundingRectangle.Width -gt $_.Current.BoundingRectangle.Height}}
 }
 try {
     foreach($size in @(@(1024,768),@(1280,720),@(1366,768),@(1920,1080))) {
@@ -27,8 +28,9 @@ try {
     Click 'Video settings'
     $canvas=Find 'Canvas format' ([Windows.Automation.ControlType]::ComboBox)
     $compositor=Find 'Compositor' ([Windows.Automation.ControlType]::ComboBox)
-    $canvas.SetFocus();Keys '{TAB}'
-    Check ($canvas.Current.IsKeyboardFocusable -and $compositor.Current.IsKeyboardFocusable -and [Windows.Automation.AutomationElement]::FocusedElement.Current.Name -eq 'Compositor') 'Video controls are exposed to keyboard and accessibility navigation'
+    for($tab=0;$tab -lt 6 -and [Windows.Automation.AutomationElement]::FocusedElement.Current.Name -ne 'Canvas format';$tab++){Keys '{TAB}'}
+    $canvasReached=[Windows.Automation.AutomationElement]::FocusedElement.Current.Name -eq 'Canvas format';Keys '{TAB}'
+    Check ($canvasReached -and $canvas.Current.IsKeyboardFocusable -and $compositor.Current.IsKeyboardFocusable -and [Windows.Automation.AutomationElement]::FocusedElement.Current.Name -eq 'Compositor') 'Video controls are exposed to keyboard and accessibility navigation'
     Choose 'Canvas format' '1920x1080 / 30 fps'
     Check (WaitFor {(State).canvas.width -eq 1920 -and (State).canvas.height -eq 1080}) 'Video dialog changes the actual canvas'
     Choose 'Canvas format' '1280x720 / 30 fps';Shot '02-video-settings';Keys '{ESC}'
@@ -43,6 +45,15 @@ try {
     Click 'Rename';SetText 'Scene name' $longName;Press 'OK';Shot '05-long-scene'
     Check (@(HorizontalBars).Count -eq 0) 'A long scene name does not force sideways scrolling'
     Click 'Rename';SetText 'Scene name' $oldName;Press 'OK'
+    Focus '+ Add source';Keys '+{TAB}{HOME}'
+    foreach($edge in @('Left','Top','Right','Bottom')) {
+        $crop=@((Roots)[0].FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition)|Where-Object{$_.Current.AutomationId.EndsWith('.crop'+$edge)})[0]
+        $crop.SetFocus();Start-Sleep -Milliseconds 200
+        $field=$crop.Current.BoundingRectangle
+        $viewport=@((Roots)[0].FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition)|Where-Object{$_.Current.AutomationId.EndsWith('.sourcesPanelScroll.qt_scrollarea_viewport')})[0].Current.BoundingRectangle
+        Check ($crop.Current.IsEnabled -and !$crop.Current.IsOffscreen -and $field.Left -ge $viewport.Left -and $field.Right -le $viewport.Right -and $field.Top -ge $viewport.Top -and $field.Bottom -le $viewport.Bottom) ($edge+' crop control remains visible when focused in the narrow inspector')
+    }
+    Shot '05-crop-controls'
     $ffmpeg=Join-Path (Split-Path $Exe) 'ffmpeg/bin/ffmpeg.exe'
     $tone=Join-Path $Evidence 'tone.wav'
     & $ffmpeg -hide_banner -loglevel error -f lavfi -i 'sine=frequency=440:sample_rate=48000' -t 12 -c:a pcm_s16le $tone
@@ -53,6 +64,10 @@ try {
         (Find ($prior.name+' - Mute') ([Windows.Automation.ControlType]::CheckBox)).GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern).Toggle()
     }
     $toneName='Layout tone '+(Get-Date -Format HHmmss)
+    Focus '+ Add source';Start-Sleep -Milliseconds 200
+    $action=(Find '+ Add source').Current.BoundingRectangle
+    $panel=@((Roots)[0].FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition)|Where-Object{$_.Current.AutomationId.EndsWith('.sourcesPanelScroll')})[0].Current.BoundingRectangle
+    Check ($action.Top -ge $panel.Top -and $action.Bottom -le $panel.Bottom) 'Add source becomes visible when focused after scrolling the inspector'
     Click '+ Add source';ChooseSourceType 'Video / audio file';SetText 'Name' $toneName;SetText 'URL / file / text / color' $tone;Press 'OK'
     Check (WaitFor {@((State).sources|Where-Object{$_.name -eq $toneName -and $_.has_audio -and $_.peak -gt 0}).Count -eq 1} 20) 'Audio file added through the dialog reaches the real mixer'
     Check (@(HorizontalBars).Count -eq 0) 'Populated audio controls fit at 1024 pixels'
@@ -66,7 +81,11 @@ try {
     if((Get-PSDrive C).Free -lt 600MB){throw 'At least 600 MiB free is required for this recording workflow'}
     Resize 1280 720
     Click 'Record...'
-    if((Status).practice) {Click 'Yes' ([Windows.Automation.ControlType]::Button)}
+    if(!(WaitFor {try{$null=Find 'File name:' ([Windows.Automation.ControlType]::Edit);return $true}catch{try{$null=Find 'Yes' ([Windows.Automation.ControlType]::Button);return $true}catch{return $false}}})){throw 'No recording confirmation or save dialog appeared'}
+    # Practice acknowledgement is retained within a run, so repeated recordings
+    # may go directly to the file picker.
+    $confirm=try{Find 'Yes' ([Windows.Automation.ControlType]::Button)}catch{$null}
+    if($confirm){Click 'Yes' ([Windows.Automation.ControlType]::Button)}
     if(!(WaitFor {try{$null=Find 'File name:' ([Windows.Automation.ControlType]::Edit);return $true}catch{return $false}})){throw 'Recording save dialog did not open'}
     $clip=Join-Path $Evidence 'toolbar-recording.mkv';SetText 'File name:' $clip;Click 'Save' ([Windows.Automation.ControlType]::Button)
     Check (WaitFor {(State).recording.active}) 'Record toolbar starts recording through the save dialog'

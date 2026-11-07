@@ -2,13 +2,48 @@
 
 Updated 2026-11-07 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
 
+## Packaged usability, visual review and input fuzzing, 2026-11-07 UTC
+
+Latest development portable: `native-qt/dist/desktop-studio-usability-nov7/desktop-studio.exe`, SHA-256 `fe1d3f0bf16488412c7802272d6b9c2e707852a4cd61896a0da1cd5ba81191cf`. The executable is timestamp-signed with the local Social Stream Ninja certificate; Windows trust remains `UnknownError`. Runtime files and the verified SSN pack are unchanged and hard-linked to the preceding package; executable and documentation are independent copies. The installer and ZIP were not rebuilt.
+
+### Defects found and fixed
+
+- Long unbroken words and URLs were clipped in the private comment preview even though Program wrapped them. Native cards now wrap at word boundaries or within a word when needed. Page Down reaches the final marker of 500-character words, roughly 1,000-character URLs and multiline comments. Feed rows use the same wrapping behavior.
+- A connected channel, selected preview and on-air band could push Show/Hide/settings below a short window. The settings icon now sits beside Accounts; short windows use tighter spacing and a smaller scrollable preview. The comment list can shrink, and the surrounding panel scrolls focused controls into view after layout changes. This was exercised at 1024x768 and 1280x720 while selecting the next comment with another on air.
+- The audio panel's minimum width omitted its scrollbar, and wide crop-label rows forced sideways scrolling in the neighboring source inspector. Audio now reserves enough width; each crop label/value pair has its own row. Focus also reveals source actions and inspector/audio fields through their enclosing scroll areas. The narrow layout keeps Add source, all four crop controls and audio controls reachable.
+- Sign-in navigation could report an old cancelled request as a failure after a successful redirect. Status now follows the current navigation ID, ignores cancellation and resets after success. Back reflects actual browser history. The saved Twitch session survived launching the new package; two open/return cycles, normal reload and four rapid reloads showed no stale failure banner.
+
+### Final executable: actual application workflows
+
+All **261 checks passed** across the following workflows on the exact executable above. Automation operated the visible packaged app with pointer clicks, keyboard input and Windows UI Automation. Local control reads verified state; practice fixtures supplied synthetic comment content. Window screenshots, actual Program frames and recorded output were visually reviewed.
+
+| Workflow | Checks | Evidence directory |
+| --- | ---: | --- |
+| General UI, malformed links, Unicode/markup, scene/source editing, 70 tab stops and full restart | 77/77 | `workflows-20261107-003741-816/` |
+| Long words/URLs, four damaged show files, connected compact chat and next-comment navigation | 44/44 | `usability-20261107-003900/` |
+| Graphite, Rose, Warm sand, four workspace layouts and Video dialog navigation | 12/12 | `appearance-20261107-003928/` |
+| Four window sizes, inspector focus, audio controls and actual recording | 33/33 | `layout-20261107-003655-539/` |
+| Synthetic support events, all three presentation styles and gift-streak updates | 77/77 | `support-20261107-003946-028/` |
+| Twitch account-window navigation, compact window, repeated reload and focus return | 14/14 | `account-navigation-20261107-004133/` |
+| Saved Twitch authentication, return to capture and preserved channels | 4/4 | `saved-twitch-20261107-004219/` |
+
+The first five directories are under `native-qt/build-integration/ui-exploration/20261107-001308/`. The last two are under the preserved owner profile, `native-qt/build-integration/ui-exploration/20261106-085441/`. Results record the executable hash. Real chat screenshots, browser profiles, recordings and raw evidence remain git-ignored.
+
+The recording decoded completely with FFmpeg. Extracted frames showed the normal picture and the actual **Be right back** slate. Measured recorded peaks were -91 dB while muted and -18 dB after unmuting. The gift screenshots showed complete long membership labels, literal metadata and the final eight-coin streak. Twitch's real account menu exposed **Log Out** on the new package; no credentials, cookies or tokens were inspected. Studio was left open with the existing account session and channels retained, account windows closed and no stream/recording active.
+
+The walkthroughs were also corrected where exploration exposed weak assertions: Qt can report scrollbar orientation as `None`, so the layout check now uses actual geometry; offscreen list rows must be reached before accessibility selection; focused controls are checked against the panel viewport; repeated recording may skip an already acknowledged practice prompt. Native Reload's provider is retained across rapid navigation so disappearing browser accessibility nodes do not interrupt the check. Earlier failed/intermediate runs are exploratory evidence, not final passes. In particular, the older no-sideways-scrolling assertion missed the audio/source issue fixed here.
+
+Reproduce with `studio-ui-workflows.ps1`, `studio-usability-workflows.ps1`, `studio-appearance-workflows.ps1`, `studio-layout-workflows.ps1` and `studio-chat-support-workflows.ps1`, using a disposable `-SessionFile`. The general walkthrough expects no connected real channels and a fresh transient comment model. `studio-account-navigation-workflows.ps1` requires a connected Twitch channel and preserves browser storage; unlike the older account-storage script, it does not sign out.
+
+Separate gates: release build, whitespace and the repository's staged secret guard passed. These are not application testing. About 7.8 GiB remained free during the final pass. Small windows still need vertical scrolling, and multiple connected channel chips use a horizontal strip. This pass does not qualify alternate display scaling, all languages/themes, an actual screen reader, a clean-machine installer, long recording/memory stability, real broadcast rollover, other platforms' authenticated sessions or real gift extraction/purchases. No chats were posted, gifts purchased or public streams started.
+
 ## Authenticated Twitch session, 2026-11-07 UTC
 
 The owner had completed Twitch authentication in the isolated Studio QA profile. On the account-windows executable below (SHA-256 `879ab4132b987547c70e1eb25b995dc7599b95684f8f1b2881bd4e38bddb7e60`), the actual Twitch account menu exposed **Log Out** before and after a full normal Studio quit/relaunch. Returning to chat delivered new Twitch comments both before and after the restart, and connected channel identities were preserved. Studio was left open on chat with the account session retained. No credentials, verification codes, cookies or tokens were read or entered by automation; no posts, gifts, public outputs or recordings were started. Credential-entry/MFA steps themselves were not observed. This qualifies one Twitch account's saved session and continued public-chat reception, not other platforms, posting or access to restricted chat.
 
 Evidence: `native-qt/build-integration/ui-exploration/20261106-085441/twitch-auth-20261106-205415/`, including nine passing workflow checks, the restarted authenticated homepage and the final chat window. The initial account-menu confirmation is also in the ignored `signin-owner-check/` evidence. The first screenshot attempt stopped because Studio did not own foreground focus after returning from its account window; explicitly focusing Studio allowed the workflow to continue.
 
-Remaining UI issue: the redirect to Twitch's authenticated homepage displayed a stale **The sign-in page could not load** message despite the loaded, authenticated page. **Reload** cleared it, and that recovery passed. The native navigation-status handling still needs correction; no executable changes were made in this follow-up. Disk space briefly fell to about 12 MiB, then a later check showed approximately 8.2 GiB free. No QA artifacts or account data were deleted in this follow-up.
+Issue on this earlier build: the redirect to Twitch's authenticated homepage displayed a stale **The sign-in page could not load** message despite the loaded, authenticated page. **Reload** cleared it, and that recovery passed. The later usability build above corrects navigation-status handling. No executable changes were made in this earlier follow-up. Disk space briefly fell to about 12 MiB, then a later check showed approximately 8.2 GiB free. No QA artifacts or account data were deleted in this follow-up.
 
 ## Account windows and support events, 2026-11-06 UTC
 

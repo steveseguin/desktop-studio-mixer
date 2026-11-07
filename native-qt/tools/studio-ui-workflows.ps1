@@ -262,7 +262,7 @@ try {
     $env:VIDEO_MIXER_DATA_DIR=$Out
     $app=Start-Process $Exe -PassThru -ArgumentList "--studio-show=$Out/show.mixer.json",'--local-control-port=0',"--local-control-discovery=$control"
     if ($SessionFile) { $session.pid=$app.Id; $session | ConvertTo-Json | Set-Content -LiteralPath $SessionFile }
-    if (!(WaitFor {try {$candidate=Get-Content -LiteralPath $control -Raw|ConvertFrom-Json;return $candidate.pid -eq $app.Id} catch {return $false}} 30)) {throw 'Restart discovery did not appear'}
+    if (!(WaitFor {try {$candidate=Get-Content -LiteralPath $control -Raw|ConvertFrom-Json;return $candidate.pid -eq $app.Id -and @(Roots).Count -gt 0} catch {return $false}} 30)) {throw 'Restart discovery and window did not appear'}
     $discovery=Get-Content -LiteralPath $control -Raw|ConvertFrom-Json
     $afterRestart=State
     Check (($beforeRestart.scenes | ConvertTo-Json -Depth 8 -Compress) -eq ($afterRestart.scenes | ConvertTo-Json -Depth 8 -Compress)) 'Restart preserves the edited scene collection'
@@ -270,6 +270,9 @@ try {
     Check (!$afterRestart.chat.on_screen -and [string]::IsNullOrEmpty($afterRestart.chat.selected)) 'Restart does not rebroadcast or select the previous comment'
     Resize 1280 900; [void][StudioUI]::SetForegroundWindow([IntPtr](@(Roots)[0].Current.NativeWindowHandle)); Shot '27-reopened-show'
     Resize 1280 720
+    # Qt exposes only the visible list rows. Reach the bottom through the keyboard
+    # before finding the newly added source in a larger reused QA show.
+    Focus '+ Add source'; Keys '+{TAB}{END}'
     $sourceList=Find 'Sources in selected scene' ([Windows.Automation.ControlType]::List)
     $sourceRows=@($sourceList.FindAll([Windows.Automation.TreeScope]::Children,[Windows.Automation.Condition]::TrueCondition)|Where-Object{$_.Current.Name -like 'UI review title*'})
     $sourceName=$sourceRows[-1].Current.Name

@@ -679,7 +679,9 @@ struct MixerWidget::Impl {
         nativeChatDock = new QDockWidget(studioText("Chat"),split);
         nativeChatDock->setFeatures(QDockWidget::DockWidgetClosable);
         nativeChatDock->setFixedWidth(320);
-        chatPanel = new ChatPanel(nativeChatDock);nativeChatDock->setWidget(chatPanel);
+        auto *chatScroll=new QScrollArea(nativeChatDock);chatScroll->setWidgetResizable(true);chatScroll->setFrameShape(QFrame::NoFrame);chatScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);chatScroll->setAccessibleName(studioText("Chat panel"));
+        chatPanel = new ChatPanel(chatScroll);chatPanel->setMinimumWidth(280);chatScroll->setWidget(chatPanel);nativeChatDock->setWidget(chatScroll);
+        QObject::connect(qApp,&QApplication::focusChanged,chatScroll,[chatScroll](QWidget *,QWidget *focused){if(focused&&chatScroll->isAncestorOf(focused)){chatScroll->ensureWidgetVisible(focused,0,4);QTimer::singleShot(0,chatScroll,[chatScroll,target=QPointer<QWidget>(focused)]{if(target)chatScroll->ensureWidgetVisible(target,0,4);});}});
         split->setStretchFactor(0,1);split->setStretchFactor(1,0);
         chatPanel->advanced = [this]{addChat();};
         chatPanel->changed = [this]{changed();};
@@ -1239,7 +1241,9 @@ struct MixerWidget::Impl {
         for(int row=0;row<sourceLayout->count();++row) {
             auto *line=qobject_cast<QHBoxLayout*>(sourceLayout->itemAt(row)->layout());
             if(!line || line->count()<4)continue;
-            const int columns=line->count()>4?4:2;
+            // Crop labels are longer than X/Y/W/H; keep each label/value pair
+            // on its own row so it fits beside chat and the audio mixer.
+            const int columns=line==cropRow?2:line->count()>4?4:2;
             sourceLayout->takeAt(row);
             auto *grid=new QGridLayout;int cell=0;
             while(auto *item=line->takeAt(0)){grid->addItem(item,cell/columns,cell%columns);++cell;}
@@ -1249,13 +1253,21 @@ struct MixerWidget::Impl {
         // in view on laptop displays while inspectors can scroll independently.
         for (auto *group : {sceneBox, sourceBox, audioBox}) {
             auto *scroll = new QScrollArea(q); scroll->setObjectName(group == sceneBox ? "scenesPanelScroll" : group == sourceBox ? "sourcesPanelScroll" : "audioPanelScroll");
-            scroll->setWidgetResizable(true);scroll->setMinimumSize(group==sceneBox?150:180,185);
+            // Reserve the audio controls' width plus the enclosing scrollbar.
+            scroll->setWidgetResizable(true);scroll->setMinimumSize(group==sceneBox?150:group==audioBox?220:180,185);
             scroll->setStyleSheet("QScrollArea { border:1px solid #50667b; background:#101b27; }");
             group->setObjectName(group == sceneBox ? "studioScenesPanel" : group == sourceBox ? "studioSourcesPanel" : "studioAudioPanel");
             const auto accent=group==sceneBox?"#96b8ef":group==sourceBox?"#83dac7":"#edc378";
             group->setStyleSheet(QString("QGroupBox#%1 { background:#0e1925; border:1px solid #2b4055; border-top:2px solid %2; border-radius:5px; margin-top:10px; } QGroupBox#%1::title { subcontrol-origin:margin; left:10px; padding:0 4px;color:%2;font-weight:600; }").arg(group->objectName(),accent));
             scroll->setWidget(group); panels->addWidget(scroll);
             auto *focusList=group==sourceBox?sourceList:group==sceneBox?sceneList:nullptr;
+            QObject::connect(qApp,&QApplication::focusChanged,scroll,[scroll,focusList](QWidget *,QWidget *focused){
+                if(!focused||focused==focusList||!scroll->isAncestorOf(focused))return;
+                QTimer::singleShot(0,scroll,[target=QPointer<QWidget>(focused)]{
+                    if(!target)return;
+                    for(auto parent=target->parentWidget();parent;parent=parent->parentWidget())if(auto area=qobject_cast<QScrollArea*>(parent))area->ensureWidgetVisible(target,0,4);
+                });
+            });
             if(focusList) {
                 // A focused row can be visible to its list but clipped by the outer
                 // inspector. Reveal that row through every enclosing scroll area.

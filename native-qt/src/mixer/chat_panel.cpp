@@ -26,10 +26,18 @@
 #include <QStyledItemDelegate>
 #include <QStyle>
 #include <QToolButton>
+#include <QTextLayout>
 #include <QUuid>
 
 namespace versus::mixer {
 using ui::studioText;
+static int wrappedText(const QString &text,const QFont &font,int width,QPainter *painter=nullptr,QPointF origin={}) {
+    auto paragraphs=text;paragraphs.replace('\n',QChar::LineSeparator);
+    QTextLayout layout(paragraphs,font);QTextOption option;option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);layout.setTextOption(option);
+    qreal height=0;layout.beginLayout();
+    for(;;){auto line=layout.createLine();if(!line.isValid())break;line.setLineWidth(std::max(1,width));line.setPosition(QPointF(0,height));height+=line.height();}
+    layout.endLayout();if(painter)layout.draw(painter,origin);return int(height+1);
+}
 class ChatFilter : public QSortFilterProxyModel {
 public:
     QString query, mode="all";
@@ -67,17 +75,17 @@ public:
         p->setFont(o.font);p->setPen(fg);r.setTop(r.top()+line+1);
         const bool onAir=o.widget->property("onAirId").toString()==m["id"].toString();
         if(m["saved"].toBool()||onAir){p->drawText(QRect(r.left(),r.top(),r.width(),line),Qt::AlignVCenter,p->fontMetrics().elidedText(m["chatmessage"].toString(),Qt::ElideRight,r.width()));small.setBold(true);p->setFont(small);p->drawText(r.adjusted(0,line,0,0),Qt::AlignTop,(m["saved"].toBool()?studioText("Saved")+"   ":QString())+(onAir?studioText("ON SCREEN"):QString()));}
-        else p->drawText(r,Qt::AlignTop|Qt::TextWordWrap,m["chatmessage"].toString());p->restore();
+        else wrappedText(m["chatmessage"].toString(),o.font,r.width(),p,r.topLeft());p->restore();
     }
 };
 class ChatCard : public QWidget {
 public:
     QJsonObject message;QString style="bar";
     using QWidget::QWidget;
-    int supportHeight() const {const auto text=chatSupportLabel(message);return text.isEmpty()?0:QFontMetrics(font()).boundingRect(QRect(0,0,std::max(1,width()-24),200000),Qt::TextWordWrap,text).height()+6;}
+    int supportHeight() const {const auto text=chatSupportLabel(message);return text.isEmpty()?0:wrappedText(text,font(),width()-24)+6;}
     void fitContent() {
         auto f=font();if(style=="big")f.setPointSizeF(f.pointSizeF()*1.25);
-        const int textHeight=QFontMetrics(f).boundingRect(QRect(0,0,std::max(1,width()-24),200000),Qt::TextWordWrap,message["chatmessage"].toString()).height();
+        const int textHeight=wrappedText(message["chatmessage"].toString(),f,width()-24);
         setMinimumHeight(std::max(92,textHeight+44+supportHeight()));
     }
 protected:
@@ -90,9 +98,9 @@ protected:
         const auto heading=message["chatname"].toString()+" · "+chatPlatformName(message["type"].toString());
         p.drawText(rect().adjusted(12,8,-12,-8),Qt::AlignTop|Qt::TextSingleLine,p.fontMetrics().elidedText(heading,Qt::ElideRight,std::max(0,width()-24)));
         f.setBold(false);p.setFont(f);p.setPen(bubble?QColor("#725018"):QColor("#ffcf86"));
-        if(supportHeight())p.drawText(QRect(12,32,width()-24,supportHeight()),Qt::AlignTop|Qt::TextWordWrap,chatSupportLabel(message));
+        if(supportHeight())wrappedText(chatSupportLabel(message),f,width()-24,&p,QPointF(12,32));
         if(style=="big")f.setPointSizeF(f.pointSizeF()*1.25);p.setFont(f);p.setPen(bubble?QColor("#10202e"):QColor(Qt::white));
-        p.drawText(rect().adjusted(12,32+supportHeight(),-12,-8),Qt::AlignTop|Qt::TextWordWrap,message["chatmessage"].toString());
+        wrappedText(message["chatmessage"].toString(),f,width()-24,&p,QPointF(12,32+supportHeight()));
     }
 };
 static QLabel *plainLabel(QWidget *parent) { auto label=new QLabel(parent);label->setTextFormat(Qt::PlainText);label->setWordWrap(true);label->setMinimumWidth(0);label->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Maximum);return label; }
@@ -135,6 +143,7 @@ ChatPanel::ChatPanel(QWidget *parent) : QWidget(parent),engine(this) {
     connect(search_,&QLineEdit::textChanged,this,[this](QString text){filter_->query=text;filter_->refresh();});
     list_=new QListView(this);list_->setObjectName("chatMessages");list_->setAccessibleName(studioText("Comments"));list_->setModel(filter_);list_->setItemDelegate(new ChatDelegate(list_));
     list_->setUniformItemSizes(true);list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);list_->setSelectionMode(QAbstractItemView::SingleSelection);
+    list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);list_->setMinimumHeight(56);list_->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Ignored);
     auto listSlot=new QGridLayout;listSlot->setContentsMargins(0,0,0,0);listSlot->addWidget(list_,0,0);root->addLayout(listSlot,1);
     // A sibling remains accessible; Qt's list provider only exposes rows inside its viewport.
     empty_=plainLabel(this);empty_->setAlignment(Qt::AlignCenter);empty_->setAttribute(Qt::WA_TransparentForMouseEvents);empty_->setContentsMargins(16,16,16,16);listSlot->addWidget(empty_,0,0,Qt::AlignVCenter);
@@ -170,7 +179,7 @@ ChatPanel::ChatPanel(QWidget *parent) : QWidget(parent),engine(this) {
     notice_=plainLabel(this);root->addWidget(notice_);
     practice_=new QPushButton(studioText("Try it with pretend chat"),this);practice_->setMinimumHeight(44);setup->addWidget(practice_);setup->addStretch(1);
     connect(practice_,&QPushButton::clicked,this,[this]{practice(!engine.settings.practice);});
-    auto advanced=new QToolButton(this);advanced->setText(studioText("Advanced"));advanced->setPopupMode(QToolButton::InstantPopup);auto menu=new QMenu(advanced);advanced->setMenu(menu);root->addWidget(advanced,0,Qt::AlignLeft);advanced->setAutoRaise(true);
+    auto advanced=new QToolButton(this);advanced->setAccessibleName(studioText("Advanced"));advanced->setToolTip(studioText("Chat settings, practice and comment position"));advanced->setIcon(studioIcon(StudioIcon::Settings));advanced->setPopupMode(QToolButton::InstantPopup);auto menu=new QMenu(advanced);advanced->setMenu(menu);connections->addWidget(advanced);advanced->setAutoRaise(true);
     practiceAction_=menu->addAction(studioText("Try it with pretend chat"),this,[this]{practice(!engine.settings.practice);});
     menu->addAction(studioText("Connect an existing Social Stream setup"),this,[this]{if(this->advanced)this->advanced();});
     menu->addAction(studioText("Comments layer position"),this,[this]{
@@ -277,6 +286,11 @@ QJsonObject ChatPanel::command(const QJsonObject &c) {
     refresh();return {{"ok",true},{"state",state()}};
 }
 void ChatPanel::refresh() {
+    const bool compact=window()->height()<850;
+    if(property("compactChat").isNull()||property("compactChat").toBool()!=compact){
+        setProperty("compactChat",compact);layout()->setSpacing(compact?4:8);layout()->setContentsMargins(12,compact?6:10,12,compact?6:10);
+        tray_->layout()->setSpacing(compact?4:8);feedControls_->layout()->setSpacing(compact?4:8);previewScroll_->setFixedHeight(compact?64:110);
+    }
     setup_->setVisible(setupOpen_||(engine.settings.channels.isEmpty()&&!engine.settings.practice));
     const bool firstRun=engine.settings.channels.isEmpty()&&!engine.settings.practice;
     feedControls_->setVisible(!firstRun);list_->setVisible(!firstRun);practice_->setVisible(engine.settings.channels.isEmpty());practiceAction_->setVisible(!firstRun);
