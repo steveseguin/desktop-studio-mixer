@@ -13,6 +13,7 @@ public:
     ~IsolatedSource() { stopCapture(); }
     void setFrameCallback(std::function<void(video::CapturedFrame)> callback) { frame_ = std::move(callback); }
     void setImageCallback(std::function<void(QImage)> callback) { image_ = std::move(callback); }
+    void setTimedImageCallback(std::function<void(QImage, int64_t)> callback) { timedImage_ = std::move(callback); }
     bool startCapture(const std::string &locator, int width, int height, double fps, bool alpha = false);
     void stopCapture();
     void StopCapture() { stopCapture(); }
@@ -47,6 +48,7 @@ private:
     std::shared_ptr<ProcessWorker> process_ = std::make_shared<ProcessWorker>();
     std::function<void(video::CapturedFrame)> frame_;
     std::function<void(QImage)> image_;
+    std::function<void(QImage, int64_t)> timedImage_;
     audio::WindowAudioCaptureCore::StreamCallback audio_;
     std::function<void()> discontinuity_;
     std::atomic<bool> running_{false};

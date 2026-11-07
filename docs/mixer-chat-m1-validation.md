@@ -2,9 +2,17 @@
 
 Updated 2026-11-07 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
 
+## File playback and held-comment performance, 2026-11-07 UTC
+
+The latest qualified portable is `native-qt/dist/desktop-studio-polish3-nov7/desktop-studio.exe`, SHA-256 `a5e45745c0a73e83835d9a87faa33c6570eb0540808d6a8b9cf1739dace7ac4f`. [The playback report](studio-playback-polish-2026-11-07.md) identifies the exact workflows, measurements and retained failures. Local-file pictures/audio now share a bounded presentation buffer; an unchanged chat card no longer renders another PNG fifteen times per second.
+
+The final fifteen-minute recording with live chat, a featured comment, VDO.Ninja publication and other media sources fully decodes with zero near-repeat candidates at the specified threshold, compared with 65 in a four-minute busy baseline. First/last-minute A/V offsets stay within 46 ms. CPU averages 3.93% on this 20-thread PC. Received-browser output still has 1.45% near-repeat candidates, and chat averages 921 MiB, so neither received-browser pacing nor memory is considered solved.
+
+General UI, synthetic gifts, pause/seek/loop/reconnect, 120 fps input at 30/60 fps output, actual BRIO picture/room audio, mute/unmute and failed-writer recovery passed on this package. The existing workspace is preserved. This executable has a fifteen-minute qualification run, not a new two-hour soak or installer run. The earlier installer below contains the earlier executable.
+
 ## Long recording, physical hardware and installer, 2026-11-07 UTC
 
-The latest portable is `native-qt/dist/desktop-studio-reliability-final-nov7/desktop-studio.exe`, SHA-256 `3627893f203d73b35b5048c4a210cf00d9e5f1da2cbdfa821869119edb9b9187`. The installer is `native-qt/dist/desktop-studio-0.9.4-reliability-final-nov7-setup.exe`. [The reliability report](studio-reliability-2026-11-07.md) records exact artifacts, saved-media analysis, screenshots, resource measurements and retained failed checker attempts.
+This earlier portable is `native-qt/dist/desktop-studio-reliability-final-nov7/desktop-studio.exe`, SHA-256 `3627893f203d73b35b5048c4a210cf00d9e5f1da2cbdfa821869119edb9b9187`. Its installer is `native-qt/dist/desktop-studio-0.9.4-reliability-final-nov7-setup.exe`. [The reliability report](studio-reliability-2026-11-07.md) records exact artifacts, saved-media analysis, screenshots, resource measurements and retained failed checker attempts.
 
 The candidate completed two hours of simultaneous recording, anonymous Twitch/YouTube chat and unlisted VDO.Ninja publication. Both the local and 110-minute receiver recordings fully decode, with distinct 30 fps timestamps and measured first/last-minute A/V pulse offsets within 62 ms. Sender CPU averaged 3.15% on this 20-thread PC. The build with the unused inspector response-body cache disabled had lower observed chat memory than the concurrent prior build (977 versus 1,227 MiB means), but memory still grew; this is not a controlled benchmark or a proven leak fix. Motion analysis found near-repeat candidates in about 4.6%/6.6% of local/received frame transitions, so smooth frame pacing remains unqualified.
 

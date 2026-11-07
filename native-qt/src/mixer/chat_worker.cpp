@@ -98,7 +98,6 @@ struct Host {
     QString captureBundle;
     std::unique_ptr<QLockFile> profileOwner;
     QJsonObject names,timing,startupTiming;
-    QTimer snapshots;
     void setup(const QJsonObject &c);
     void configureChannels(const QJsonObject &c);
     void finishSignIn(int id);
@@ -496,7 +495,9 @@ void Host::setup(const QJsonObject &c) {
         return S_OK;
     }).Get()),"environment");
     QObject::connect(&timer,&QTimer::timeout,&timer,[this]{tick();});timer.start(33);
-    QObject::connect(&snapshots,&QTimer::timeout,&snapshots,[this]{if(pendingToken.isEmpty()&&!renderedToken.isEmpty())for(auto &[id,p]:pages)if(p->role=="overlay")p->snapshot(renderedToken);});snapshots.start(67);
+    // Studio cards contain plain text and no animation. Keep the acknowledged
+    // image until the next show/style/gift token instead of encoding and
+    // decoding another full PNG fifteen times a second while a card is held.
 }
 void Host::configureChannels(const QJsonObject &c) {
     channels=c["channels"].toArray();practice=c["practice"].toBool();
@@ -595,7 +596,7 @@ void Host::tick() {
     const auto token=pendingToken;QPointer<Page> target(overlay);
     const QString script="(()=>{const o=document.getElementById('output'),m=document.querySelector('#output .hl-message'),s=document.querySelector('#output .studio-support');const expected="+
         QString::fromUtf8(QJsonDocument(QJsonArray{support}).toJson(QJsonDocument::Compact)).mid(1).chopped(1)+
-        ";return !!(o&&m&&(!expected||(s&&s.textContent===expected))&&Number(getComputedStyle(o).opacity)>.9&&m.textContent==="+
+        ";return !!(o&&m&&document.fonts.status==='loaded'&&(!expected||(s&&s.textContent===expected))&&Number(getComputedStyle(o).opacity)>.9&&m.textContent==="+
         QString::fromUtf8(QJsonDocument(QJsonArray{pendingCard["chatmessage"]}).toJson(QJsonDocument::Compact)).mid(1).chopped(1)+
         "&&document.documentElement.dataset.studioCard==="+QString::fromUtf8(QJsonDocument(QJsonArray{token}).toJson(QJsonDocument::Compact)).mid(1).chopped(1)+
         ");})()";

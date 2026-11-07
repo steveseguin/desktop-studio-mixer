@@ -362,7 +362,7 @@ bool ProcessWorker::frame(video::CapturedFrame &frame) {
     }
     ReleaseMutex(s.mutex); return valid;
 }
-QImage ProcessWorker::image(bool premultiplied, QString *tag) {
+QImage ProcessWorker::image(bool premultiplied, QString *tag, int64_t *timestamp) {
     auto &s = *impl_; if (!alive() || !lock(s.mutex)) return {};
     const auto &v = *s.shared; const auto serial = v.frameSerial, content = v.contentSerial;
     const auto size = v.frameSize; const int width = v.width, height = v.height, stride = v.stride, opaque = v.opaque;
@@ -387,6 +387,7 @@ QImage ProcessWorker::image(bool premultiplied, QString *tag) {
             s.imageContentSerial = content;
         }
         s.serial = serial; result = s.cachedImage;
+        if (timestamp) *timestamp = v.timestamp;
         if (tag) *tag=QString::fromLatin1(v.frameTag,int(strnlen_s(v.frameTag,sizeof(v.frameTag))));
     }
     ReleaseMutex(s.mutex); return result;

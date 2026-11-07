@@ -23,7 +23,7 @@ public:
     QJsonObject call(const QJsonObject &command, const void *data = nullptr,
                      size_t size = 0, QByteArray *reply = nullptr, int timeoutMs = 3000);
     bool frame(video::CapturedFrame &frame);
-    QImage image(bool premultiplied = false, QString *tag = nullptr);
+    QImage image(bool premultiplied = false, QString *tag = nullptr, int64_t *timestamp = nullptr);
     bool audio(audio::StreamChunk &chunk);
     void waitForMedia(int timeoutMs);
     QJsonObject status() const;

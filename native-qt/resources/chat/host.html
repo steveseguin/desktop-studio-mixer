@@ -1,13 +1,12 @@
 <!doctype html><meta charset="utf-8"><title>Engine spike host feed</title>
-<style>body{font:16px system-ui;background:#18202b;color:#eee}pre{white-space:pre-wrap}iframe{display:none}</style>
-<h1>Processed host feed</h1><div id="feed"></div><pre id="state"></pre><pre id="debugger"></pre>
+<style>iframe{display:none}</style>
+<body>
 <script>
 const params=new URLSearchParams(location.search), session=params.get('session');
 const frame=document.createElement('iframe');
 frame.src='https://vdo.socialstream.ninja/?room='+encodeURIComponent(session)+'&password=false&label=dock&push=engine-spike-host&view='+encodeURIComponent(session);
 document.body.append(frame);
 window.feed=[];window.peers={};
-addEventListener('host.debugger',e=>document.querySelector('#debugger').textContent+=JSON.stringify(e.detail[0])+'\n');
 addEventListener('message',e=>{
   if(e.source!==frame.contentWindow)return;
   const p=e.data;
@@ -17,7 +16,9 @@ addEventListener('message',e=>{
     const m=p.dataReceived.overlayNinja;
     if(m && typeof m.chatmessage==='string') {
       const text=s=>{
-        const doc=new DOMParser().parseFromString(String(s||''),'text/html');
+        const value=String(s||'');
+        if(!/[<&]/.test(value))return value;
+        const doc=new DOMParser().parseFromString(value,'text/html');
         // SSN represents emotes as images. Preserve their accessible text when
         // converting the rich message into Studio's plain-text comment model.
         for(const img of doc.querySelectorAll('img'))img.replaceWith(doc.createTextNode(img.getAttribute('alt')||''));
@@ -28,12 +29,14 @@ addEventListener('message',e=>{
       const donation=text(m.hasDonation),membership=text(m.membership);
       let body=m.textonly?m.chatmessage:text(m.chatmessage);
       if(!body.trim()&&(donation||membership||event.includes('gift')))body=event.includes('gift')?'Sent a gift':membership?'Membership update':'Sent a donation';
-      window.__engineSpike.rpc('host.comment',[{id:m.id,tid:m.tid,type:m.type,
+      const comment={id:m.id,tid:m.tid,type:m.type,
         chatname:text(m.chatname),chatmessage:body,
-        hasDonation:donation,membership,event,meta:m.meta||{},textonly:true}]).catch(()=>{});
+        hasDonation:donation,membership,event,meta:m.meta||{},textonly:true};
+      window.__engineSpike.rpc('host.comment',[comment]).catch(()=>{});
+      // Retain a bounded plain-text diagnostic feed, not raw platform payloads
+      // and another serialized DOM copy for a page that is never displayed.
+      feed.push(comment);if(feed.length>100)feed.shift();
     }
-    feed.push(p.dataReceived.overlayNinja); if(feed.length>100)feed.shift();
-    const row=document.createElement('pre');row.textContent=JSON.stringify(p.dataReceived.overlayNinja);document.querySelector('#feed').replaceChildren(row);
   }
 });
 window.feature=(data,uuid)=>frame.contentWindow.postMessage({sendData:{overlayNinja:data},type:'pcs',UUID:uuid},'https://vdo.socialstream.ninja');

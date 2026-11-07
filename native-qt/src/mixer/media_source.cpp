@@ -226,7 +226,12 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                             origin += Clock::now()-pauseStart;
                             if (!running_) break; if (seek_) continue;
                         }
-                        const auto timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count()/100;
+                        // Preserve presentation time across the worker boundary.
+                        // Arrival time includes decoder/IPC scheduling jitter and
+                        // cannot reliably select a frame on the compositor clock.
+                        // Recompute after a pause, which may have moved origin.
+                        const auto presentation = origin + std::chrono::nanoseconds(std::max<LONGLONG>(stream == audioStream ? cue : 0, pts)*100);
+                        const auto timestamp = std::chrono::duration_cast<std::chrono::nanoseconds>(presentation.time_since_epoch()).count()/100;
                         if (!beforeCue) positionMs_ = std::max<int64_t>(0,pts/10000);
                         ComPtr<IMFMediaBuffer> buffer; if (FAILED(sample->ConvertToContiguousBuffer(&buffer))) continue;
                         BYTE *bytes = nullptr; DWORD length = 0;

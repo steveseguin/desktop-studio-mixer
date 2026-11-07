@@ -130,15 +130,22 @@
     const schedule=window.setTimeout.bind(window);
     window.setTimeout=(callback,delay,...args)=>schedule(callback,
       delay===500 && args[0]?.studioToken ? 0 : delay,...args);
-    let expected;
+    let expected, expectedName='';
     addEventListener('message', e=>{
       if(e.origin!=='https://vdo.socialstream.ninja' || ![...document.querySelectorAll('iframe')].some(f=>f.contentWindow===e.source))return;
       const card=e.data?.dataReceived?.overlayNinja;
-      if(card?.studioToken){expected=card;delete document.documentElement.dataset.studioCard;}
+      if(card===false){expected=undefined;expectedName='';delete document.documentElement.dataset.studioCard;}
+      else if(card?.studioToken){
+        expected=card;
+        expectedName=new DOMParser().parseFromString(expected.chatname,'text/html').body.textContent;
+        delete document.documentElement.dataset.studioCard;
+      }
     });
     setInterval(()=>{
+      // A card is immutable until the next Studio token. Do not parse a new
+      // HTML document or walk the rendered card sixty times a second forever.
+      if(!expected || document.documentElement.dataset.studioCard===expected.studioToken)return;
       const output=document.getElementById('output'), message=output?.querySelector('.hl-message'), name=output?.querySelector('.hl-name');
-      const expectedName=expected?new DOMParser().parseFromString(expected.chatname,'text/html').body.textContent:'';
       if(expected && output && message && name && getComputedStyle(output).opacity>.9 && message.textContent===expected.chatmessage && name.textContent.trim()===expectedName) {
         // Keep the complete Studio support label as plain text. The generic SSN
         // card otherwise chooses donation OR membership and adds platform titles.

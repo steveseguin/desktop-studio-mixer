@@ -133,11 +133,15 @@ struct SceneAudioRoute {
         return start ? from+(to-from)*std::clamp(float(time-start)/4000000.f, 0.f, 1.f) : to;
     }
 };
+constexpr int64_t MediaPresentationDelay100ns = 500000; // 50 ms for decoder/IPC jitter.
 struct Source {
     QString id = newId(), name, kind, locator, invite, error, browserStatusMessage;
     QColor color{"#183657"};
     std::mutex imageMutex, audioMutex;
     QImage image;
+    struct TimedImage { QImage image; int64_t timestamp; };
+    std::deque<TimedImage> mediaFrames; // imageMutex; bounded local-file presentation queue.
+    std::atomic<int64_t> mediaFrameInterval{333333};
     bool imageStraightAlpha = false; // Protected by imageMutex, alongside image.
     std::deque<float> samples;
     int64_t audioReadyAt = 0; // Protected by audioMutex; file-playback priming.
@@ -1769,11 +1773,11 @@ struct MixerWidget::Impl {
             const auto item = weak.lock(); if (!item || !*valid) return;
             std::lock_guard lock(item->audioMutex);
             auto normalized = audio::normalizeAudioForOpus(chunk, &item->resampler);
-            // Keep one mixer quantum of scheduling headroom for local files.
-            // Live microphones, browser/guest audio and capture retain their
-            // existing latency. This uses the same bounded 200 ms PCM queue.
+            // File picture and PCM share a presentation delay. Anchor the PCM
+            // queue to its first sample's time, not its early decode arrival.
+            // Live capture keeps its existing latency and bounded PCM queue.
             if (item->kind == "media" && !item->audioReadyAt && !normalized.empty())
-                item->audioReadyAt = now100ns()+100000;
+                item->audioReadyAt = chunk.captureTime100ns+MediaPresentationDelay100ns;
             item->samples.insert(item->samples.end(), normalized.begin(), normalized.end());
             // Keep at most 200 ms. A stalled UI must not accumulate delayed audio.
             while (item->samples.size() > 19200) item->samples.pop_front();
@@ -1842,11 +1846,27 @@ struct MixerWidget::Impl {
                 }, Qt::QueuedConnection);
             });
         } else if (item->kind == "media") {
+            item->mediaFrameInterval = 10000000/std::max(1,canvasFps);
             item->media = std::make_unique<IsolatedSource>("media"); item->media->setLoop(item->mediaLoop);
             item->media->onDiscontinuity([weak = std::weak_ptr<Source>(item)] {
-                if (auto source = weak.lock()) { std::lock_guard lock(source->audioMutex); source->samples.clear(); source->delayedSamples.clear(); source->appliedDelayMs = -1; source->audioReadyAt = 0; }
+                if (auto source = weak.lock()) {
+                    { std::lock_guard lock(source->audioMutex); source->samples.clear(); source->delayedSamples.clear(); source->appliedDelayMs = -1; source->audioReadyAt = 0; }
+                    { std::lock_guard lock(source->imageMutex); source->mediaFrames.clear(); }
+                }
             });
-            item->media->setImageCallback(imageFrame);
+            item->media->setTimedImageCallback([weak, valid](QImage image, int64_t timestamp) {
+                const auto source = weak.lock(); if (!source || !*valid || image.isNull()) return;
+                std::lock_guard lock(source->imageMutex);
+                // Keep one picture per output interval. A 120/240 fps file
+                // must not evict every due picture from the short jitter
+                // buffer before a 30/60 fps compositor gets to select it.
+                const auto interval = source->mediaFrameInterval.load();
+                if (!source->mediaFrames.empty() && source->mediaFrames.back().timestamp/interval == timestamp/interval)
+                    source->mediaFrames.back() = {std::move(image), timestamp};
+                else source->mediaFrames.push_back({std::move(image), timestamp});
+                while (source->mediaFrames.size() > 6) source->mediaFrames.pop_front();
+                source->imageStraightAlpha = true; source->lastFrame = now100ns(); ++source->frames;
+            });
             item->media->setPaused(item->mediaPaused); item->media->start(item->locator, frame, audioChunk);
         } else if (item->kind == "browser" || item->kind == "guest" || item->kind == "wireless" || item->kind == "chat") {
             if (!webUrl(item->locator)) { item->error = "Invalid browser URL."; return; }
@@ -1948,7 +1968,7 @@ struct MixerWidget::Impl {
         QThreadPool::globalInstance()->start([retired, promise, prior]() mutable { if (prior.valid()) prior.wait(); retired.reset(); promise->set_value(); });
         delete item->browser.data();
         { std::lock_guard lock(item->audioMutex); item->samples.clear(); item->delayedSamples.clear(); item->appliedDelayMs = -1; item->audioReadyAt = 0; item->resampler = {}; }
-        { std::lock_guard lock(item->imageMutex); item->image = {}; }
+        { std::lock_guard lock(item->imageMutex); item->image = {}; item->mediaFrames.clear(); }
         item->error.clear(); item->peak = 0;
     }
 
@@ -2250,7 +2270,9 @@ struct MixerWidget::Impl {
         const auto talkText = studioText(privateTalkback || heldTalkback ? "Talking privately" : "Private talkback");
         if (talkbackButton->text() != talkText) { talkbackButton->setText(talkText); talkbackButton->setAccessibleName(talkText); }
         const auto renderTime = std::chrono::steady_clock::now();
-        const int64_t tick = app::outputFrameTimestamp100ns(renderTime);
+        const auto interval = app::outputFrameInterval(canvasFps);
+        const auto presentationTime = nextRender == std::chrono::steady_clock::time_point{} || renderTime-nextRender > 2*interval ? renderTime : nextRender;
+        const int64_t tick = app::outputFrameTimestamp100ns(presentationTime);
         nextRender = app::nextRenderFrameDeadline(nextRender, renderTime, app::outputFrameInterval(canvasFps));
         videoTimer.setInterval(int(std::max(int64_t(1),
             std::chrono::ceil<std::chrono::milliseconds>(nextRender-renderTime).count())));
@@ -2272,6 +2294,16 @@ struct MixerWidget::Impl {
         }
         canvasFormat->setEnabled(!core->isLive() && !recordingBusy() && !guestReturnEnabled->isChecked() && !virtualCamera->isChecked() && !spoutOutput->isChecked());
         recordOutput->setEnabled(!recordingBusy() || recordingActive());
+        // Use the nominal render slot, not the GUI timer's variable wake time.
+        // Buffered file frames are selected by media PTS; live sources still
+        // use their newest capture. Never retain more than six file pictures.
+        for (const auto &item : sources) if (item->kind == "media") {
+            item->mediaFrameInterval = 10000000/std::max(1,canvasFps);
+            std::lock_guard lock(item->imageMutex);
+            while (!item->mediaFrames.empty() && item->mediaFrames.front().timestamp <= tick-MediaPresentationDelay100ns) {
+                item->image = std::move(item->mediaFrames.front().image); item->mediaFrames.pop_front();
+            }
+        }
         if (studioMode && previewView->isVisible()) {
             const auto item = source(selectedSource);
             const auto selection = item && item->hasVideo() && selectedLayer() ? selectedLayer()->rect : QRectF();
