@@ -14,7 +14,7 @@ public:
     // QLabel wrapping otherwise makes it request the entire preferred height.
     bool hasHeightForWidth() const override { return false; }
     int heightForWidth(int) const override { return -1; }
-    void setOutputState(const QString &label, const QString &status, bool enabled, bool active);
+    void setOutputState(const QString &label, const QString &status, bool enabled, bool active, const QString &statusClass);
     void shutdown();
     bool confirmPracticeOutput();
     bool practiceMode() const;

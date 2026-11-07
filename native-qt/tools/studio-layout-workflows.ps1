@@ -80,6 +80,8 @@ try {
     # Recording is intentionally short and fails before starting if disk headroom is inadequate.
     if((Get-PSDrive C).Free -lt 600MB){throw 'At least 600 MiB free is required for this recording workflow'}
     Resize 1280 720
+    $recordButtonBounds=(Find 'Record...').Current.BoundingRectangle
+    $privacyButtonBounds=(Find 'Private break').Current.BoundingRectangle
     Click 'Record...'
     if(!(WaitFor {try{$null=Find 'File name:' ([Windows.Automation.ControlType]::Edit);return $true}catch{try{$null=Find 'Yes' ([Windows.Automation.ControlType]::Button);return $true}catch{return $false}}})){throw 'No recording confirmation or save dialog appeared'}
     # Practice acknowledgement is retained within a run, so repeated recordings
@@ -89,6 +91,8 @@ try {
     if(!(WaitFor {try{$null=Find 'File name:' ([Windows.Automation.ControlType]::Edit);return $true}catch{return $false}})){throw 'Recording save dialog did not open'}
     $clip=Join-Path $Evidence 'toolbar-recording.mkv';SetText 'File name:' $clip;Click 'Save' ([Windows.Automation.ControlType]::Button)
     Check (WaitFor {(State).recording.active}) 'Record toolbar starts recording through the save dialog'
+    $stopBounds=(Find 'Stop recording').Current.BoundingRectangle;$privacyNow=(Find 'Private break').Current.BoundingRectangle
+    Check ($stopBounds -eq $recordButtonBounds -and $privacyNow -eq $privacyButtonBounds) 'Starting recording preserves the Record and privacy button positions'
     $recordClock=[Diagnostics.Stopwatch]::StartNew()
     Shot '07-recording';Start-Sleep -Seconds 2
     $mute.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern).Toggle();$mutedAt=$recordClock.Elapsed.TotalSeconds;Start-Sleep -Seconds 3

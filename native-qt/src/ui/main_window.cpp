@@ -744,7 +744,7 @@ MainWindow::MainWindow(
         connect(studioStatusTimer, &QTimer::timeout, studio, [this, studio]() {
             const auto destination = outputSelect_ ? outputSelect_->currentText() : QString();
             studio->setOutputState(goLiveButton_->text(), destination+" / "+statusLabel_->text(),
-                goLiveButton_->isEnabled(), isLive_ || startInProgress_ || stopInProgress_);
+                goLiveButton_->isEnabled(), isLive_ || startInProgress_ || stopInProgress_, statusLabel_->property("outputStatusClass").toString());
         });
         studioStatusTimer->start(200);
         sourceModeSelect_->setCurrentIndex(sourceModeSelect_->findData("mixer"));

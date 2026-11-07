@@ -2,6 +2,43 @@
 
 Updated 2026-11-07 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
 
+## Compact workspace and scaled navigation, 2026-11-07 UTC
+
+Current development portable: `native-qt/dist/desktop-studio-compact-nov7/desktop-studio.exe`, SHA-256 `befd953a33d8b21c44c9bd5fe55117070d2c4af9172bb69fc16244fb1f9596f8`. The executable is timestamp-signed with the local Social Stream Ninja certificate; Windows trust remains `UnknownError`. Runtime files and the verified SSN pack are unchanged and hard-linked to the preceding package; executable and documentation are independent copies. The installer and ZIP were not rebuilt.
+
+### Changes and visual findings
+
+- Removed the repeated **Desktop Studio** workspace heading. Live, recording and privacy actions now lead a single ordered command bar, followed by guest/chat actions and settings. At 1280x720, the canvas/chat start moved from y=206 to y=156, reclaiming 50 pixels. English controls fit on one row at 1280, 1366 and 1920 pixels, and wrap to two rows at 1024. Icons, color cues, labels and tooltips remain.
+- Keyboard order follows the visible buttons and continues into Studio mode. Record reserves the width of **Stop recording**, so starting a recording does not move it or the adjacent privacy control.
+- Routine destination/idle text is available in GO LIVE's tooltip and accessible description. Connection progress, errors and explicit action confirmations remain visible below the controls. Errors wrap and use a red accent; a malformed RTMP destination was rejected before connecting, and its complete explanation remained visible. **Language saved** also remained visible.
+- Forced 150% Qt scaling exposed sideways scrolling in Scenes. Inspector minimum widths now include actual styled content and the vertical scrollbar. Final 125%/150% and French/Spanish walkthroughs had no overlapping command buttons or horizontal inspector scrollbars. Some existing translations remain English; this qualifies layout with those languages, not translation completeness.
+
+### Final executable: actual application workflows
+
+Completed runs passed **255 checks** on the exact executable above. These operated the visible portable app through pointer input, keyboard input and Windows UI Automation, with local control reads verifying state. Synthetic comments were supplied through practice mode; recording validation inspected the actual saved media. The earlier account-window failure described below is retained separately and is not counted as a successful run.
+
+| Workflow | Passed | Evidence directory |
+| --- | ---: | --- |
+| Command geometry, keyboard order and privacy controls | 33 | `commandbar-20261107-095354` |
+| Rejected output URL and visible action confirmation | 5 | `output-error-20261107-095409` |
+| 125%/150% scaling, French/Spanish, Studio mode and Video | 32 | `scaled-command-20261107-095415` |
+| Chat privacy, input fuzzing, scene/source editing and restart | 77 | `workflows-20261107-095442-656` |
+| Narrow inspectors, real recording, mute and private break | 34 | `layout-20261107-095547-230` |
+| Long comments, damaged shows and connected small-window chat | 44 | `usability-20261107-095621` |
+| Graphite/Rose/Warm sand and four workspace layouts | 12 | `appearance-20261107-095645` |
+| Twitch account navigation, normal/rapid reloads and return | 14 | `account-navigation-20261107-095946` |
+| Existing authenticated Twitch session and preserved channels | 4 | `saved-twitch-20261107-100033` |
+
+The first seven evidence directories are under `native-qt/build-integration/ui-exploration/20261107-001308/`; the account directories are under `native-qt/build-integration/ui-exploration/20261106-085441/`. Baseline geometry/screenshots are in `command-baseline-20261107-093632/` under the disposable profile. Evidence and profiles remain git-ignored.
+
+The short MKV decoded completely. Saved audio measured -91 dB during mute and -18 dB after unmuting; an extracted video frame showed the private-break slate. Recording and privacy button rectangles stayed unchanged when recording started. Screenshot review covered the compact/narrow bars, scaled Studio mode, translated labels, error and confirmation text, actual recording, long-comment preview ends, next-comment selection while another was on air, and theme contrast. Narrow windows still use vertical inspector/chat scrolling; controls remain reachable through focus.
+
+The first account-navigation run (`account-navigation-20261107-095729`) passed its first open/reload/return cycle, then failed to open a second account window. Afterward, UI Automation briefly returned no Studio root despite its process remaining responsive and chat reporting ready. No definite cause was established. A complete repeat passed all 14 checks, followed by a separate authenticated-menu check exposing **Log Out**. This remains an intermittent observation, not a proven application fix. No credentials, cookies or tokens were read; no account storage was cleared. The new package was left open on the owner's existing profile, with connected channels and Twitch authentication preserved and no stream/recording active.
+
+Reproduction uses `studio-commandbar-workflows.ps1`, `studio-output-error-workflow.ps1`, `studio-scaled-command-workflows.ps1`, `studio-ui-workflows.ps1 -LeaveOpen`, `studio-layout-workflows.ps1`, `studio-usability-workflows.ps1`, and `studio-appearance-workflows.ps1`, each with a disposable `-SessionFile`. Run the first five before usability adds a real channel; use a fresh app launch before the general walkthrough to reset transient practice state. The scale script changes and restores only the isolated profile's language and Qt scale. `studio-account-navigation-workflows.ps1` preserves existing account storage; the separate storage/sign-out walkthrough must not be used on the owner profile.
+
+Release compilation and whitespace checks are separate gates, not application testing. Forced Qt scaling is not an OS multi-monitor DPI test. This pass does not requalify the installer, two-hour recording/memory stability, real broadcast rollover, other platforms' authenticated sessions, actual screen-reader use or real gift extraction/purchases. No chats were posted, gifts purchased or public streams started.
+
 ## Packaged usability, visual review and input fuzzing, 2026-11-07 UTC
 
 Latest development portable: `native-qt/dist/desktop-studio-usability-nov7/desktop-studio.exe`, SHA-256 `fe1d3f0bf16488412c7802272d6b9c2e707852a4cd61896a0da1cd5ba81191cf`. The executable is timestamp-signed with the local Social Stream Ninja certificate; Windows trust remains `UnknownError`. Runtime files and the verified SSN pack are unchanged and hard-linked to the preceding package; executable and documentation are independent copies. The installer and ZIP were not rebuilt.
