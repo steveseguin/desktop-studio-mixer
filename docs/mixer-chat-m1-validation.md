@@ -1,6 +1,14 @@
 ﻿# Native chat integration: packaged validation
 
-Updated 2026-11-06 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
+Updated 2026-11-07 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
+
+## Authenticated Twitch session, 2026-11-07 UTC
+
+The owner had completed Twitch authentication in the isolated Studio QA profile. On the account-windows executable below (SHA-256 `879ab4132b987547c70e1eb25b995dc7599b95684f8f1b2881bd4e38bddb7e60`), the actual Twitch account menu exposed **Log Out** before and after a full normal Studio quit/relaunch. Returning to chat delivered new Twitch comments both before and after the restart, and connected channel identities were preserved. Studio was left open on chat with the account session retained. No credentials, verification codes, cookies or tokens were read or entered by automation; no posts, gifts, public outputs or recordings were started. Credential-entry/MFA steps themselves were not observed. This qualifies one Twitch account's saved session and continued public-chat reception, not other platforms, posting or access to restricted chat.
+
+Evidence: `native-qt/build-integration/ui-exploration/20261106-085441/twitch-auth-20261106-205415/`, including nine passing workflow checks, the restarted authenticated homepage and the final chat window. The initial account-menu confirmation is also in the ignored `signin-owner-check/` evidence. The first screenshot attempt stopped because Studio did not own foreground focus after returning from its account window; explicitly focusing Studio allowed the workflow to continue.
+
+Remaining UI issue: the redirect to Twitch's authenticated homepage displayed a stale **The sign-in page could not load** message despite the loaded, authenticated page. **Reload** cleared it, and that recovery passed. The native navigation-status handling still needs correction; no executable changes were made in this follow-up. Disk space briefly fell to about 12 MiB, then a later check showed approximately 8.2 GiB free. No QA artifacts or account data were deleted in this follow-up.
 
 ## Account windows and support events, 2026-11-06 UTC
 
@@ -26,7 +34,7 @@ The final five-minute Kick comparison used a live channel with 13,396 reported v
 
 A simultaneous read-only observation saw 64 distinct Rumble, 17 Twitch and 71 Kick panel messages, including rows present at the start. The Twitch/Kick membership fields were ordinary subscriber badges, **not new gifts**. No gift events were observed. All 150 readiness samples were true with no reported problems or resource-limit hits; peak sampled private memory was 2,244 MiB with four connected channels and a login window opened near the end. That remains substantial memory use and does not qualify long-term growth. Evidence: `live-support-2026-11-06T15-23-06-031Z/` under the same QA profile. Rumble delivery was observed but not compared independently. YouTube produced no new observed comments during this window.
 
-No accounts were authenticated, chats posted or gifts purchased. A successful login/MFA, authenticated capture and persistence across restart still require the owner to enter credentials directly. Account screenshots contain no entered credentials. The Twitch window was left open for that manual step after automated UI work completed. Live gift extraction, gift animations and paid transaction behavior are not qualified by the synthetic workflows.
+At the end of this November 6 run, no accounts had been authenticated, chats posted or gifts purchased. Account screenshots contained no entered credentials. The Twitch window was left open for the owner's manual step; the November 7 follow-up above records the subsequent authenticated-session verification. Live gift extraction, gift animations and paid transaction behavior are not qualified by the synthetic workflows.
 
 The initial live Kick comparison on the preceding executable (`3208b306…`) observed 12 reference messages, excluded one prompt moderator deletion and matched all 11 eligible comments, including eight emote-bearing comments. There were no duplicate/surplus occurrences or stalled intervals. Its first-comment warmup expired during a quiet stretch, so it does not qualify connection latency. Evidence: `native-qt/build-chat/kick/2026-11-06T15-09-00-562Z/`.
 
