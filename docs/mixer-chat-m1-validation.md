@@ -2,9 +2,19 @@
 
 Updated 2026-11-07 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
 
+## Long recording, physical hardware and installer, 2026-11-07 UTC
+
+The latest portable is `native-qt/dist/desktop-studio-reliability-final-nov7/desktop-studio.exe`, SHA-256 `3627893f203d73b35b5048c4a210cf00d9e5f1da2cbdfa821869119edb9b9187`. The installer is `native-qt/dist/desktop-studio-0.9.4-reliability-final-nov7-setup.exe`. [The reliability report](studio-reliability-2026-11-07.md) records exact artifacts, saved-media analysis, screenshots, resource measurements and retained failed checker attempts.
+
+The candidate completed two hours of simultaneous recording, anonymous Twitch/YouTube chat and unlisted VDO.Ninja publication. Both the local and 110-minute receiver recordings fully decode, with distinct 30 fps timestamps and measured first/last-minute A/V pulse offsets within 62 ms. Sender CPU averaged 3.15% on this 20-thread PC. The build with the unused inspector response-body cache disabled had lower observed chat memory than the concurrent prior build (977 versus 1,227 MiB means), but memory still grew; this is not a controlled benchmark or a proven leak fix. Motion analysis found near-repeat candidates in about 4.6%/6.6% of local/received frame transitions, so smooth frame pacing remains unqualified.
+
+The final portable adds accessible camera-setting names and clearer reconnect wording. Actual BRIO camera/microphone recording, mute/unmute, playback, writer-failure recovery, general UI, synthetic gifts and Twitch sign-in navigation passed. Visible installation, upgrade, installed-app chat/recording, damaged-pack isolation and uninstall also passed; thirteen shows/recordings survived removal unchanged. The owner's saved Twitch authentication, seven scenes, eight sources and four channels were restored, with Studio left open and idle.
+
+The long run used candidate `b9f7c682...`; the final executable differs only in UI naming/wording and had separate packaged journeys. Local certificate trust remains `UnknownError`. Real rollover, full network loss, physical hotplug, forced disk-full conditions, real gift extraction, Meshcast and the remaining platforms are still unqualified. See the report for the same-version installer and existing-WebView2 limitations.
+
 ## First launch through recording recovery and live chat, 2026-11-07 UTC
 
-The newest portable is `native-qt/dist/desktop-studio-journeys-nov7/desktop-studio.exe`, SHA-256 `9984300df07ed23ba5ed165ea13253317daabf83c982c08487e20259b2236774`. [The complete journey report](studio-user-journeys-2026-11-07.md) records 138 passed application checks, retained failed harness attempts, screenshots, actual recorded-media analysis and resource measurements.
+This earlier portable is `native-qt/dist/desktop-studio-journeys-nov7/desktop-studio.exe`, SHA-256 `9984300df07ed23ba5ed165ea13253317daabf83c982c08487e20259b2236774`. [The complete journey report](studio-user-journeys-2026-11-07.md) records 138 passed application checks, retained failed harness attempts, screenshots, actual recorded-media analysis and resource measurements.
 
 Fresh launch, scene creation, recording, forced process termination, MP4 recovery and seeking passed. Anonymous Twitch and YouTube comments from confirmed live broadcasts were featured and received through VDO.Ninja in a separate packaged instance with real picture/audio. The 315-second receiver recording decoded completely. Desktop-audio recording, mute/unmute, the 77-check general UI walkthrough and the owner's saved Twitch session also passed. Live output averaged 3.96% of total CPU on a 20-thread PC; peak private memory was 1,643 MiB, so chat memory remains a concern. No physical camera or microphone was available; Meshcast, the installer and long-duration stability were not qualified by this pass.
 

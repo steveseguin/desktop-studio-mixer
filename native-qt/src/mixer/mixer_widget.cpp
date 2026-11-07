@@ -1110,7 +1110,7 @@ struct MixerWidget::Impl {
         QObject::connect(reconnect, &QPushButton::clicked, q, [this] {
             if (auto item = source(selectedSource)) {
                 if (item->kind == "window") addSourceDialog(true, true);
-                else { item->browserRestarts.clear(); stopSource(item); startSource(item); message("Reconnecting " + item->name); }
+                else { item->browserRestarts.clear(); stopSource(item); startSource(item); message("Reconnect requested: " + item->name); }
             }
         });
         QObject::connect(add, &QPushButton::clicked, q, [this] { addSourceDialog(); });
@@ -1485,7 +1485,7 @@ struct MixerWidget::Impl {
         auto *root = new QVBoxLayout(&dialog);
         auto *modeRow = new QHBoxLayout;
         modeRow->addWidget(new QLabel(studioText("Capture mode"), &dialog));
-        auto *mode = new QComboBox(&dialog); mode->setObjectName("cameraMode"); modeRow->addWidget(mode, 1);
+        auto *mode = new QComboBox(&dialog); mode->setObjectName("cameraMode"); mode->setAccessibleName(studioText("Capture mode")); modeRow->addWidget(mode, 1);
         auto *applyMode = button("Apply capture mode", "cameraApplyMode", modeRow, &dialog);
         root->addLayout(modeRow);
         auto *active = new QLabel(&dialog); active->setObjectName("cameraActiveMode"); root->addWidget(active);
@@ -1531,15 +1531,19 @@ struct MixerWidget::Impl {
                 auto *label = new QLabel(QString::fromStdString(control.name), panel); rows->addWidget(label);
                 auto *row = new QHBoxLayout;
                 auto *slider = new QSlider(Qt::Horizontal, panel); slider->setObjectName("cameraSlider_"+id);
+                slider->setAccessibleName(QString::fromStdString(control.name));
                 const int steps = static_cast<int>(std::min<int64_t>((static_cast<int64_t>(control.maximum)-control.minimum)/control.step, INT_MAX));
                 slider->setRange(0, steps); slider->setValue((control.value-control.minimum)/control.step);
                 slider->setTracking(false); row->addWidget(slider, 1);
                 auto *number = new QSpinBox(panel); number->setObjectName("cameraValue_"+id);
+                number->setAccessibleName(QString::fromStdString(control.name)+studioText(" value"));
                 number->setRange(control.minimum, control.maximum); number->setSingleStep(control.step);
                 number->setValue(control.value); number->setKeyboardTracking(false); number->setMinimumWidth(78); row->addWidget(number);
                 auto *automatic = new QCheckBox(studioText("Auto"), panel); automatic->setObjectName("cameraAuto_"+id);
+                automatic->setAccessibleName(QString::fromStdString(control.name)+studioText(" automatic"));
                 automatic->setChecked(control.automatic); automatic->setEnabled(control.supportsAuto && control.supportsManual); row->addWidget(automatic);
                 auto *reset = button("Reset", "cameraReset_"+id, row, panel);
+                reset->setAccessibleName(studioText("Reset ")+QString::fromStdString(control.name));
                 reset->setToolTip(studioText("Use the driver's default value, with automatic mode when supported."));
                 const auto range = QString("Range %1 to %2; step %3. Values are camera driver units.").arg(control.minimum).arg(control.maximum).arg(control.step);
                 number->setToolTip(range); slider->setToolTip(range); label->setToolTip(range);

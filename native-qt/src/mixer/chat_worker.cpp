@@ -433,7 +433,10 @@ void Page::configure(){
         if(!asset.isEmpty()||blocked){auto data=asset.isEmpty()?QByteArray("Cloud relay blocked by engine-spike"):read(asset);ComPtr<IStream>stream;stream.Attach(SHCreateMemStream(reinterpret_cast<const BYTE*>(data.constData()),UINT(data.size())));ComPtr<ICoreWebView2WebResourceResponse>resp;host.environment->CreateWebResourceResponse(stream.Get(),asset.isEmpty()?403:200,asset.isEmpty()?L"Blocked":L"OK",L"Content-Type: text/html; charset=utf-8\r\nCache-Control: no-store",&resp);a->put_Response(resp.Get());}return S_OK;
     }).Get(),&token);
     // Browser enforcement supplements the main-world WebSocket guard, including workers.
-    web->CallDevToolsProtocolMethod(L"Network.enable",L"{}",nullptr);
+    // This session exists only to enforce the relay block list. Chromium's
+    // default inspector buffers retain response bodies we never read (including
+    // long-running chat polls). Keep enforcement, without a second body cache.
+    web->CallDevToolsProtocolMethod(L"Network.enable",L"{\"maxTotalBufferSize\":0,\"maxResourceBufferSize\":0}",nullptr);
     web->CallDevToolsProtocolMethod(L"Network.setBlockedURLs",L"{\"urls\":[\"wss://*.socialstream.ninja/*\",\"ws://*.socialstream.ninja/*\",\"*://*.vdo.ninja/*\",\"*://vdo.ninja/*\"]}",nullptr);
     QJsonObject cfg{{"tab",id},{"role",role},{"manifest",host.manifest}};
     auto script=host.shim;script.replace("__ENGINE_CONFIG__",QString::fromUtf8(json(cfg)));
