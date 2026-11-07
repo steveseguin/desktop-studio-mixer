@@ -31,7 +31,9 @@ with (out / 'decode.log').open('wb') as log:
     process = subprocess.Popen([
         args.ffmpeg, '-hide_banner', '-nostdin', '-v', 'error', '-xerror',
         '-i', args.file, '-map', '0:v:0', '-vf', f'scale={width}:{height}',
-        '-fps_mode', 'passthrough', '-pix_fmt', 'gray', '-an', '-f', 'rawvideo', '-'
+        # Keep millisecond input precision; rounding onto a 1/fps mux grid can
+        # manufacture duplicate output DTS even when input PTS are increasing.
+        '-fps_mode', 'passthrough', '-enc_time_base:v', 'demux', '-pix_fmt', 'gray', '-an', '-f', 'rawvideo', '-'
     ], stdout=subprocess.PIPE, stderr=log, creationflags=flags)
     try:
         while raw := process.stdout.read(width * height):

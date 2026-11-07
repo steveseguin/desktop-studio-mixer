@@ -2,6 +2,7 @@
 #include "versus/mixer/browser_source.h"
 #include "versus/mixer/audio_monitor.h"
 #include "versus/mixer/frame_image.h"
+#include "versus/mixer/image_trace.h"
 #include "versus/video/window_capture.h"
 #include "versus/mixer/process_worker.h"
 #include <QThreadPool>
@@ -143,7 +144,7 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                 if (error != proxy->error) { proxy->error = error; if (error.isEmpty()) emit recovered(); else emit errorOccurred(error); }
             }
             const auto image = proxy->worker.image(true);
-            if (!image.isNull()) emit frameReady(image);
+            if (!image.isNull()) { detail::ImageTrace::instance().record("proxy", image); emit frameReady(image); }
             if (!impl_->audioReader.joinable()) impl_->audioReader = std::thread([this, proxy] {
                 // Audio follows its media event, independent of GUI painting,
                 // accessibility calls or a slow video frame copy.
@@ -383,6 +384,7 @@ BrowserSource::BrowserSource(const QString &id, const QUrl &url, bool renderFram
                                         // snapshots below; do not premultiply/blend every WGC frame.
                                         frame.opaque = true;
                                         auto image = takeFrameImage(std::move(frame)); if (image.isNull()) return;
+                                        detail::ImageTrace::instance().record("wgc", image);
                                         std::lock_guard lock(state->frameMutex); state->latest = std::move(image);
                                         if (!state->deliveryPending && self) {
                                             state->deliveryPending = true;
@@ -479,7 +481,7 @@ void BrowserSource::capture() {
     if (impl_->capture) {
         QImage image;
         { std::lock_guard lock(impl_->frameMutex); image.swap(impl_->latest); impl_->deliveryPending = false; }
-        if (!image.isNull()) emit frameReady(image);
+        if (!image.isNull()) { detail::ImageTrace::instance().record("worker", image); emit frameReady(image); }
         return;
     }
     if (!impl_->web || impl_->busy) return;

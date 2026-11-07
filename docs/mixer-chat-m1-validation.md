@@ -2,9 +2,17 @@
 
 Updated 2026-11-07 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
 
+## Received-browser picture pacing, 2026-11-07 UTC
+
+The latest qualified portable is `native-qt/dist/desktop-studio-receiver-final-nov7/desktop-studio.exe`, SHA-256 `7b9d8f7e6d22975c2b3a671e1ff1b2f755900b6abb245fb648d0c9437f4f9cba`. [The receiver pacing report](studio-receiver-pacing-2026-11-07.md) records the exact artifacts, comparisons, saved recordings, screenshots and retained experiments.
+
+Opaque browser sources now use a bounded picture buffer with about 50 ms of headroom and a matching persistent audio delay. Slower pages keep their own timing. A simultaneous comparison reduced near-repeat candidates from 684 to six in two minutes; baseline behavior varied considerably between runs. The final five-minute received recording has two candidates in 9,043 frames (0.022%), fully decodes, and keeps first/last-minute A/V offsets within 34 ms. Receiver CPU averages 2.31% on this 20-thread PC.
+
+The final ten-minute sender recording with live chat has zero detected near-repeats. Actual browser Pause/Resume, a 24 fps source, browser-worker failure/recovery on a 60 fps canvas, manual Reconnect, the 77-check UI suite and 77-check synthetic support suite passed. The existing workspace and saved Twitch sign-in are preserved. This change does not repair missing upstream pictures or qualify a full network outage. Chat memory, a two-hour soak and the installer remain outstanding for this executable.
+
 ## File playback and held-comment performance, 2026-11-07 UTC
 
-The latest qualified portable is `native-qt/dist/desktop-studio-polish3-nov7/desktop-studio.exe`, SHA-256 `a5e45745c0a73e83835d9a87faa33c6570eb0540808d6a8b9cf1739dace7ac4f`. [The playback report](studio-playback-polish-2026-11-07.md) identifies the exact workflows, measurements and retained failures. Local-file pictures/audio now share a bounded presentation buffer; an unchanged chat card no longer renders another PNG fifteen times per second.
+This earlier portable is `native-qt/dist/desktop-studio-polish3-nov7/desktop-studio.exe`, SHA-256 `a5e45745c0a73e83835d9a87faa33c6570eb0540808d6a8b9cf1739dace7ac4f`. [The playback report](studio-playback-polish-2026-11-07.md) identifies the exact workflows, measurements and retained failures. Local-file pictures/audio now share a bounded presentation buffer; an unchanged chat card no longer renders another PNG fifteen times per second.
 
 The final fifteen-minute recording with live chat, a featured comment, VDO.Ninja publication and other media sources fully decodes with zero near-repeat candidates at the specified threshold, compared with 65 in a four-minute busy baseline. First/last-minute A/V offsets stay within 46 ms. CPU averages 3.93% on this 20-thread PC. Received-browser output still has 1.45% near-repeat candidates, and chat averages 921 MiB, so neither received-browser pacing nor memory is considered solved.
 

@@ -1,4 +1,5 @@
 #include "versus/mixer/program_recorder.h"
+#include "versus/mixer/image_trace.h"
 #include "versus/video/video_encoder.h"
 #include "versus/video/window_capture.h"
 #include "versus/video/frame_waiter.h"
@@ -80,6 +81,7 @@ bool ProgramRecorder::start(const QString &path, int width, int height, int fps,
                     // Timestamp the recording slot, not an earlier render tick:
                     // a newly arrived picture must not be backdated by the grace.
                     const auto timestamp = app::outputFrameTimestamp100ns(nextFrame);
+                    detail::ImageTrace::instance().record("record-write", image);
                     if (session->status().state == output::State::Error) { setStatus(QString::fromStdString(session->status().message)); running_ = false; break; }
                     if (std::chrono::steady_clock::now()-diskCheck > std::chrono::seconds(2)) {
                         diskCheck = std::chrono::steady_clock::now();

@@ -134,6 +134,8 @@ struct SceneAudioRoute {
     }
 };
 constexpr int64_t MediaPresentationDelay100ns = 500000; // 50 ms for decoder/IPC jitter.
+constexpr int64_t BrowserPresentationDelay100ns = 500000;
+constexpr int64_t BrowserFrameInterval100ns = 10000000/30; // Opaque browser capture is capped at 30 fps.
 struct Source {
     QString id = newId(), name, kind, locator, invite, error, browserStatusMessage;
     QColor color{"#183657"};
@@ -141,6 +143,11 @@ struct Source {
     QImage image;
     struct TimedImage { QImage image; int64_t timestamp; };
     std::deque<TimedImage> mediaFrames; // imageMutex; bounded local-file presentation queue.
+    std::deque<TimedImage> browserFrames; // imageMutex; at most three opaque browser pictures.
+    std::deque<int64_t> browserArrivals; // imageMutex; bounded cadence observation, no pixels.
+    bool browserRegular = false; // imageMutex; only pace sustained near-30-fps arrivals.
+    int64_t browserPresentAt = 0; // imageMutex; paced independently of arrival jitter.
+    std::atomic<bool> bufferedBrowser{false};
     std::atomic<int64_t> mediaFrameInterval{333333};
     bool imageStraightAlpha = false; // Protected by imageMutex, alongside image.
     std::deque<float> samples;
@@ -1753,6 +1760,7 @@ struct MixerWidget::Impl {
 
     void startSource(const std::shared_ptr<Source> &item) {
         item->error.clear(); item->lastFrame = 0; item->frames = 0;
+        item->bufferedBrowser = !item->transparent && (item->kind == "browser" || item->kind == "guest" || item->kind == "wireless" || item->kind == "chat");
         item->captureValid = std::make_shared<std::atomic<bool>>(true);
         const auto valid = item->captureValid;
         item->audioActive = item->hasAudio();
@@ -1775,7 +1783,8 @@ struct MixerWidget::Impl {
             auto normalized = audio::normalizeAudioForOpus(chunk, &item->resampler);
             // File picture and PCM share a presentation delay. Anchor the PCM
             // queue to its first sample's time, not its early decode arrival.
-            // Live capture keeps its existing latency and bounded PCM queue.
+            // Browser delay is applied persistently in the mixer below; native
+            // device capture keeps its existing latency and bounded PCM queue.
             if (item->kind == "media" && !item->audioReadyAt && !normalized.empty())
                 item->audioReadyAt = chunk.captureTime100ns+MediaPresentationDelay100ns;
             item->samples.insert(item->samples.end(), normalized.begin(), normalized.end());
@@ -1886,7 +1895,22 @@ struct MixerWidget::Impl {
             QObject::connect(item->browser, &BrowserSource::recovered, q, [weak, valid] { if (auto item = weak.lock(); item && *valid) item->error.clear(); });
             QObject::connect(item->browser, &BrowserSource::frameReady, q, [this, weak, valid](const QImage &image) {
                 if (auto item = weak.lock(); item && *valid) {
-                    { std::lock_guard lock(item->imageMutex); item->image = image; item->lastFrame = now100ns(); ++item->frames; }
+                    {
+                        std::lock_guard lock(item->imageMutex);
+                        const auto arrived = now100ns();
+                        if (item->bufferedBrowser) {
+                            if (!item->browserArrivals.empty() && arrived-item->browserArrivals.back() > 5000000) item->browserArrivals.clear();
+                            item->browserArrivals.push_back(arrived);
+                            while (item->browserArrivals.size() > 31) item->browserArrivals.pop_front();
+                            const auto span = arrived-item->browserArrivals.front();
+                            const double rate = span > 0 ? (item->browserArrivals.size()-1)*10000000.0/span : 0;
+                            const bool regular = item->browserArrivals.size() == 31 && rate >= (item->browserRegular ? 27.5 : 28.5);
+                            if (regular != item->browserRegular) { item->browserRegular = regular; item->browserPresentAt = 0; }
+                            item->browserFrames.push_back({image, arrived});
+                            while (item->browserFrames.size() > 3) item->browserFrames.pop_front();
+                        } else item->image = image;
+                        item->lastFrame = arrived; ++item->frames;
+                    }
                     // A replacement proxy starts with no error, so it need not
                     // emit recovered(). Retire its previous warning when usable
                     // pictures return, without overwriting a later user message.
@@ -1899,7 +1923,7 @@ struct MixerWidget::Impl {
             QObject::connect(item->browser, &BrowserSource::errorOccurred, q, [this, weak, valid](const QString &message) {
                 if (auto item = weak.lock(); item && *valid) {
                     item->error = message;
-                    { std::lock_guard lock(item->imageMutex); item->image = {}; }
+                    { std::lock_guard lock(item->imageMutex); item->image = {}; item->browserFrames.clear(); item->browserArrivals.clear(); item->browserRegular = false; item->browserPresentAt = 0; }
                     item->browserStatusMessage = item->name+": "+message;
                     this->message(item->browserStatusMessage);
                 }
@@ -1968,7 +1992,7 @@ struct MixerWidget::Impl {
         QThreadPool::globalInstance()->start([retired, promise, prior]() mutable { if (prior.valid()) prior.wait(); retired.reset(); promise->set_value(); });
         delete item->browser.data();
         { std::lock_guard lock(item->audioMutex); item->samples.clear(); item->delayedSamples.clear(); item->appliedDelayMs = -1; item->audioReadyAt = 0; item->resampler = {}; }
-        { std::lock_guard lock(item->imageMutex); item->image = {}; item->mediaFrames.clear(); }
+        { std::lock_guard lock(item->imageMutex); item->image = {}; item->mediaFrames.clear(); item->browserFrames.clear(); item->browserArrivals.clear(); item->browserRegular = false; item->browserPresentAt = 0; }
         item->error.clear(); item->peak = 0;
     }
 
@@ -2295,13 +2319,41 @@ struct MixerWidget::Impl {
         canvasFormat->setEnabled(!core->isLive() && !recordingBusy() && !guestReturnEnabled->isChecked() && !virtualCamera->isChecked() && !spoutOutput->isChecked());
         recordOutput->setEnabled(!recordingBusy() || recordingActive());
         // Use the nominal render slot, not the GUI timer's variable wake time.
-        // Buffered file frames are selected by media PTS; live sources still
+        // Buffered file frames are selected by media PTS. Native device sources
         // use their newest capture. Never retain more than six file pictures.
         for (const auto &item : sources) if (item->kind == "media") {
             item->mediaFrameInterval = 10000000/std::max(1,canvasFps);
             std::lock_guard lock(item->imageMutex);
             while (!item->mediaFrames.empty() && item->mediaFrames.front().timestamp <= tick-MediaPresentationDelay100ns) {
                 item->image = std::move(item->mediaFrames.front().image); item->mediaFrames.pop_front();
+            }
+        }
+        // WGC/WebRTC frames can arrive in short bursts around a render slot.
+        // A latest-only snapshot repeats one picture and skips the next even
+        // when both arrived. Hold a bounded 50 ms cushion, then consume the
+        // opaque capture's near-30-fps sequence. A 60 fps canvas holds each
+        // picture for two slots. Slow/static pages retain their arrival timing
+        // instead of being rushed through a 30 fps queue and repeatedly primed.
+        for (const auto &item : sources) if (item->bufferedBrowser) {
+            std::lock_guard lock(item->imageMutex);
+            if (!item->browserRegular) {
+                while (!item->browserFrames.empty() && item->browserFrames.front().timestamp <= tick-BrowserPresentationDelay100ns) {
+                    item->image = std::move(item->browserFrames.front().image); item->browserFrames.pop_front();
+                }
+                continue;
+            }
+            if (item->browserFrames.empty()) {
+                if (tick >= item->browserPresentAt) item->browserPresentAt = 0;
+                continue;
+            }
+            if (!item->browserPresentAt) {
+                if (tick-item->browserFrames.front().timestamp < BrowserPresentationDelay100ns) continue;
+                item->browserPresentAt = tick;
+            }
+            if (tick >= item->browserPresentAt) {
+                item->image = std::move(item->browserFrames.front().image); item->browserFrames.pop_front();
+                item->browserPresentAt += BrowserFrameInterval100ns;
+                if (item->browserPresentAt < tick) item->browserPresentAt = tick+BrowserFrameInterval100ns;
             }
         }
         if (studioMode && previewView->isVisible()) {
@@ -2420,7 +2472,10 @@ struct MixerWidget::Impl {
                 const bool listen = item->monitored;
                 std::lock_guard lock(item->audioMutex);
                 if (item->audioReadyAt > chunk.captureTime100ns) continue;
-                const int delay = item->audioDelayMs.load();
+                // Browser audio can stop delivering while its page navigates or
+                // pauses. A persistent delay survives those gaps; priming only
+                // the first PCM block would silently lose sync after an underrun.
+                const int delay = item->audioDelayMs.load() + (item->bufferedBrowser ? int(BrowserPresentationDelay100ns/10000) : 0);
                 if (item->appliedDelayMs != delay) {
                     item->delayedSamples.assign(static_cast<size_t>(delay)*96, 0);
                     item->appliedDelayMs = delay;
