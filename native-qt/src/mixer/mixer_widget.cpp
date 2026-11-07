@@ -12,6 +12,7 @@
 #include "chat_panel.h"
 #include "studio_icons.h"
 #include "studio_action_layout.h"
+#include "recording_recovery.h"
 #include <QDockWidget>
 #include <QDateTime>
 #include <QKeySequenceEdit>
@@ -298,6 +299,11 @@ struct MixerWidget::Impl {
     QComboBox *renderer = nullptr;
     QLabel *recordingStatus = nullptr;
     QString announcedRecordingStatus;
+    RecordingRecovery recordingRecovery;
+    QStringList currentRecordingPaths;
+    QFrame *recoveryBanner = nullptr;
+    QLabel *recoveryLabel = nullptr;
+    QPushButton *recoverRecording = nullptr;
     QComboBox *canvasFormat = nullptr;
     QCheckBox *layerLock = nullptr, *snap = nullptr;
     QComboBox *fitMode = nullptr;
@@ -382,6 +388,7 @@ struct MixerWidget::Impl {
     Impl(MixerWidget *widget, app::VersusApp *appCore) : q(widget), core(appCore) {
         projectPath = showFileAccess().path();
         buildUi();
+        recordingRecovery.load(projectPath);updateRecoveryUi();
         if (!load(projectPath) && QFileInfo::exists(projectPath)) {
             // Preserve a damaged/unrecognized show before autosave creates a fresh one.
             const auto backup = projectPath+".recovery-"+newId();
@@ -427,6 +434,7 @@ struct MixerWidget::Impl {
         if (audioThread.joinable()) audioThread.join();
         recorder.stop();
         for (const auto &iso : recordingPlan.load()->isos) iso.recorder->stop();
+        finishRecordingRecovery();
         for (const auto &item : sources) { if (auto output = item->guestReturn.exchange({})) QThreadPool::globalInstance()->start([output] { output->stop(); }); stopSource(item); }
         delete outputView.data();
         delete chatDock.data();
@@ -491,6 +499,32 @@ struct MixerWidget::Impl {
     void stopRecording() {
         recorder.requestStop(); for (const auto &iso : recordingPlan.load()->isos) iso.recorder->requestStop();
     }
+    void updateRecoveryUi() {
+        auto pending=recordingRecovery.pending();
+        for (const auto &path:currentRecordingPaths) pending.removeAll(path);
+        recoveryBanner->setVisible(!pending.isEmpty());
+        if (pending.isEmpty()) return;
+        recoveryLabel->setText(studioText("A recording may be unfinished:")+" "+QFileInfo(pending.first()).fileName()+
+            (pending.size()>1 ? QString(" (+%1)").arg(pending.size()-1) : QString())+". "+studioText("Recover an MP4 copy; the original is kept."));
+        recoverRecording->setProperty("recordingPath",pending.first());
+        recoverRecording->setEnabled(!exportProcess);
+    }
+    void finishRecordingRecovery() {
+        if (currentRecordingPaths.isEmpty() || recordingBusy()) return;
+        QStringList finished;
+        if (recorder.status().startsWith("Recording saved")) finished.append(recorder.path());
+        for (const auto &iso:recordingPlan.load()->isos)
+            if (iso.recorder->status().startsWith("Recording saved")) finished.append(iso.recorder->path());
+        recordingRecovery.finished(finished);currentRecordingPaths.clear();updateRecoveryUi();
+    }
+    void exportRecordingDialog(const QString &input) {
+        const auto info=QFileInfo(input);auto suggestion=info.absolutePath()+"/"+info.completeBaseName()+".mp4";
+        for (int n=1;QFileInfo::exists(suggestion);++n) suggestion=info.absolutePath()+"/"+info.completeBaseName()+QString("-recovered-%1.mp4").arg(n);
+        const auto output=QFileDialog::getSaveFileName(q,"Export MP4 (original recording preserved)",suggestion,"MP4 video (*.mp4)");
+        if (output.isEmpty()) return;
+        const auto error=exportRecording(input,output.endsWith(".mp4",Qt::CaseInsensitive)?output:output+".mp4");
+        if (!error.isEmpty()) message(error);
+    }
     QString startRecording(const QString &path, const QStringList &audioIds, const QStringList &isoIds) {
         if (recordingBusy()) return "Recording is already active or finalizing.";
         if (audioIds.size() > 16 || isoIds.size() > 4) return "Choose at most 16 separate audio tracks and four separate video recordings.";
@@ -509,10 +543,19 @@ struct MixerWidget::Impl {
         }
         auto isoPath = [&](const QString &id) { return QFileInfo(path).absoluteDir().filePath(QFileInfo(path).completeBaseName()+"-source-"+id+".mkv"); };
         for (const auto &iso : plan->isos) if (QFileInfo::exists(isoPath(iso.id))) return "A separate source recording already exists. Choose a new recording name.";
+        finishRecordingRecovery();
+        QStringList paths{QFileInfo(path).absoluteFilePath()};
+        for (const auto &iso:plan->isos) paths.append(isoPath(iso.id));
+        const auto previousRecovery=recordingRecovery.pending();
+        if (!recordingRecovery.begin(paths)) return "Could not save recording recovery details. Save the show in a writable folder and try again.";
         // Publish the immutable mapping before audio begins. Missing/removed
         // sources retain a silent track instead of changing track identity.
         recordingPlan.store(plan);
-        if (!recorder.start(path,Width,Height,canvasFps,names)) return recorder.status();
+        if (!recorder.start(path,Width,Height,canvasFps,names)) {
+            auto added=paths;for (const auto &old:previousRecovery) added.removeAll(old);
+            recordingRecovery.finished(added);return recorder.status();
+        }
+        currentRecordingPaths=paths;updateRecoveryUi();
         for (const auto &iso : plan->isos) iso.recorder->start(isoPath(iso.id),iso.size.width(),iso.size.height(),canvasFps);
         return {};
     }
@@ -570,14 +613,20 @@ struct MixerWidget::Impl {
         QObject::connect(process, &QProcess::readyRead, q, [process] { process->readAll(); });
         QObject::connect(process, &QProcess::errorOccurred, q, [this,process](QProcess::ProcessError error) {
             if (error != QProcess::FailedToStart) return;
-            exportStatus = "Could not start MP4 export. Original recording preserved."; message(exportStatus); exportProcess = nullptr; process->deleteLater();
+            exportStatus = "Could not start MP4 export. Original recording preserved."; message(exportStatus); exportProcess = nullptr; process->deleteLater();updateRecoveryUi();
         });
-        QObject::connect(process, qOverload<int,QProcess::ExitStatus>(&QProcess::finished), q, [this,process](int code,QProcess::ExitStatus status) {
+        const auto recoveryShow=projectPath;
+        QObject::connect(process, qOverload<int,QProcess::ExitStatus>(&QProcess::finished), q, [this,process,input,recoveryShow](int code,QProcess::ExitStatus status) {
             exportStatus = code == 0 && status == QProcess::NormalExit ? "MP4 saved: "+QFileInfo(exportPath).fileName() : "MP4 export failed. Original recording preserved; choose a new filename to retry.";
+            if (code==0 && status==QProcess::NormalExit) {
+                if (projectPath==recoveryShow) recordingRecovery.finished({input});
+                else {RecordingRecovery previousShow;previousShow.load(recoveryShow);previousShow.finished({input});}
+            }
             message(exportStatus); exportProcess = nullptr; process->deleteLater();
+            updateRecoveryUi();
         });
         process->setProgram(ffmpeg); process->setArguments({"-nostdin","-hide_banner","-loglevel","error","-n","-i",input,"-map","0:v:0","-map","0:a?","-c","copy","-movflags","+faststart",output}); process->start();
-        message(exportStatus); return {};
+        updateRecoveryUi();message(exportStatus); return {};
     }
     void updateModeUi() {
         audioBox->setMinimumWidth(180);
@@ -730,12 +779,12 @@ struct MixerWidget::Impl {
         auto *recordingMenu = new QMenu(recordingFiles); recordingFiles->setMenu(recordingMenu);
         recordingMenu->addAction(studioText("Recording tracks..."),q,[this] { recordingOptions(); });
         QObject::connect(recordingMenu->addAction(studioText("Open recording folder")), &QAction::triggered, q, [this] {
-            QDesktopServices::openUrl(QUrl::fromLocalFile(recorder.path().isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::MoviesLocation) : QFileInfo(recorder.path()).absolutePath()));
+            const auto path=recorder.path().isEmpty()?recordingRecovery.lastPath():recorder.path();
+            QDesktopServices::openUrl(QUrl::fromLocalFile(path.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::MoviesLocation) : QFileInfo(path).absolutePath()));
         });
         QObject::connect(recordingMenu->addAction(studioText("Export recording as MP4...")), &QAction::triggered, q, [this] {
-            const auto input = QFileDialog::getOpenFileName(q,"Choose recording to export",recorder.path(),"Matroska recording (*.mkv)"); if (input.isEmpty()) return;
-            const auto output = QFileDialog::getSaveFileName(q,"Export MP4 (original recording preserved)",QFileInfo(input).absolutePath()+"/"+QFileInfo(input).completeBaseName()+".mp4","MP4 video (*.mp4)"); if (output.isEmpty()) return;
-            const auto error = exportRecording(input,output.endsWith(".mp4",Qt::CaseInsensitive) ? output : output+".mp4"); if (!error.isEmpty()) message(error);
+            const auto input = QFileDialog::getOpenFileName(q,"Choose recording to export",recorder.path().isEmpty()?recordingRecovery.lastPath():recorder.path(),"Matroska recording (*.mkv)"); if (input.isEmpty()) return;
+            exportRecordingDialog(input);
         });
         outputStatus = new QLabel(studioText("Configure a destination in Output settings, or record to a file."), q);
         outputStatus->setObjectName("studioOutputStatus");outputStatus->setTextFormat(Qt::PlainText);outputStatus->setWordWrap(true);outputStatus->setMinimumWidth(0);outputStatus->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);outputStatus->hide();
@@ -779,6 +828,12 @@ struct MixerWidget::Impl {
         }
         delete toolbar;delete outputBar;
         commandLayout->addWidget(outputStatus);commandLayout->addWidget(recordingStatus);
+        recoveryBanner=new QFrame(q);recoveryBanner->setObjectName("recordingRecoveryBanner");
+        auto *recoveryRow=new QHBoxLayout(recoveryBanner);recoveryRow->setContentsMargins(0,3,0,3);
+        recoveryLabel=new QLabel(recoveryBanner);recoveryLabel->setTextFormat(Qt::PlainText);recoveryLabel->setWordWrap(true);recoveryLabel->setStyleSheet("color:#edc378;");recoveryLabel->setMinimumWidth(0);recoveryRow->addWidget(recoveryLabel,1);
+        recoverRecording=button("Recover recording...","recoverRecording",recoveryRow,recoveryBanner);
+        QObject::connect(recoverRecording,&QPushButton::clicked,q,[this]{exportRecordingDialog(recoverRecording->property("recordingPath").toString());});
+        commandLayout->addWidget(recoveryBanner);recoveryBanner->hide();
         QObject::connect(spoutOutput, &QCheckBox::toggled, q, [this] { localOutputs.configure(spoutOutput->isChecked(), virtualCamera->isChecked(), canvasFps); });
         const auto registerCamera = [this,removeCamera](bool install) {
             virtualCamera->setEnabled(false); removeCamera->setEnabled(false);
@@ -1551,6 +1606,7 @@ struct MixerWidget::Impl {
         if (existing && type.findData(existing->kind) < 0) type.addItem(existing->kind, existing->kind);
         QLineEdit name; name.setObjectName("sourceName"); name.setPlaceholderText("Optional source name");
         QComboBox device; device.setObjectName("sourceDevice"); device.setMinimumWidth(400);
+        QPushButton refreshDevices(studioText("Refresh devices"));refreshDevices.setObjectName("refreshSourceDevices");
         QLineEdit value; value.setObjectName("sourceValue");
         QPushButton browse("Choose file / color");
         QLabel help; help.setObjectName("sourceValidation"); help.setWordWrap(true);
@@ -1565,6 +1621,7 @@ struct MixerWidget::Impl {
         browserWidth.setAccessibleName("Browser viewport width"); browserHeight.setAccessibleName("Browser viewport height");
         audioDelay.setToolTip(studioText("Delay this source's Program audio to match its picture. Headphone monitoring stays immediate."));
         form->addRow("Source type", &type); form->addRow("Name", &name); form->addRow("Device / window", &device);
+        form->addRow(&refreshDevices);
         form->addRow("URL / file / text / color", &value); form->addRow(&browse); form->addRow(&transparent); form->addRow(&colorMetadata); form->addRow(&help);
         form->addRow("Audio delay", &audioDelay);
         form->addRow("Browser width", &browserWidth); form->addRow("Browser height", &browserHeight);
@@ -1574,7 +1631,8 @@ struct MixerWidget::Impl {
             transparent.setVisible(kind == "browser" || kind == "guest" || kind == "wireless" || kind == "chat");
             colorMetadata.setVisible(!transparent.isHidden());
             form->setRowVisible(&browserWidth, !transparent.isHidden()); form->setRowVisible(&browserHeight, !transparent.isHidden());
-            if (!existing) transparent.setChecked(kind == "browser" || kind == "chat");
+            if (!existing) transparent.setChecked(kind == "chat");
+            refreshDevices.setVisible(kind=="camera" || kind=="window" || kind=="spout" || kind=="microphone");
             audioDelay.setEnabled(kind == "browser" || kind == "guest" || kind == "wireless" || kind == "window" || kind == "microphone" || kind == "desktop" || kind == "media");
             audioDelay.setValue(kind == "browser" || kind == "guest" || kind == "wireless" ? 60 : 0);
             value.clear(); value.setVisible(true); device.setVisible(true); browse.setVisible(kind == "image" || kind == "color" || kind == "media");
@@ -1582,7 +1640,9 @@ struct MixerWidget::Impl {
                 const auto devices = kind == "camera" ? core->listCameras() : (kind == "spout" ? core->listSpoutSenders() : core->listWindows());
                 for (const auto &info : devices) device.addItem(QString::fromStdString(info.name), QString::fromStdString(info.id));
                 value.setVisible(false);
-                help.setText(studioText("Select a source. Window audio is captured when supported by Windows."));
+                help.setText(kind=="camera"
+                    ? studioText(device.count()?"Select a camera. Connect another camera and use Refresh devices if needed.":"No camera found. Connect or enable a camera, then choose Refresh devices.")
+                    : studioText(device.count()?"Select a source. Window audio is captured when supported by Windows.":"No source found. Open the source application, then choose Refresh devices."));
             } else if (kind == "microphone") {
                 device.addItem(studioText("Default microphone"), "");
                 for (const auto &info : core->listAudioInputDevices()) device.addItem(QString::fromStdString(info.name), QString::fromStdString(info.id));
@@ -1590,12 +1650,15 @@ struct MixerWidget::Impl {
             } else {
                 device.setVisible(false);
                 if (kind == "desktop") { value.setVisible(false); help.setText(studioText("Captures other applications, excluding Desktop Studio, its browsers and monitoring. Avoid adding the same game's individual audio twice.")); }
-                if (!transparent.isHidden()) { value.setPlaceholderText("https://..."); help.setText(studioText("Overlay mode clears the page background automatically, keeping message and card styling. Turn it off for smooth browser video at 30 fps. Open / Invite allows interaction; Escape parks the browser.")); }
+                if (!transparent.isHidden()) { value.setPlaceholderText("https://..."); help.setText(studioText("Browser video runs at up to 30 fps. For overlays, enable Transparent overlay background (up to 15 fps). Open / Invite allows interaction; Escape parks the browser.")); }
                 if (kind == "media") help.setText(studioText("Local video or audio file. Playback uses Windows media decoders; H.264/AAC MP4 is recommended. Use Playback controls after adding it."));
                 if (kind == "image") help.setText(studioText("PNG, JPEG and other Qt-supported images. Transparent PNGs remain transparent."));
                 if (kind == "title") { value.setText(studioText("Your title")); help.setText(studioText("A full-frame title card. Resize and position it on the canvas.")); }
                 if (kind == "color") { value.setText(studioText("#24466f")); help.setText(studioText("A solid color layer.")); }
             }
+            form->setRowVisible(&device,!device.isHidden());
+            form->setRowVisible(&value,!value.isHidden());
+            form->setRowVisible(&audioDelay,audioDelay.isEnabled());
         };
         QObject::connect(&type, &QComboBox::currentIndexChanged, &dialog, populate);
         QObject::connect(&browse, &QPushButton::clicked, &dialog, [&] {
@@ -1644,6 +1707,14 @@ struct MixerWidget::Impl {
             if (existing) { if (restart) startSource(item); rebuild(); changed(); }
             else appendSource(item);
             dialog.accept();
+        });
+        QObject::connect(&refreshDevices,&QPushButton::clicked,&dialog,[&]{
+            const auto previous=device.currentData();const auto label=device.currentText();
+            const auto text=value.text();const int delay=audioDelay.value();const bool overlay=transparent.isChecked();
+            populate();value.setText(text);audioDelay.setValue(delay);transparent.setChecked(overlay);
+            const int index=device.findData(previous);
+            if (index>=0) device.setCurrentIndex(index);
+            else if (existing && previous.isValid()) {device.addItem(label,previous);device.setItemData(device.count()-1,true,Qt::UserRole+1);device.setCurrentIndex(device.count()-1);}
         });
         if (existing) { type.setCurrentIndex(type.findData(existing->kind)); type.setEnabled(false); }
         populate();
@@ -2171,6 +2242,7 @@ struct MixerWidget::Impl {
         return frame;
     }
     void render() {
+        finishRecordingRecovery();
         const auto talkText = studioText(privateTalkback || heldTalkback ? "Talking privately" : "Private talkback");
         if (talkbackButton->text() != talkText) { talkbackButton->setText(talkText); talkbackButton->setAccessibleName(talkText); }
         const auto renderTime = std::chrono::steady_clock::now();
@@ -2440,6 +2512,7 @@ struct MixerWidget::Impl {
         return true;
     }
     bool saveAs(const QString &path) {
+        if (recordingBusy()) { message("Stop recording before changing the active show. Use Save a copy while recording."); return false; }
         if (!QFileInfo(path).isAbsolute() || !path.endsWith(".mixer.json",Qt::CaseInsensitive)) { message("Use an absolute .mixer.json path."); return false; }
         auto lease = showFileAccess().reserve(path);
         if (!lease.allowed) { message("This show is open in another instance, or its folder cannot be locked."); return false; }
@@ -2450,6 +2523,7 @@ struct MixerWidget::Impl {
     void activateProject(ShowFileAccess::Lease lease) {
         showFileAccess().activate(std::move(lease));
         projectPath = showFileAccess().path();
+        recordingRecovery.load(projectPath);updateRecoveryUi();
         if (qApp->property("studioShow").toString().isEmpty()) QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").setValue("mixer/activeProject",projectPath);
     }
     QString collect(const QString &path) {

@@ -637,7 +637,6 @@ int main(int argc, char *argv[]) {
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,data+"/settings");
         QSettings::setPath(QSettings::IniFormat,QSettings::SystemScope,data+"/settings-system");
-        if (studioShow.isEmpty()) studioShow=data+"/studio.mixer.json";
     }
     // Preserve paths outside the Windows active code page. A console-subsystem
     // CRT may already have damaged argv before QApplication receives it.
@@ -1109,8 +1108,11 @@ int main(int argc, char *argv[]) {
     }
 
     // Normal GUI mode
-    auto showPath = studioShow.isEmpty()
+    const auto defaultShowPath = qEnvironmentVariable("VIDEO_MIXER_DATA_DIR").isEmpty()
         ? QDir(QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)).filePath("VideoMixer/studio.mixer.json")
+        : QDir(qEnvironmentVariable("VIDEO_MIXER_DATA_DIR")).absoluteFilePath("studio.mixer.json");
+    auto showPath = studioShow.isEmpty()
+        ? defaultShowPath
         : QFileInfo(studioShow).absoluteFilePath();
     if (studioShow.isEmpty()) {
         const auto active = QSettings(QSettings::defaultFormat(),QSettings::UserScope,"VDO.Ninja","Video Mixer").value("mixer/activeProject").toString();

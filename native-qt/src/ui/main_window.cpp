@@ -1687,6 +1687,7 @@ void MainWindow::setupUI() {
         }
         previousSourceMode_ = sourceMode;
         syncMixerCaptureControls();
+        updateOutputControls();
         selectedWindowId_.clear();
         if (windowListWidget_) {
             windowListWidget_->clearSelection();
@@ -1695,7 +1696,7 @@ void MainWindow::setupUI() {
         updateStatus(
             sourceMode == "spout"
                 ? "Select a Spout2 sender"
-                : (sourceMode == "camera"
+                : (sourceMode == "mixer" ? "Mixer ready" : sourceMode == "camera"
                     ? "Select a camera"
                     : "Select a window to capture"),
             "idle");
@@ -1821,10 +1822,6 @@ void MainWindow::setupUI() {
     sep1->setFrameShape(QFrame::HLine);
     sep1->setStyleSheet("background-color: #333;");
     layout->addWidget(sep1);
-
-    auto *heroTitle = new QLabel(studioText("Desktop Studio Live"), this);
-    heroTitle->setStyleSheet(QString("color: %1; font-size: 18px; font-weight: 700;").arg(COLOR_TEXT));
-    layout->addWidget(heroTitle);
 
     auto *heroSubTitle = heroSubtitle_ = new QLabel(studioText("Select a video source, paste a Stream ID or VDO URL, then go live."), this);
     heroSubTitle->setStyleSheet(QString("color: %1;").arg(COLOR_TEXT_DIM));
@@ -2097,7 +2094,7 @@ void MainWindow::setupUI() {
     installComboWheelGuard(audioSourceSelect_);
     advancedForm->addRow("Audio Source", audioSourceSelect_);
 
-    audioEncodingToggle_ = new QCheckBox(studioText("Audio encoding"), this);
+    audioEncodingToggle_ = new QCheckBox(studioText("Audio encoding settings"), this);
     audioEncodingToggle_->setObjectName("audioEncodingToggle");
     audioEncodingToggle_->setToolTip(studioText("Expand optional codec, bitrate and channel settings."));
     advancedForm->addRow(audioEncodingToggle_);
@@ -3906,9 +3903,10 @@ void MainWindow::updateOutputControls() {
     setFormRowVisible(advancedForm_, outputPanel_, !vdo);
     outputSummaryLabel_->setVisible(!vdo);
     outputSummaryLabel_->setText(QString::fromStdString(output::destinationLabel(outputConfigFromUi())));
-    if (heroSubtitle_) heroSubtitle_->setText(vdo
-        ? "Share a game or app window with VDO.Ninja."
-        : "Send a game or app window to your streaming server.");
+    const bool mixer=sourceModeSelect_ && sourceModeSelect_->currentData().toString()=="mixer";
+    if (heroSubtitle_) heroSubtitle_->setText(mixer
+        ? (vdo ? "Publish the Studio Program picture and mixed audio to VDO.Ninja." : "Publish the Studio Program picture and mixed audio to your streaming server.")
+        : (vdo ? "Share the selected source with VDO.Ninja." : "Send the selected source to your streaming server."));
     for (QWidget *field : std::initializer_list<QWidget *>{roomInput_, labelInput_, viewerLimitSpin_, roomModeLqCheck_,
              remoteControlCheck_, remoteControlTokenInput_, codecSelect_, alphaWorkflowCheck_})
         setFormRowVisible(advancedForm_, field, vdo);

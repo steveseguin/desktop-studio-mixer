@@ -2,6 +2,14 @@
 
 Updated 2026-11-07 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
 
+## First launch through recording recovery and live chat, 2026-11-07 UTC
+
+The newest portable is `native-qt/dist/desktop-studio-journeys-nov7/desktop-studio.exe`, SHA-256 `9984300df07ed23ba5ed165ea13253317daabf83c982c08487e20259b2236774`. [The complete journey report](studio-user-journeys-2026-11-07.md) records 138 passed application checks, retained failed harness attempts, screenshots, actual recorded-media analysis and resource measurements.
+
+Fresh launch, scene creation, recording, forced process termination, MP4 recovery and seeking passed. Anonymous Twitch and YouTube comments from confirmed live broadcasts were featured and received through VDO.Ninja in a separate packaged instance with real picture/audio. The 315-second receiver recording decoded completely. Desktop-audio recording, mute/unmute, the 77-check general UI walkthrough and the owner's saved Twitch session also passed. Live output averaged 3.96% of total CPU on a 20-thread PC; peak private memory was 1,643 MiB, so chat memory remains a concern. No physical camera or microphone was available; Meshcast, the installer and long-duration stability were not qualified by this pass.
+
+The build adds visible interrupted-recording recovery, device refresh and missing-camera guidance, smoother browser-video defaults and clearer output wording. It retains the compact toolbar and removes the output page's repeated title. Studio was left idle on the owner's preserved profile. See the linked report for exact scope and limitations; previous sections describe their own earlier builds.
+
 ## Compact workspace and scaled navigation, 2026-11-07 UTC
 
 Current development portable: `native-qt/dist/desktop-studio-compact-nov7/desktop-studio.exe`, SHA-256 `befd953a33d8b21c44c9bd5fe55117070d2c4af9172bb69fc16244fb1f9596f8`. The executable is timestamp-signed with the local Social Stream Ninja certificate; Windows trust remains `UnknownError`. Runtime files and the verified SSN pack are unchanged and hard-linked to the preceding package; executable and documentation are independent copies. The installer and ZIP were not rebuilt.
