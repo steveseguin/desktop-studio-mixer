@@ -76,9 +76,13 @@ try{
   await fs.writeFile(path.join(out,'window.json'),JSON.stringify({started,stopped,scoredUntil:stopped-15000,deleted:[...deleted],banned:[...banned]},null,2));
   await fs.writeFile(path.join(out,'captured.json'),JSON.stringify(rows,null,1));
   await fs.writeFile(path.join(out,'truth.json'),JSON.stringify(truth,null,1));
+  // Kick gifts are separate platform events, absent from ChatMessageEvent.
+  // Retain them in the ledger, but do not label them unexpected chat messages.
+  const chatRows=rows.filter(r=>r.event!=='gift');
+  const giftEventsObserved=rows.length-chatRows.length;
   const inWindow=truth.filter(t=>t.at>=started&&t.at<=stopped-15000);
   const texts=new Map();const key=(user,text)=>normal(user).toLowerCase()+'|'+normal(text);
-  for(const r of rows){const k=key(r.chatname,r.chatmessage);texts.set(k,(texts.get(k)||0)+1);}
+  for(const r of chatRows){const k=key(r.chatname,r.chatmessage);texts.set(k,(texts.get(k)||0)+1);}
   // Studio exposes emote alternative text. Decode only Kick's explicit emote
   // tokens into their names; preserve the surrounding text and punctuation.
   const plain=inWindow.filter(t=>!/\[emote:/.test(t.text||''));
@@ -88,7 +92,7 @@ try{
   // an occurrence comparison: separate equal author/text inputs each count.
   const referenceCounts=new Map(),outputCounts=new Map();
   for(const t of truth){const k=key(t.user,expectedText(t));referenceCounts.set(k,(referenceCounts.get(k)||0)+1);}
-  for(const r of rows){const k=key(r.chatname,r.chatmessage);outputCounts.set(k,(outputCounts.get(k)||0)+1);}
+  for(const r of chatRows){const k=key(r.chatname,r.chatmessage);outputCounts.set(k,(outputCounts.get(k)||0)+1);}
   let duplicateOccurrences=0,unexpectedOccurrences=0;
   for(const[k,n]of outputCounts){const expected=referenceCounts.get(k)||0;if(!expected)unexpectedOccurrences+=n;else duplicateOccurrences+=Math.max(0,n-expected);}
   let matched=0,emoteMatched=0,removedByModerators=0;const missed=[],buckets={};
@@ -107,7 +111,7 @@ try{
   const stalled=Object.values(buckets).filter(([hit,miss])=>miss>=5&&hit===0).length;
   const eligible=inWindow.length-removedByModerators;
   if(!referenceHeld||!eligible||matched!==eligible||stalled||duplicateOccurrences||unexpectedOccurrences)process.exitCode=1;
-  summary={referenceHeld,stalled,channel,viewers:info.viewers,live:info.live,seconds,comparison:'author-text-and-emote-names',firstComment:!!first,referenceTotal:inWindow.length,referencePlainText:plain.length,referenceEmoteMessages:inWindow.length-plain.length,emoteMatched,removedByModerators,matched,missing:eligible-matched,duplicateOccurrences,unexpectedOccurrences,rate:eligible?matched/eligible:null,panelKick:rows.length,status:status.channels?.map(c=>({name:c.name,status:c.status})),missed};
+  summary={referenceHeld,stalled,channel,viewers:info.viewers,live:info.live,seconds,comparison:'author-text-and-emote-names',firstComment:!!first,referenceTotal:inWindow.length,referencePlainText:plain.length,referenceEmoteMessages:inWindow.length-plain.length,emoteMatched,removedByModerators,matched,missing:eligible-matched,duplicateOccurrences,unexpectedOccurrences,giftEventsObserved,rate:eligible?matched/eligible:null,panelKick:rows.length,status:status.channels?.map(c=>({name:c.name,status:c.status})),missed};
 }catch(e){summary.error=e.message;process.exitCode=1;}
 finally{
   if(socket){socket.onclose=null;socket.close();}

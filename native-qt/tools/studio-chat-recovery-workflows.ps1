@@ -31,6 +31,9 @@ function VerifyRecovery($label,$oldBrowser,$oldIds,$clock){
 }
 try{
     Focus 'Chat accounts';SetText 'Search comments' ''
+    # Selection pauses the visible feed. Resume it before choosing a recent
+    # API-observed comment, which may still be queued behind that pause.
+    $back=try{Find 'Back to live'}catch{$null};if($back -and !$back.Current.IsOffscreen){Press 'Back to live'}
     $message=@((Api @{command='chat.messages'}).messages|Where-Object{!$_.practice -and $_.chatmessage.Length -gt 3 -and $_.chatmessage.Length -lt 100})[-1]
     if(!$message){throw 'No suitable real comment yet'}
     SetText 'Search comments' $message.chatmessage

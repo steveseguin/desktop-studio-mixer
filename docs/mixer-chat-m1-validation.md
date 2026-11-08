@@ -2,9 +2,21 @@
 
 Updated 2026-11-08 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
 
+## Chat memory reduction, 2026-11-08 UTC
+
+Latest portable: `native-qt/dist/desktop-studio-memory-software-nov8/desktop-studio.exe`, SHA-256 `f0ac7045bbee7d0e6508ce05942ff29924e52fdeaf03e1f6a4b1b9944be5de0f`. Installer: `native-qt/dist/desktop-studio-0.9.4-memory-nov8-setup.exe`. [The memory report](studio-chat-memory-2026-11-08.md) records exact artifacts, paired measurements, actual packaged workflows, saved media, screenshots and retained failures.
+
+Software rendering is requested only for chat's isolated WebView environment; browser sources and video output retain their existing rendering settings. Two simultaneous comparisons, exchanging QA profiles for the second run, reduce two-channel chat private memory from 856/919 MiB to 600/611 MiB (29.9%/33.5%). These are short runtime-specific measurements, not a leak fix or guaranteed ceiling. Three configured platforms during the longer workflow averaged about 902 MiB before planned faults.
+
+The exact package passed 111 targeted chat/support/account-navigation checks and completed fifteen minutes of recording and unlisted VDO.Ninja publication. Real Kick comments were featured in the local and received recordings. A timed independent Kick comparison matched 1,976/1,976 occurrences, including 1,301 emote-only comments; 16 native gift events were correctly separated from the ordinary-comment reference, but their live delivery is not independently verified. Worker termination, suspension and network-child failure passed 14 recovery checks while production continued.
+
+The local 27,052-frame recording and both received samples fully decode without long pulse-audio gaps. Local first/last-minute A/V offsets stay within 26 ms. The initial received sample reaches 104 ms, slightly exceeding the 100 ms target; the final sample stays within 74 ms. Whole-Studio mean CPU is 5.69% of this 20-thread host during the loaded recording workflow. A new two-hour run was not performed.
+
+Visible installation, installed chat/recording, missing/tampered-pack isolation and uninstall passed. Seven saved show/media files survived removal byte for byte. The owner's seven scenes, eight sources, four channels and saved Twitch sign-in are restored, with the new portable open and idle. Main's edits remain untouched. Fresh credential/MFA sign-in, real rollover/raid repetition, a full Internet outage, independent live-gift qualification and unqualified platforms remain outside this pass. Windows trust for the development signing certificate remains `UnknownError`.
+
 ## Chat navigation, background recording and raid isolation, 2026-11-08 UTC
 
-Latest portable: `native-qt/dist/desktop-studio-chat-final4-nov7/desktop-studio.exe`, SHA-256 `b50d2b5966d3dfa587e83d6fe5e7a4487f5bebc5454de7479fb0698018d33b98`. Installer: `native-qt/dist/desktop-studio-0.9.4-chat-final4-nov7-setup.exe`. [The chat and recording report](studio-chat-polish-2026-11-07.md) contains exact artifact hashes, retained failures, saved-media results, screenshots and limitations.
+This earlier portable: `native-qt/dist/desktop-studio-chat-final4-nov7/desktop-studio.exe`, SHA-256 `b50d2b5966d3dfa587e83d6fe5e7a4487f5bebc5454de7479fb0698018d33b98`. Installer: `native-qt/dist/desktop-studio-0.9.4-chat-final4-nov7-setup.exe`. [The chat and recording report](studio-chat-polish-2026-11-07.md) contains exact artifact hashes, retained failures, saved-media results, screenshots and limitations.
 
 Connected channels now form an accessible vertical list with platform colours, stable keyboard focus, working filters and visible remove buttons. Disconnecting the last channel releases the worker and clears stale status. The normal Studio window retains precise recording timing when minimized. A real Twitch raid exposed comments from the destination being labelled as the original channel; the latest worker now restricts navigation and incoming messages to the saved channel.
 

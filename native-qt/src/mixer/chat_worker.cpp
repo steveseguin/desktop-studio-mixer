@@ -489,7 +489,11 @@ void Host::setup(const QJsonObject &c) {
     storage={{"sync",QJsonObject{{"streamID",session},{"password",false},{"state",true}}},{"local",QJsonObject{}}};
     channels=c["channels"].toArray();practice=c["practice"].toBool();
     auto options=Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
-    options->put_AdditionalBrowserArguments(L"--disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --host-resolver-rules=\"MAP io.socialstream.ninja 0.0.0.0, MAP vdo.socialstream.ninja 0.0.0.0, MAP *.vdo.ninja 0.0.0.0, MAP vdo.ninja 0.0.0.0\"");
+    // This worker reads chat DOM and renders occasional static comment cards.
+    // Software rendering avoids a separate GPU texture/cache allocation for
+    // these hidden pages. The video compositor and browser sources use their
+    // own environments and retain hardware acceleration.
+    options->put_AdditionalBrowserArguments(L"--disable-gpu --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --host-resolver-rules=\"MAP io.socialstream.ninja 0.0.0.0, MAP vdo.socialstream.ninja 0.0.0.0, MAP *.vdo.ninja 0.0.0.0, MAP vdo.ninja 0.0.0.0\"");
     check(CreateCoreWebView2EnvironmentWithOptions(nullptr,profile.toStdWString().c_str(),options.Get(),Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>([this](HRESULT hr,ICoreWebView2Environment *e)->HRESULT {
         if(!check(hr,"environment")||!e)return S_OK;environment=e;
         open("host","https://studio-chat.invalid/host.html?session="+session);
