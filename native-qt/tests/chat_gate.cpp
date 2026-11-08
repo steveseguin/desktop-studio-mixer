@@ -92,6 +92,17 @@ private slots:
         QVERIFY(chatSignInUrl("unknown").isEmpty());
         QVERIFY(!chatSignInAllowed("unknown",QUrl("https://example.com")));
     }
+    void twitchChannelRedirects() {
+        const QUrl saved("https://www.twitch.tv/popout/lirik/chat");
+        for(const auto &url:QStringList{"https://www.twitch.tv/popout/lirik/chat?popout=", "https://www.twitch.tv/lirik/chat", "https://www.twitch.tv/embed/LIRIK/chat"})
+            QVERIFY2(chatCaptureChannelMatches(saved,QUrl(url)),qPrintable(url));
+        for(const auto &url:QStringList{"https://www.twitch.tv/popout/lirik_247/chat", "https://www.twitch.tv/lirik_247/chat", "https://www.twitch.tv/another", "https://www.twitch.tv/login", "https://twitch.tv.evil.test/popout/lirik/chat"})
+            QVERIFY2(!chatCaptureChannelMatches(saved,QUrl(url)),qPrintable(url));
+        // A second explicitly selected channel keeps its own capture scope.
+        QVERIFY(chatCaptureChannelMatches(QUrl("https://www.twitch.tv/popout/lirik_247/chat"),QUrl("https://www.twitch.tv/lirik_247/chat")));
+        // YouTube still resolves its channel URL to the next live-video chat.
+        QVERIFY(chatCaptureChannelMatches(QUrl("https://www.youtube.com/@LofiGirl/live"),QUrl("https://www.youtube.com/live_chat?v=abcdefghijk")));
+    }
     void giftStreakIsolation() {
         ChatMessageModel model;
         auto gift=[](QString id,QString channel,QString epoch,int count){return QJsonObject{{"id",id},{"channel",channel},{"capture_epoch",epoch},{"type","tiktok"},{"event","gift"},{"chatmessage",QString::number(count)},{"meta",QJsonObject{{"tiktokGiftStreakId","same-streak"},{"tiktokGiftCount",count}}}};};

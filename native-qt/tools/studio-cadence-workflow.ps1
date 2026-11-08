@@ -1,9 +1,18 @@
 # Record a continuously moving reference through the packaged application's UI.
-param([Parameter(Mandatory=$true)][string]$Exe,[Parameter(Mandatory=$true)][string]$Out,[Parameter(Mandatory=$true)][string]$ReferenceFile,[int]$Seconds=180,[switch]$Chat,[switch]$Live,[ValidateRange(0,3)][int]$BackgroundClips=0,[ValidateSet(30,60)][int]$OutputFps=30)
+param([Parameter(Mandatory=$true)][string]$Exe,[Parameter(Mandatory=$true)][string]$Out,[Parameter(Mandatory=$true)][string]$ReferenceFile,[int]$Seconds=180,[switch]$Chat,[switch]$Live,[ValidatePattern('^[a-zA-Z0-9_]+$')][string]$TwitchChannel='esl_dota2',[ValidateRange(0,3)][int]$BackgroundClips=0,[ValidateSet(30,60)][int]$OutputFps=30,[string]$ReuseProfile)
 $ErrorActionPreference='Stop'
 if(Test-Path -LiteralPath $Out){throw 'Use a fresh isolated profile'}
 New-Item -ItemType Directory $Out|Out-Null;$Out=(Resolve-Path $Out).Path;$Exe=(Resolve-Path $Exe).Path
-$control=Join-Path $Out 'control.json';$env:VIDEO_MIXER_DATA_DIR=$Out
+$dataRoot=$Out
+if($ReuseProfile){
+    # Reuse only disposable browser data to avoid another large QA cache. The
+    # show, recordings and evidence still belong to the fresh Out directory.
+    $dataRoot=(Resolve-Path -LiteralPath $ReuseProfile).Path
+    if($dataRoot -notmatch '[\\/]build[^\\/]*[\\/]'){throw 'ReuseProfile must be an isolated build-directory profile'}
+    $chatSettings=Get-Content -LiteralPath (Join-Path $dataRoot 'chat.json') -Raw|ConvertFrom-Json
+    if(@($chatSettings.channels).Count -or $chatSettings.practice){throw 'Disconnect QA channels and stop practice through the UI before reusing this profile'}
+}
+$control=Join-Path $Out 'control.json';$env:VIDEO_MIXER_DATA_DIR=$dataRoot
 $owned=Start-Process $Exe -PassThru -ArgumentList "--studio-show=$Out/show.mixer.json",'--local-control-port=0',"--local-control-discovery=$control"
 $deadline=(Get-Date).AddSeconds(30)
 do{Start-Sleep -Milliseconds 100;$owned.Refresh();$ready=try{(Get-Content $control -Raw|ConvertFrom-Json).pid -eq $owned.Id -and $owned.MainWindowHandle -ne [IntPtr]::Zero}catch{$false}}while(!$ready -and (Get-Date) -lt $deadline)
@@ -29,7 +38,7 @@ try{
     }
     Click 'Smooth playback' ([Windows.Automation.ControlType]::ListItem)
     if($Chat){
-        SetText 'Your channel link or name' 'https://www.youtube.com/@LofiGirl';Press 'Add this channel';Click '+ Add';SetText 'Your channel link or name' 'https://www.twitch.tv/esl_dota2';Press 'Add this channel'
+        SetText 'Your channel link or name' 'https://www.youtube.com/@LofiGirl';Press 'Add this channel';Click '+ Add';SetText 'Your channel link or name' ('https://www.twitch.tv/'+$TwitchChannel);Press 'Add this channel'
         Check (WaitFor {(Status).ready -and (Status).count -gt 2} 90) 'Anonymous live comments reach the panel'
         Press 'All';SelectFirst;Press 'Show on screen';Check (WaitFor {(Status).on_screen} 15) 'A real comment is featured';Press 'Keep up'
     }
@@ -43,12 +52,14 @@ try{
     $file=Join-Path $Evidence 'recording.mkv';Focus 'Record...';Click 'Record...';SetText 'File name:' $file;Click 'Save' ([Windows.Automation.ControlType]::Button)
     Check (WaitFor {(State).recording.active} 20) 'Reference recording starts'
     $begin=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+    @{startedEpoch=$begin;targetSeconds=$Seconds;file=$file;exe=$Exe;dataRoot=$dataRoot;sha256=(Get-FileHash $Exe).Hash}|ConvertTo-Json|Set-Content (Join-Path $Evidence 'run.json')
     Shot 'recording';$until=(Get-Date).AddSeconds($Seconds)
     $chatSamples=[Collections.ArrayList]::new()
     while((Get-Date) -lt $until){
         if(!(State).recording.active){throw 'Recording stopped early'}
         if($Live -and !(State).output.live){throw 'Publication stopped early'}
-        if($Chat){$chatState=Status;[void]$chatSamples.Add(@{epoch=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0;resources=$chatState.resources;count=$chatState.count;on_screen=$chatState.on_screen;timing=$chatState.timing});$chatSamples|ConvertTo-Json -Depth 8|Set-Content (Join-Path $Evidence 'chat-samples.json')}
+        if((Get-PSDrive C).Free -lt 750MB){throw 'Disk guard: less than 750 MiB remains free'}
+        if($Chat){$chatState=Status;$sample=@{epoch=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0;resources=$chatState.resources;count=$chatState.count;on_screen=$chatState.on_screen;timing=$chatState.timing};[void]$chatSamples.Add($sample);$sample|ConvertTo-Json -Depth 8 -Compress|Add-Content (Join-Path $Evidence 'chat-samples.jsonl')}
         Start-Sleep -Seconds 2
     }
     Focus 'Stop recording';Press 'Stop recording';Check (WaitFor {!(State).recording.busy -and (State).recording.status -like 'Recording saved:*'} 30) 'Reference recording finalizes'
@@ -58,6 +69,7 @@ try{
     if($Live){Focus 'STOP';Click 'STOP';Check (WaitFor {!(State).output.active} 30) 'Publication stops normally'}
 }catch{Check $false 'Cadence journey completes' $_.Exception.Message}
 finally{
+    if($Chat -and $chatSamples){$chatSamples|ConvertTo-Json -Depth 8|Set-Content (Join-Path $Evidence 'chat-samples.json')}
     'complete'|Set-Content (Join-Path $metrics 'stop')
     if((State).recording.active){Api @{command='record.stop'}|Out-Null;[void](WaitFor {!(State).recording.busy} 30)}
     if((State).output.active){Api @{command='output.stop'}|Out-Null;[void](WaitFor {!(State).output.active} 30)}

@@ -12,6 +12,7 @@ class QButtonGroup;
 class QProgressBar;
 class QAction;
 class QHBoxLayout;
+class QVBoxLayout;
 namespace versus::mixer {
 class ChatFilter;
 class ChatCard;
@@ -51,7 +52,7 @@ private:
     QPushButton *addMore_;
     bool setupOpen_ = false;
     bool syncingSelection_ = false;
-    QHBoxLayout *chips_;
+    QVBoxLayout *chips_;
     QJsonArray chipsState_;
     QString selected_, token_, waitingToken_;
     QJsonObject onAir_, requested_;

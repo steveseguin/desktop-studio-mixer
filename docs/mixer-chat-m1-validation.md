@@ -1,10 +1,22 @@
-﻿# Native chat integration: packaged validation
+# Native chat integration: packaged validation
 
-Updated 2026-11-07 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
+Updated 2026-11-08 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
+
+## Chat navigation, background recording and raid isolation, 2026-11-08 UTC
+
+Latest portable: `native-qt/dist/desktop-studio-chat-final4-nov7/desktop-studio.exe`, SHA-256 `b50d2b5966d3dfa587e83d6fe5e7a4487f5bebc5454de7479fb0698018d33b98`. Installer: `native-qt/dist/desktop-studio-0.9.4-chat-final4-nov7-setup.exe`. [The chat and recording report](studio-chat-polish-2026-11-07.md) contains exact artifact hashes, retained failures, saved-media results, screenshots and limitations.
+
+Connected channels now form an accessible vertical list with platform colours, stable keyboard focus, working filters and visible remove buttons. Disconnecting the last channel releases the worker and clears stale status. The normal Studio window retains precise recording timing when minimized. A real Twitch raid exposed comments from the destination being labelled as the original channel; the latest worker now restricts navigation and incoming messages to the saved channel.
+
+The latest package passed 222 repeated UI/chat/support/account-navigation checks. Visible same-version upgrade, installed Twitch/YouTube capture, recording, damaged-pack isolation and uninstall passed; eight saved files survived byte for byte. The owner's seven scenes, eight sources, four channels and existing Twitch authentication were restored, with the latest portable left open and idle.
+
+The preceding `f520a1e2...` package completed two hours of recording, anonymous chat and unlisted VDO.Ninja publication. Its 216,023-frame file fully decodes, has no pulse-audio gap of 1.5 seconds, keeps first/last-minute A/V offsets within 29 ms, and has ten near-repeat candidates, longest 67 ms. Mean CPU was 4.79% on this 20-thread PC; chat still averaged 1,075 MiB. Continuous receiver observations and initial/middle/final saved samples passed their stated checks; this was not a continuous two-hour receiver recording. Actual BRIO recording and crash recovery also passed on that preceding package.
+
+The latest executable adds the Twitch fix after that run: it does **not** have an exact-build two-hour soak or a second observed real raid. A pre-raid Twitch comparison matched 1,788/1,789 comments; a separate half-hour Kick comparison matched 1,390/1,390, including 619 emote-only comments. Real subscription capture and synthetic gifts were exercised; real gift capture/purchases, YouTube rollover, full Internet loss, Meshcast and the remaining platforms remain unqualified. Local certificate trust is still `UnknownError`. Earlier sections below retain their own historical artifacts and scopes.
 
 ## Received-browser picture pacing, 2026-11-07 UTC
 
-The latest qualified portable is `native-qt/dist/desktop-studio-receiver-final-nov7/desktop-studio.exe`, SHA-256 `7b9d8f7e6d22975c2b3a671e1ff1b2f755900b6abb245fb648d0c9437f4f9cba`. [The receiver pacing report](studio-receiver-pacing-2026-11-07.md) records the exact artifacts, comparisons, saved recordings, screenshots and retained experiments.
+The earlier qualified portable is `native-qt/dist/desktop-studio-receiver-final-nov7/desktop-studio.exe`, SHA-256 `7b9d8f7e6d22975c2b3a671e1ff1b2f755900b6abb245fb648d0c9437f4f9cba`. [The receiver pacing report](studio-receiver-pacing-2026-11-07.md) records the exact artifacts, comparisons, saved recordings, screenshots and retained experiments.
 
 Opaque browser sources now use a bounded picture buffer with about 50 ms of headroom and a matching persistent audio delay. Slower pages keep their own timing. A simultaneous comparison reduced near-repeat candidates from 684 to six in two minutes; baseline behavior varied considerably between runs. The final five-minute received recording has two candidates in 9,043 frames (0.022%), fully decodes, and keeps first/last-minute A/V offsets within 34 ms. Receiver CPU averages 2.31% on this 20-thread PC.
 

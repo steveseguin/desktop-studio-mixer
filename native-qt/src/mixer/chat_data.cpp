@@ -122,6 +122,14 @@ bool chatScriptMatches(const QJsonObject &entry,const QUrl &url,bool subframe) {
     for(const auto &p:entry["exclude_globs"].toArray())if(glob(p))return false;
     return matched&&!entry["js"].toArray().isEmpty();
 }
+bool chatCaptureChannelMatches(const QUrl &configured,const QUrl &candidate) {
+    const auto twitch=[](const QUrl &url){return QStringList{"twitch.tv","www.twitch.tv","m.twitch.tv"}.contains(url.host().toLower());};
+    if(!twitch(configured))return true;
+    if(!twitch(candidate))return false;
+    const auto channel=[](const QUrl &url){const auto parts=url.path().split('/',Qt::SkipEmptyParts);return parts.value(parts.value(0)=="popout"||parts.value(0)=="embed"?1:0).toLower();};
+    const auto wanted=channel(configured);
+    return !wanted.isEmpty()&&channel(candidate)==wanted;
+}
 bool chatCaptureAllowed(const QJsonObject &manifest,const QUrl &page,const QUrl &sender,bool subframe) {
     if(sender.scheme()!="https"||!sender.userInfo().isEmpty()||sender.port()!=-1)return false;
     // Only entries belonging to this capture page may authorize a child frame.

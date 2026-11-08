@@ -2,6 +2,7 @@
 #include "studio_icons.h"
 #include "versus/ui/studio_preferences.h"
 #include <QButtonGroup>
+#include <QApplication>
 #include <QProgressBar>
 #include <QScopedValueRollback>
 #include <QDialog>
@@ -26,11 +27,21 @@
 #include <QStyledItemDelegate>
 #include <QStyle>
 #include <QToolButton>
+#include <QResizeEvent>
 #include <QTextLayout>
 #include <QUuid>
 
 namespace versus::mixer {
 using ui::studioText;
+class ChannelChip : public QToolButton {
+public:
+    using QToolButton::QToolButton;
+    QString label;
+    void updateLabel() {setText(fontMetrics().elidedText(label,Qt::ElideRight,std::max(0,width()-44)));}
+    QSize minimumSizeHint() const override {return {0,32};}
+protected:
+    void resizeEvent(QResizeEvent *event) override {QToolButton::resizeEvent(event);updateLabel();}
+};
 static int wrappedText(const QString &text,const QFont &font,int width,QPainter *painter=nullptr,QPointF origin={}) {
     auto paragraphs=text;paragraphs.replace('\n',QChar::LineSeparator);
     QTextLayout layout(paragraphs,font);QTextOption option;option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);layout.setTextOption(option);
@@ -131,8 +142,11 @@ ChatPanel::ChatPanel(QWidget *parent) : QWidget(parent),engine(this) {
     connect(input_,&QLineEdit::returnPressed,add,&QPushButton::click);
     hint_=plainLabel(this);hint_->setText(studioText("Twitch, YouTube and Kick. Plain names use Twitch; @handles use YouTube. Other platforms are experimental."));setup->addWidget(hint_);
     feedControls_=new QWidget(this);auto feedControls=new QVBoxLayout(feedControls_);feedControls->setContentsMargins(0,0,0,0);feedControls->setSpacing(8);root->addWidget(feedControls_);
-    auto chipsScroll=new QScrollArea(this);chipsScroll_=chipsScroll;chipsScroll->setWidgetResizable(true);chipsScroll->setFixedHeight(52);chipsScroll->setFrameShape(QFrame::NoFrame);
-    chipsScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);auto chipsWidget=new QWidget(chipsScroll);chips_=new QHBoxLayout(chipsWidget);chipsScroll->setWidget(chipsWidget);feedControls->addWidget(chipsScroll);
+    auto chipsScroll=new QScrollArea(this);chipsScroll_=chipsScroll;chipsScroll->setWidgetResizable(true);chipsScroll->setFrameShape(QFrame::NoFrame);chipsScroll->setAccessibleName(studioText("Connected channels"));
+    chipsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);auto chipsWidget=new QWidget(chipsScroll);chips_=new QVBoxLayout(chipsWidget);chips_->setContentsMargins(0,0,0,0);chips_->setSpacing(4);chips_->setAlignment(Qt::AlignTop);chipsScroll->setWidget(chipsWidget);feedControls->addWidget(chipsScroll);
+    connect(qApp,&QApplication::focusChanged,this,[this](QWidget *,QWidget *focused){
+        if(focused&&chipsScroll_->isAncestorOf(focused))chipsScroll_->ensureWidgetVisible(focused,0,0);
+    });
     auto filters=new QHBoxLayout;feedControls->addLayout(filters);
     filter_=new ChatFilter(this);filter_->setSourceModel(&engine.model);
     for(const auto &mode:QStringList{"All","Saved","Thanks"}) {
@@ -336,12 +350,30 @@ void ChatPanel::refresh() {
     notice_->setText(notice);notice_->setVisible(!notice.isEmpty());practice_->setText(studioText(engine.settings.practice?"Stop practising":"Try it with pretend chat"));
     auto channels=state()["channels"].toArray();
     if(channels!=chipsState_) {
-        chipsState_=channels;while(auto item=chips_->takeAt(0)){delete item->widget();delete item;}
-        for(const auto &v:channels){const auto ch=v.toObject();const auto id=ch["id"].toString();const auto status=ch["status"].toString();
+        // Connection status updates must not destroy a focused channel button.
+        bool sameChannels=channels.size()==chipsState_.size();
+        for(int i=0;sameChannels&&i<channels.size();++i)sameChannels=channels[i].toObject()["id"]==chipsState_[i].toObject()["id"];
+        if(!sameChannels){while(auto item=chips_->takeAt(0)){delete item->widget();delete item;}}
+        chipsScroll_->setFixedHeight(std::min(2,int(channels.size()))*36);
+        for(int i=0;i<channels.size();++i){const auto ch=channels[i].toObject();const auto id=ch["id"].toString();const auto status=ch["status"].toString();
+            ChannelChip *chip;QToolButton *remove;
+            if(sameChannels){const auto row=chips_->itemAt(i)->widget();chip=static_cast<ChannelChip*>(row->findChild<QToolButton*>("channelFilter"));remove=row->findChild<QToolButton*>("removeChannel");}
+            else {
+                auto row=new QWidget(this);auto layout=new QHBoxLayout(row);layout->setContentsMargins(0,0,0,0);layout->setSpacing(4);
+                chip=new ChannelChip(row);chip->setObjectName("channelFilter");chip->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);chip->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Fixed);chip->setFixedHeight(32);chip->setCheckable(true);layout->addWidget(chip,1);
+                remove=new QToolButton(row);remove->setObjectName("removeChannel");remove->setText(QString::fromUtf8("×"));remove->setFixedSize(28,32);layout->addWidget(remove);chips_->addWidget(row);
+                connect(chip,&QToolButton::toggled,this,[this,id](bool on){if(on)filter_->hidden.remove(id);else filter_->hidden.insert(id);filter_->refresh();});
+                connect(remove,&QToolButton::clicked,this,[this,id]{engine.removeChannel(id);refresh();});
+                chip->setContextMenuPolicy(Qt::CustomContextMenu);connect(chip,&QWidget::customContextMenuRequested,this,[this,id,chip](QPoint p){QMenu menu;menu.addAction(studioText("Remove channel"),this,[this,id]{engine.removeChannel(id);refresh();});menu.exec(chip->mapToGlobal(p));});
+            }
             const QString indicator=status=="Reading comments"?"● ":status.contains("paused")||status.contains("sign-in")?"! ":"◌ ";
-            auto chip=new QToolButton(this);const auto label=indicator+ch["platform"].toString()+" · "+ch["name"].toString();chip->setText(chip->fontMetrics().elidedText(label,Qt::ElideRight,270));chip->setCheckable(true);chip->setChecked(!filter_->hidden.contains(id));chip->setToolTip(studioText(status.toUtf8().constData()));chip->setAccessibleName(label+". "+chip->toolTip());chips_->addWidget(chip);
-            connect(chip,&QToolButton::clicked,this,[this,id](bool on){if(on)filter_->hidden.remove(id);else filter_->hidden.insert(id);filter_->refresh();});
-            chip->setContextMenuPolicy(Qt::CustomContextMenu);connect(chip,&QWidget::customContextMenuRequested,this,[this,id,chip](QPoint p){QMenu menu;menu.addAction(studioText("Remove channel"),this,[this,id]{engine.removeChannel(id);refresh();});menu.exec(chip->mapToGlobal(p));});}
+            const auto platform=ch["platform"].toString(),label=platform+" · "+ch["name"].toString();chip->label=indicator+label;chip->updateLabel();
+            {const QSignalBlocker blocker(chip);chip->setChecked(!filter_->hidden.contains(id));}
+            const QColor accent=platform=="YouTube"?QColor("#ffb3a8"):platform=="Twitch"?QColor("#d3bcff"):QColor("#8fe8e6");chip->setIcon(studioIcon(StudioIcon::Chat,accent));
+            chip->setToolTip(label+"\n"+studioText(status.toUtf8().constData())+"\n"+studioText("Toggle this channel's comments in the list. Capture continues."));chip->setAccessibleName(label);chip->setAccessibleDescription(chip->toolTip());
+            remove->setAccessibleName(studioText("Remove channel")+": "+label);remove->setToolTip(remove->accessibleName());
+        }
+        chipsState_=channels;
     }
 }
 }

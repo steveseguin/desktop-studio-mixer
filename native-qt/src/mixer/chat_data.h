@@ -12,6 +12,7 @@ QString studioDataPath();
 bool chatUrlMatches(const QString &pattern, const QUrl &url);
 bool chatScriptMatches(const QJsonObject &entry, const QUrl &url, bool subframe = false);
 bool chatCaptureAllowed(const QJsonObject &manifest, const QUrl &page, const QUrl &sender, bool subframe);
+bool chatCaptureChannelMatches(const QUrl &configured, const QUrl &candidate);
 bool verifyChatPack(const QString &root);
 QString chatPlatformName(const QString &type);
 QString chatPageStatus(const QJsonObject &probe);

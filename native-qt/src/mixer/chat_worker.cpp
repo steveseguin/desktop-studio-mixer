@@ -338,7 +338,7 @@ void Page::receiveNative(ICoreWebView2WebMessageReceivedEventArgs *a,ICoreWebVie
     if(!messageClock.isValid()||messageClock.elapsed()>1000){messageClock.restart();messageCount=0;}
     if(++messageCount>(role=="capture"?400:2000))return;
     LPWSTR raw=nullptr;a->get_Source(&raw);const auto origin=take(raw);
-    if(role=="capture") {if(!chatCaptureAllowed(host.manifest,QUrl(url),QUrl(origin),sender!=nullptr))return;}
+    if(role=="capture") {if(!chatCaptureChannelMatches(QUrl(property("captureUrl").toString()),QUrl(origin))||!chatCaptureAllowed(host.manifest,QUrl(url),QUrl(origin),sender!=nullptr))return;}
     else if(origin!=url)return;
     a->get_WebMessageAsJson(&raw);const size_t length=raw?wcsnlen_s(raw,32769):0;
     if(length>32768){if(role=="capture"||role=="practice")++host.oversizedMessages;CoTaskMemFree(raw);return;}
@@ -390,6 +390,11 @@ void Page::configure(){
         if(role=="capture") {
             auto normalize=[](QString h){if(h.startsWith("www."))h=h.mid(4);if(h=="twitter.com")h="x.com";return h;};
             const QUrl original(property("captureUrl").toString());
+            // A raid must not silently replace a saved channel with its target.
+            if(!chatCaptureChannelMatches(original,next)){
+                if(next.path().contains("login"))host.states[channel]="This channel needs sign-in. Open Accounts to continue.";
+                a->put_Cancel(TRUE);return S_OK;
+            }
             allowed &= normalize(next.host())==normalize(original.host());
             bool path=false;for(const auto &v:host.manifest["content_scripts"].toArray())path|=chatScriptMatches(v.toObject(),next);
             // A resolver may visit its own channel or a watch page before opening chat.
@@ -547,6 +552,13 @@ void Host::tick() {
                     if(!self)return S_OK;self->probePending=false;if(FAILED(hr))return S_OK;
                     const auto outer=QJsonDocument::fromJson(("["+QString::fromWCharArray(result)+"]").toUtf8()).array();if(outer.isEmpty())return S_OK;
                     const auto value=QJsonDocument::fromJson(outer.at(0).toString().toUtf8()).object();
+                    // SPA history changes can bypass NavigationStarting. Reject
+                    // their messages above and return to the configured channel.
+                    const QUrl configured(self->property("captureUrl").toString());
+                    if(!value["url"].toString().isEmpty()&&!chatCaptureChannelMatches(configured,QUrl(value["url"].toString()))) {
+                        self->host.states[self->channel]="Comments paused. Reconnecting.";
+                        self->web->Navigate(configured.toString().toStdWString().c_str());return S_OK;
+                    }
                     const auto now=QDateTime::currentMSecsSinceEpoch();
                     const auto name=value["name"].toString().left(128);if(!name.isEmpty())self->host.names[self->channel]=name;
                     auto resolve=self->property("resolve").toString();

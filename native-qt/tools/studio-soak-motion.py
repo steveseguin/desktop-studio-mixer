@@ -19,7 +19,11 @@ parser.add_argument('--out', required=True)
 parser.add_argument('--fps', type=float, default=30)
 parser.add_argument('--threshold', type=float, default=0.25,
                     help='Mean absolute change on the 0–255 luma scale')
+parser.add_argument('--crop', nargs=4, type=int, metavar=('X', 'Y', 'WIDTH', 'HEIGHT'),
+                    help='Score an uncovered moving reference region before scaling')
 args = parser.parse_args()
+if args.crop and (min(args.crop[:2]) < 0 or min(args.crop[2:]) <= 0):
+    parser.error('Crop coordinates must be nonnegative and dimensions positive')
 out = Path(args.out)
 out.mkdir(parents=True, exist_ok=False)
 flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
@@ -27,10 +31,14 @@ width, height = 96, 54
 previous = None
 changes = []
 frames = 0
+filters = f'scale={width}:{height}'
+if args.crop:
+    x, y, region_width, region_height = args.crop
+    filters = f'crop={region_width}:{region_height}:{x}:{y},' + filters
 with (out / 'decode.log').open('wb') as log:
     process = subprocess.Popen([
         args.ffmpeg, '-hide_banner', '-nostdin', '-v', 'error', '-xerror',
-        '-i', args.file, '-map', '0:v:0', '-vf', f'scale={width}:{height}',
+        '-i', args.file, '-map', '0:v:0', '-vf', filters,
         # Keep millisecond input precision; rounding onto a 1/fps mux grid can
         # manufacture duplicate output DTS even when input PTS are increasing.
         '-fps_mode', 'passthrough', '-enc_time_base:v', 'demux', '-pix_fmt', 'gray', '-an', '-f', 'rawvideo', '-'
@@ -79,12 +87,12 @@ checks = [
     {'name': 'Moving reference has no near-static interval longer than three seconds',
      'ok': bool(changes) and motion['longestSeconds'] <= 3},
 ]
-result = {'file': args.file, 'frames': frames, 'checks': checks, 'motion': motion,
+result = {'file': args.file, 'frames': frames, 'cropXYWH': args.crop, 'checks': checks, 'motion': motion,
           'meanAbsoluteLumaChangePercentiles':
               dict(zip(['0', '1', '5', '50', '95', '100'],
                        np.percentile(changes, [0, 1, 5, 50, 95, 100]).tolist())) if changes else {},
           'thresholdSensitivity': [intervals(t) for t in [0.1, 0.25, 0.5, 1.0]]}
 (out / 'results.json').write_text(json.dumps(result, indent=2))
-print(json.dumps({'file': args.file, 'frames': frames, 'checks': checks,
+print(json.dumps({'file': args.file, 'frames': frames, 'cropXYWH': args.crop, 'checks': checks,
                   'motion': {k: v for k, v in motion.items() if k != 'episodes'}}, indent=2))
 sys.exit(1 if any(not check['ok'] for check in checks) else 0)

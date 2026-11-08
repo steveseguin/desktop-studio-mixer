@@ -44,7 +44,15 @@ ChatEngine::ChatEngine(QObject *parent) : QObject(parent), model(this), impl_(st
             QJsonObject wanted;std::deque<QJsonObject> commands;
             {std::lock_guard lock(state->mutex);wanted=state->configuration;commands.swap(state->commands);}
             const bool needed=wanted["available"].toBool() && (!wanted["channels"].toArray().isEmpty()||wanted["practice"].toBool());
-            if(!needed) {if(worker.alive())worker.stop();configured={};}
+            if(!needed) {
+                if(worker.alive())worker.stop();
+                configured={};resources={};
+                // Removing the last connection releases the worker. Its previous
+                // ready flag and memory sample must not remain as live status.
+                std::lock_guard lock(state->mutex);
+                state->health={{"ready",false}};state->messages={};
+                state->image={};state->imageToken.clear();
+            }
             else {
                 if(!worker.alive() && std::chrono::steady_clock::now()>=nextStart) {
                     nextStart=std::chrono::steady_clock::now()+std::chrono::seconds(3);

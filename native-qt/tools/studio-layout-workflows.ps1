@@ -45,7 +45,12 @@ try {
     Click 'Rename';SetText 'Scene name' $longName;Press 'OK';Shot '05-long-scene'
     Check (@(HorizontalBars).Count -eq 0) 'A long scene name does not force sideways scrolling'
     Click 'Rename';SetText 'Scene name' $oldName;Press 'OK'
+    # Select a row explicitly: Home can move the list cursor without selecting
+    # a source after another workflow cleared the selection in a reused show.
+    $sourceList=Find 'Sources in selected scene' ([Windows.Automation.ControlType]::List)
     Focus '+ Add source';Keys '+{TAB}{HOME}'
+    $sourceRow=@($sourceList.FindAll([Windows.Automation.TreeScope]::Children,[Windows.Automation.Condition]::TrueCondition))[0]
+    $sourceRow.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select()
     foreach($edge in @('Left','Top','Right','Bottom')) {
         $crop=@((Roots)[0].FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition)|Where-Object{$_.Current.AutomationId.EndsWith('.crop'+$edge)})[0]
         $crop.SetFocus();Start-Sleep -Milliseconds 200

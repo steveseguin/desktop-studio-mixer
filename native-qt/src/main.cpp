@@ -50,12 +50,13 @@
 namespace {
 
 #ifdef _WIN32
-class HeadlessStudioClock {
+class StudioCanvasClock {
 public:
-    explicit HeadlessStudioClock(bool enabled) {
+    explicit StudioCanvasClock(bool enabled) {
         if (!enabled) return;
-        // A hidden Studio still drives a real-time canvas. Windows 11 may
-        // ignore its timer requests because no window is visible/audible.
+        // The canvas remains live when Studio is minimized, covered by another
+        // window, or started headless. Windows 11 may otherwise ignore its
+        // timer requests because no window is visible/audible.
         // Keep the 30/60 fps compositor clock precise without raising priority
         // or overriding the system's CPU execution-speed policy.
         precise_ = timeBeginPeriod(1) == TIMERR_NOERROR;
@@ -66,11 +67,11 @@ public:
                                                    &power, sizeof(power)) != FALSE;
         // Older Windows versions may not support this policy; the ordinary
         // timer request still applies there.
-        spdlog::info("[Studio] Headless clock: precise={}, occlusion policy={}", precise_, honored);
+        spdlog::info("[Studio] Canvas clock: precise={}, occlusion policy={}", precise_, honored);
     }
-    ~HeadlessStudioClock() { if (precise_) timeEndPeriod(1); }
-    HeadlessStudioClock(const HeadlessStudioClock &) = delete;
-    HeadlessStudioClock &operator=(const HeadlessStudioClock &) = delete;
+    ~StudioCanvasClock() { if (precise_) timeEndPeriod(1); }
+    StudioCanvasClock(const StudioCanvasClock &) = delete;
+    StudioCanvasClock &operator=(const StudioCanvasClock &) = delete;
 private:
     bool precise_ = false;
 };
@@ -655,7 +656,7 @@ int main(int argc, char *argv[]) {
     }
     if (headless && studioHeadless) { spdlog::error("Choose --headless or --studio-headless, not both"); return 2; }
 #ifdef _WIN32
-    const HeadlessStudioClock headlessClock(studioHeadless);
+    const StudioCanvasClock canvasClock(!headless);
 #endif
     app.setProperty("studioHeadless", studioHeadless);
     app.setProperty("studioShow", studioShow);

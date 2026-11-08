@@ -1,5 +1,5 @@
 # Receive a synthetic VDO.Ninja sender through the packaged application's browser source.
-param([Parameter(Mandatory=$true)][string]$Exe,[Parameter(Mandatory=$true)][string]$Out,[Parameter(Mandatory=$true)][string]$DestinationFile,[int]$Seconds=120,[ValidateSet(30,60)][int]$OutputFps=30,[switch]$ExerciseRecovery,[switch]$ExercisePlayback)
+param([Parameter(Mandatory=$true)][string]$Exe,[Parameter(Mandatory=$true)][string]$Out,[Parameter(Mandatory=$true)][string]$DestinationFile,[int]$Seconds=120,[ValidateSet(30,60)][int]$OutputFps=30,[switch]$ExerciseRecovery,[switch]$ExercisePlayback,[string]$ObserveUntilRunFile)
 $ErrorActionPreference='Stop'
 if(Test-Path -LiteralPath $Out){throw 'Use a fresh isolated receiver profile'}
 New-Item -ItemType Directory $Out|Out-Null;$Out=(Resolve-Path $Out).Path;$Exe=(Resolve-Path $Exe).Path
@@ -29,6 +29,7 @@ try{
     $transparent=Find 'Transparent overlay background (up to 15 fps)';Check ($transparent.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern).Current.ToggleState -eq [Windows.Automation.ToggleState]::Off) 'Browser video starts in opaque video mode'
     Press 'OK';Check (WaitFor {@((State).sources|Where-Object{$_.kind -eq 'browser' -and $_.frames -gt 60}).Count -eq 1} 45) 'The independent receiver renders the viewing page'
     Check (WaitFor {@((State).sources|Where-Object{$_.kind -eq 'browser' -and $_.has_audio -and $_.peak -gt .01}).Count -eq 1} 45) 'Received video has audible pulse audio'
+    @{startedEpoch=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0}|ConvertTo-Json|Set-Content (Join-Path $Evidence 'monitor-run.json')
     Start-Sleep -Seconds 5;Shot 'receiver-workspace';ProgramShot 'received-program'
     $file=Join-Path $Evidence 'received-vdo.mkv';Focus 'Record...';Click 'Record...';SetText 'File name:' $file;Click 'Save' ([Windows.Automation.ControlType]::Button)
     Check (WaitFor {(State).recording.active} 20) 'Receiver recording starts'
@@ -62,6 +63,24 @@ try{
     Focus 'Stop recording';Press 'Stop recording';Check (WaitFor {!(State).recording.busy -and (State).recording.status -like 'Recording saved:*'} 30) 'Received recording finalizes'
     @{file=$file;startedEpoch=$begin;finishedEpoch=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0;events=$events;recording=(State).recording;sources=(State).sources}|ConvertTo-Json -Depth 7|Set-Content (Join-Path $Evidence 'capture.json')
     Shot 'receiver-saved';ProgramShot 'received-final'
+    if($ObserveUntilRunFile){
+        # Keep the same receiver and one-second sampler connected throughout
+        # the sender's long run, saving another five-minute sample at its end.
+        $senderRun=Get-Content -LiteralPath $ObserveUntilRunFile -Raw|ConvertFrom-Json
+        $senderEnd=$senderRun.startedEpoch+$senderRun.targetSeconds
+        if($senderEnd-[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0 -lt 330){throw 'Not enough sender time remains for the final received sample'}
+        while([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0 -lt $senderEnd-300){
+            if($owned.HasExited){throw 'The monitored receiver exited early'}
+            Start-Sleep -Seconds 2
+        }
+        $file=Join-Path $Evidence 'received-end.mkv';Focus 'Record...';Click 'Record...';SetText 'File name:' $file;Click 'Save' ([Windows.Automation.ControlType]::Button)
+        Check (WaitFor {(State).recording.active} 20) 'The final received sample starts recording'
+        $begin=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+        while([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0 -lt $senderEnd-10){if(!(State).recording.active){throw 'The final received sample stopped early'};Start-Sleep -Seconds 2}
+        Focus 'Stop recording';Press 'Stop recording';Check (WaitFor {!(State).recording.busy -and (State).recording.status -like 'Recording saved:*'} 30) 'The final received sample finalizes'
+        @{file=$file;startedEpoch=$begin;finishedEpoch=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0;recording=(State).recording;sources=(State).sources}|ConvertTo-Json -Depth 7|Set-Content (Join-Path $Evidence 'capture-end.json')
+        Shot 'receiver-end-saved';ProgramShot 'received-end-program'
+    }
 }catch{Check $false 'Receiver journey completes' $_.Exception.Message}
 finally{
     'complete'|Set-Content (Join-Path $metrics 'stop')

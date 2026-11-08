@@ -53,6 +53,17 @@ summary = {'file': args.file, 'durationSeconds': duration, 'expectedSeconds': ar
            'longestUnchangedFrames': longest, 'longestUnchangedSeconds': longest / args.expected_fps,
            'identicalAdjacentFrames': repeated, 'identicalAdjacentPercent': 100 * repeated / len(hashes) if hashes else None,
            'decodeExit': result.returncode, 'checks': checks}
+# This harness uses a pulse every second. Missing a complete pulse must not be
+# hidden by checking sync only in the first and last minute. FFmpeg streams the
+# scan without loading hours of decoded audio into Python memory.
+audio_scan = ffmpeg(['-v', 'info', '-i', args.file, '-map', '0:a:0',
+                     '-af', 'silencedetect=noise=-50dB:d=1.5', '-vn', '-f', 'null', '-'])
+audio_log = audio_scan.stderr.decode(errors='replace')
+(out / 'audio-continuity.log').write_text(audio_log)
+silence_starts = [float(value) for value in re.findall(r'silence_start:\s*([-\d.]+)', audio_log)]
+summary['audioSilenceStartsOver1_5Seconds'] = silence_starts
+checks.append({'name': 'Pulse audio has no silence interval of 1.5 seconds anywhere in the saved file',
+               'ok': audio_scan.returncode == 0 and not silence_starts})
 # Stream-copy packet timestamps keep container precision and expose gaps across
 # the entire file, independently of the decoded motion hashes.
 packet_file = out / 'video-packets.crc'
