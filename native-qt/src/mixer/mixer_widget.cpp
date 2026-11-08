@@ -945,6 +945,7 @@ struct MixerWidget::Impl {
         exportShow->setAccessibleName(studioText("Save a copy")); exportShow->setPopupMode(QToolButton::MenuButtonPopup); transport->addWidget(exportShow);
         auto *projectMenu = new QMenu(exportShow); exportShow->setMenu(projectMenu);
         projectMenu->addAction(studioText("Save As active show..."),q,[this] {
+            if (recordingBusy()) { message("Stop recording before changing the active show. Use Save a copy while recording."); return; }
             const auto path = QFileDialog::getSaveFileName(q,"Save As active show",projectPath,"Mixer show (*.mixer.json)");
             if (!path.isEmpty()) saveAs(path.endsWith(".mixer.json",Qt::CaseInsensitive) ? path : path+".mixer.json");
         });

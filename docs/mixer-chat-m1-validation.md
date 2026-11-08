@@ -1,10 +1,22 @@
 # Native chat integration: packaged validation
 
-Updated 2026-11-08 UTC. The latest work is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections identify results from `C:\Users\Steve\code\video-mixer-chat` and their original builds. Main's application edits were not changed. Results distinguish packaged application workflows from code/build gates.
+Updated 2026-11-08. The latest qualification is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections describe their own original builds. Results distinguish packaged application workflows from code/build gates.
+
+## Chat reconnect, real gifts and recording dialogs, 2026-11-08
+
+Latest portable: `native-qt/dist/desktop-studio-live-dialogs-nov8/desktop-studio.exe`, SHA-256 `992325d0f51c9c419d9daffe1dfb9dbe3784bf8c15fa76c76b03b90cc8048c15`. Installer: `native-qt/dist/desktop-studio-0.9.4-live-dialogs-nov8-setup.exe`. [The qualification report](studio-chat-qualification-2026-11-08.md) identifies the exact artifacts, completed workflows, retained failures, saved-output measurements and repository handoff.
+
+Closing a chat capture now retires its tab in Social Stream's engine, fixing silent YouTube delivery failure after remove/re-add or sign-out. Saving a different active show is rejected before opening a chooser during recording. Windows file choosers now use Qt's timer-friendly dialogs. An earlier intermittent four-second picture stall did not reproduce consistently on the old executable; its root cause remains unresolved.
+
+The latest portable passed the 77-check general UI journey, repeated YouTube reconnect and account navigation, recording/crash recovery, recovered-video playback, and file browsing during recording with and without streaming. Its fifteen-minute local recording and thirteen-and-a-half-minute continuous VDO.Ninja receiver recording fully decode, with first/last-minute A/V maxima of 39/38 ms locally and 69/70 ms received. A real 10-KICK gift matched the independent public reference and is visible in both saved recordings. No purchase or public chat post was made.
+
+The latest five-minute ordinary Kick comparison matched 1,143/1,143 comments, including 378 emote-bearing comments. Earlier losses remain unexplained. Installed Twitch comparisons matched every eligible occurrence within fifteen seconds, but both failed the five-second receipt target. The preceding `f0ac7045...` executable completed a two-hour local recording and continuous 118-minute received recording; both fully decode without long audio gaps. Its chat memory still peaked at 2,061 MiB. The final executable has its separate fifteen-minute qualification, not an exact-build two-hour soak.
+
+Visible same-version upgrade, installed Twitch/YouTube capture, recording, damaged-pack isolation and uninstall passed. Thirteen saved files survived uninstall byte for byte, and the owner's seven scenes, eight sources, four channels and existing Twitch authentication were restored in the final portable, idle. Fresh credential/MFA sign-in, controlled real YouTube rollover and unqualified platforms remain open; see the report for exact artifact boundaries, retained failures and the local merge handoff.
 
 ## Chat memory reduction, 2026-11-08 UTC
 
-Latest portable: `native-qt/dist/desktop-studio-memory-software-nov8/desktop-studio.exe`, SHA-256 `f0ac7045bbee7d0e6508ce05942ff29924e52fdeaf03e1f6a4b1b9944be5de0f`. Installer: `native-qt/dist/desktop-studio-0.9.4-memory-nov8-setup.exe`. [The memory report](studio-chat-memory-2026-11-08.md) records exact artifacts, paired measurements, actual packaged workflows, saved media, screenshots and retained failures.
+This earlier portable: `native-qt/dist/desktop-studio-memory-software-nov8/desktop-studio.exe`, SHA-256 `f0ac7045bbee7d0e6508ce05942ff29924e52fdeaf03e1f6a4b1b9944be5de0f`. Installer: `native-qt/dist/desktop-studio-0.9.4-memory-nov8-setup.exe`. [The memory report](studio-chat-memory-2026-11-08.md) records exact artifacts, paired measurements, actual packaged workflows, saved media, screenshots and retained failures.
 
 Software rendering is requested only for chat's isolated WebView environment; browser sources and video output retain their existing rendering settings. Two simultaneous comparisons, exchanging QA profiles for the second run, reduce two-channel chat private memory from 856/919 MiB to 600/611 MiB (29.9%/33.5%). These are short runtime-specific measurements, not a leak fix or guaranteed ceiling. Three configured platforms during the longer workflow averaged about 902 MiB before planned faults.
 

@@ -1,5 +1,5 @@
 # Receive a synthetic VDO.Ninja sender through the packaged application's browser source.
-param([Parameter(Mandatory=$true)][string]$Exe,[Parameter(Mandatory=$true)][string]$Out,[Parameter(Mandatory=$true)][string]$DestinationFile,[int]$Seconds=120,[ValidateSet(30,60)][int]$OutputFps=30,[switch]$ExerciseRecovery,[switch]$ExercisePlayback,[string]$ObserveUntilRunFile)
+param([Parameter(Mandatory=$true)][string]$Exe,[Parameter(Mandatory=$true)][string]$Out,[Parameter(Mandatory=$true)][string]$DestinationFile,[int]$Seconds=120,[ValidateSet(30,60)][int]$OutputFps=30,[switch]$ExerciseRecovery,[switch]$ExercisePlayback,[string]$ObserveUntilRunFile,[ValidateRange(-1,500)][int]$AdjustAudioDelayMs=-1)
 $ErrorActionPreference='Stop'
 if(Test-Path -LiteralPath $Out){throw 'Use a fresh isolated receiver profile'}
 New-Item -ItemType Directory $Out|Out-Null;$Out=(Resolve-Path $Out).Path;$Exe=(Resolve-Path $Exe).Path
@@ -35,6 +35,22 @@ try{
     Check (WaitFor {(State).recording.active} 20) 'Receiver recording starts'
     $begin=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0;$until=(Get-Date).AddSeconds($Seconds)
     while((Get-Date) -lt $until){if(!(State).recording.active){throw 'Receiver recording stopped early'};Start-Sleep -Seconds 2}
+    if($AdjustAudioDelayMs -ge 0){
+        $before=BrowserState;$workerBefore=(BrowserWorker).ProcessId
+        Focus 'Edit source';Click 'Edit source'
+        # The form label shares the spin box's accessible name. Focus the
+        # keyboard-editable control instead of attempting to focus its label.
+        $delayControls=@(foreach($root in Roots){$root.FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty,'Audio delay'))})
+        $delayControl=$delayControls|Where-Object{$_.Current.IsKeyboardFocusable -and !$_.Current.IsOffscreen}|Select-Object -First 1
+        if(!$delayControl){throw 'The audio delay editor is not keyboard accessible'}
+        $delayControl.SetFocus();Keys '^a';Keys ([string]$AdjustAudioDelayMs);Press 'OK'
+        $events.audioDelayChangedEpoch=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()/1000.0
+        $events.audioDelayBeforeMs=$before.audioDelayMs;$events.audioDelayAfterMs=$AdjustAudioDelayMs
+        Check ((BrowserState).audioDelayMs -eq $AdjustAudioDelayMs) 'The visible source editor applies the requested audio delay'
+        Check ((BrowserWorker).ProcessId -eq $workerBefore -and (BrowserState).id -eq $before.id) 'Adjusting audio delay preserves the connected browser and source identity'
+        Check ((State).recording.active) 'Adjusting audio delay preserves recording'
+        Start-Sleep -Seconds 35;Shot 'audio-delay-adjusted';ProgramShot 'adjusted-picture'
+    }
     if($ExercisePlayback){
         $studioApp=$app;Focus 'Open / Invite';Press 'Open / Invite';$worker=BrowserWorker;$app=Get-Process -Id $worker.ProcessId
         Check (WaitFor {try{return !(Find 'Pause video' ([Windows.Automation.ControlType]::Button)).Current.IsOffscreen}catch{return $false}} 15) 'The browser source exposes its real playback controls'

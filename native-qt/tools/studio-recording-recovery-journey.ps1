@@ -11,9 +11,14 @@ try{
     $normal=Join-Path $Evidence 'normal.mkv';StartRecording $normal;Phase 'recording-local';Shot 'recording'
     $activeShow=(State).project_path;$save=(Find 'Save a copy').Current.BoundingRectangle
     [void][StudioUI]::SetCursorPos([int]($save.Right-6),[int]($save.Y+$save.Height/2));[StudioUI]::mouse_event(2,0,0,0,[UIntPtr]::Zero);[StudioUI]::mouse_event(4,0,0,0,[UIntPtr]::Zero);Start-Sleep -Milliseconds 250
-    Click 'Save As active show...' ([Windows.Automation.ControlType]::MenuItem);SetText 'File name:' (Join-Path $Evidence 'switch-during-recording.mixer.json');Click 'Save' ([Windows.Automation.ControlType]::Button)
+    Click 'Save As active show...' ([Windows.Automation.ControlType]::MenuItem)
     Check ((State).project_path -eq $activeShow -and (State).recording.active) 'Changing the active show cannot detach a running recording from its recovery journal'
     Check (!(Find 'Stop recording before changing the active show. Use Save a copy while recording.').Current.IsOffscreen) 'The active-show guard explains the available Save a copy route'
+    $fileDialog=try{Find 'File name:' ([Windows.Automation.ControlType]::Edit)}catch{$null}
+    Check (!$fileDialog) 'Changing the active show is rejected before opening a file dialog'
+    Click 'Save a copy';Check (WaitFor {try{return !(Find 'File name:' ([Windows.Automation.ControlType]::Edit)).Current.IsOffscreen}catch{return $false}} 10) 'Save a copy remains available while recording'
+    Start-Sleep -Seconds 6;Shot 'copy-dialog-during-recording';Click 'Cancel' ([Windows.Automation.ControlType]::Button)
+    Check ((State).recording.active -and (State).project_path -eq $activeShow) 'Cancelling the show-copy dialog preserves the recording and active show'
     Start-Sleep -Seconds 20
     Press 'Stop recording';Check (WaitFor {!(State).recording.busy} 30) 'A normal recording stops and finalizes';Phase 'media-preview';Start-Sleep -Seconds 2
     $crashed=Join-Path $Evidence 'interrupted.mkv';StartRecording $crashed;Phase 'recording-before-crash';Start-Sleep -Seconds 22;Shot 'before-forced-termination'

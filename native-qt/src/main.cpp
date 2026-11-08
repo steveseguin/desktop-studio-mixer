@@ -631,6 +631,11 @@ int main(int argc, char *argv[]) {
         spdlog::info("[Main] Camera audio is off unless explicitly selected");
     }
 
+#ifdef _WIN32
+    // Native Windows file dialogs suspend Qt timers while open. The canvas
+    // must keep advancing when a live operator browses files or saves a copy.
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+#endif
     QApplication app(argc, argv);
     if (!qEnvironmentVariable("VIDEO_MIXER_DATA_DIR").isEmpty()) {
         const auto data = QDir(qEnvironmentVariable("VIDEO_MIXER_DATA_DIR")).absolutePath();

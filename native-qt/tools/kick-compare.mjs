@@ -32,7 +32,7 @@ async function publicJson(url){
  return response.json();
 }
 const until=async(fn,ms=60000)=>{const s=Date.now();while(Date.now()-s<ms){const v=await fn().catch(()=>null);if(v)return v;await delay(1000);}return null;};
-let summary={},socket;
+let summary={},socket,heartbeat;
 try{
   let channel=flag('channel');
   if(!channel){
@@ -50,16 +50,21 @@ try{
   console.log('channel',channel,JSON.stringify(info));
   const truth=[],ids=new Set(),deleted=new Map(),banned=new Map();let subscribed=false,socketLost=false;
   socket=new WebSocket('wss://ws-us2.pusher.com/app/34bf7a0ff419a2a775b9?protocol=7&client=js&version=8.4.0&flash=false');
-  socket.onmessage=e=>{
+  const topic=`chatrooms.${info.id}.v2`;
+  socket.onmessage=e=>{try{
     const m=JSON.parse(e.data);
-    if(m.event==='pusher:connection_established')for(const name of [`chatrooms.${info.id}.v2`,`chatrooms.${info.id}`,`chatroom_${info.id}`])socket.send(JSON.stringify({event:'pusher:subscribe',data:{channel:name,auth:''}}));
-    if(m.event==='pusher_internal:subscription_succeeded')subscribed=true;
+    if(m.event==='pusher:connection_established')socket.send(JSON.stringify({event:'pusher:subscribe',data:{channel:topic,auth:''}}));
+    if(m.event==='pusher:ping')socket.send(JSON.stringify({event:'pusher:pong',data:{}}));
+    if(m.event==='pusher:error')socketLost=true;
+    if(m.event==='pusher_internal:subscription_succeeded'&&m.channel===topic)subscribed=true;
+    if(m.channel!==topic)return;
     if(/ChatMessageEvent/.test(m.event)){const d=JSON.parse(m.data);if(ids.has(d.id))return;ids.add(d.id);truth.push({at:Date.now(),id:d.id,user:d.sender?.username,text:d.content,badges:d.sender?.identity?.badges?.map(b=>b.type)});}
     if(/MessageDeletedEvent/.test(m.event))deleted.set(JSON.parse(m.data).message?.id,Date.now());
     if(/UserBannedEvent/.test(m.event))banned.set(JSON.parse(m.data).user?.username,Date.now());
-  };
+  }catch{socketLost=true;}};
   socket.onclose=()=>{socketLost=true;};
   socket.onerror=()=>{socketLost=true;};
+  heartbeat=setInterval(()=>{if(socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify({event:'pusher:ping',data:{}}));},25000);
   if(!await until(async()=>subscribed,15000))throw Error('Kick reference did not subscribe');
   const first=await until(async()=>(await raw({command:'chat.messages'})).messages.some(m=>m.channel===added.channel.id),60000);
   // The panel keeps only its newest comments, so gather them during the run, and score only those that arrived during it.
@@ -73,47 +78,58 @@ try{
   socket.onclose=null;socket.close();
   const stopped=Date.now();
   const rows=[...seen.values()].filter(r=>!initialIds.has(r.id));
-  await fs.writeFile(path.join(out,'window.json'),JSON.stringify({started,stopped,scoredUntil:stopped-15000,deleted:[...deleted],banned:[...banned]},null,2));
+  await fs.writeFile(path.join(out,'window.json'),JSON.stringify({started,stopped,scoredFrom:started+5000,scoredUntil:stopped-15000,deleted:[...deleted],banned:[...banned]},null,2));
   await fs.writeFile(path.join(out,'captured.json'),JSON.stringify(rows,null,1));
   await fs.writeFile(path.join(out,'truth.json'),JSON.stringify(truth,null,1));
   // Kick gifts are separate platform events, absent from ChatMessageEvent.
   // Retain them in the ledger, but do not label them unexpected chat messages.
   const chatRows=rows.filter(r=>r.event!=='gift');
   const giftEventsObserved=rows.length-chatRows.length;
-  const inWindow=truth.filter(t=>t.at>=started&&t.at<=stopped-15000);
-  const texts=new Map();const key=(user,text)=>normal(user).toLowerCase()+'|'+normal(text);
-  for(const r of chatRows){const k=key(r.chatname,r.chatmessage);texts.set(k,(texts.get(k)||0)+1);}
+  const inWindow=truth.filter(t=>t.at>=started+5000&&t.at<=stopped-15000);
+  const key=(user,text)=>JSON.stringify([normal(user).toLowerCase(),normal(text)]);
   // Studio exposes emote alternative text. Decode only Kick's explicit emote
   // tokens into their names; preserve the surrounding text and punctuation.
   const plain=inWindow.filter(t=>!/\[emote:/.test(t.text||''));
   const expectedText=t=>String(t.text??'').replace(/\[emote:\d+:([^\]]+)\]/g,(_,name)=>name);
-  // Use the full independently observed interval for surplus detection so the
-  // unscored warmup/drain messages cannot be mistaken for duplicates. This is
-  // an occurrence comparison: separate equal author/text inputs each count.
-  const referenceCounts=new Map(),outputCounts=new Map();
-  for(const t of truth){const k=key(t.user,expectedText(t));referenceCounts.set(k,(referenceCounts.get(k)||0)+1);}
-  for(const r of chatRows){const k=key(r.chatname,r.chatmessage);outputCounts.set(k,(outputCounts.get(k)||0)+1);}
-  let duplicateOccurrences=0,unexpectedOccurrences=0;
-  for(const[k,n]of outputCounts){const expected=referenceCounts.get(k)||0;if(!expected)unexpectedOccurrences+=n;else duplicateOccurrences+=Math.max(0,n-expected);}
+  // Match each occurrence once, within five seconds of its independent receipt.
+  // Equal text later in the run must not conceal an earlier dropped message.
+  // Include warmup/drain inputs in matching, but score only the central window.
+  const referenceKeys=new Set(),available=new Map(),matchedIds=new Set(),matchedRows=new Set();
+  for(const r of chatRows){const k=key(r.chatname,r.chatmessage);if(!available.has(k))available.set(k,[]);available.get(k).push(r);}
+  const delays=[];let lateOccurrences=0;
+  for(const tolerance of [5000,15000])for(const t of truth){
+    const k=key(t.user,expectedText(t));referenceKeys.add(k);if(matchedIds.has(t.id))continue;
+    const candidates=available.get(k)||[];
+    const index=candidates.findIndex(r=>Math.abs(r.seenMs-t.at)<=tolerance);
+    if(index>=0){const[r]=candidates.splice(index,1);matchedIds.add(t.id);matchedRows.add(r.id);if(t.at>=started+5000&&t.at<=stopped-15000){delays.push(r.seenMs-t.at);if(tolerance>5000)lateOccurrences++;}}
+  }
+  // An unmatched copy of known text may be a duplicate or delivery delayed by
+  // more than the observation allowance. Do not mislabel late input as a duplicate.
+  let unmatchedKnownOccurrences=0,unexpectedOccurrences=0;
+  for(const r of chatRows){
+    if(matchedRows.has(r.id)||r.seenMs<started+5000||r.seenMs>stopped-15000)continue;
+    if(referenceKeys.has(key(r.chatname,r.chatmessage)))unmatchedKnownOccurrences++;else unexpectedOccurrences++;
+  }
   let matched=0,emoteMatched=0,removedByModerators=0;const missed=[],buckets={};
   // Moderators can remove a comment before the page shows it. Those are correct omissions, and are counted separately.
   const soonAfter=(at,t)=>at>=t.at&&at-t.at<=5000;
   const removed=t=>soonAfter(deleted.get(t.id),t)||soonAfter(banned.get(t.user),t);
   for(const t of inWindow){
-    const k=key(t.user,expectedText(t)),hit=texts.get(k)>0,b=Math.floor((t.at-started)/30000);
+    const hit=matchedIds.has(t.id),b=Math.floor((t.at-started)/30000);
     if(!hit&&removed(t)){removedByModerators++;continue;}
     (buckets[b]??=[0,0])[hit?0:1]++;
-    if(hit){matched++;if(/\[emote:/.test(t.text||''))emoteMatched++;texts.set(k,texts.get(k)-1);}else if(missed.length<8)missed.push(t.user+': '+String(t.text).slice(0,120));
+    if(hit){matched++;if(/\[emote:/.test(t.text||''))emoteMatched++;}else if(missed.length<8)missed.push(t.user+': '+String(t.text).slice(0,120));
   }
   console.log('30s buckets hit/miss',Object.values(buckets).map(b=>b.join('/')).join(' '));
   const status=await raw({command:'chat.status'});
   // A reference with no matches in any 30 seconds means capture stopped, whatever the average says.
   const stalled=Object.values(buckets).filter(([hit,miss])=>miss>=5&&hit===0).length;
   const eligible=inWindow.length-removedByModerators;
-  if(!referenceHeld||!eligible||matched!==eligible||stalled||duplicateOccurrences||unexpectedOccurrences)process.exitCode=1;
-  summary={referenceHeld,stalled,channel,viewers:info.viewers,live:info.live,seconds,comparison:'author-text-and-emote-names',firstComment:!!first,referenceTotal:inWindow.length,referencePlainText:plain.length,referenceEmoteMessages:inWindow.length-plain.length,emoteMatched,removedByModerators,matched,missing:eligible-matched,duplicateOccurrences,unexpectedOccurrences,giftEventsObserved,rate:eligible?matched/eligible:null,panelKick:rows.length,status:status.channels?.map(c=>({name:c.name,status:c.status})),missed};
+  if(!referenceHeld||!eligible||matched!==eligible||lateOccurrences||stalled||unmatchedKnownOccurrences||unexpectedOccurrences)process.exitCode=1;
+  summary={referenceHeld,stalled,channel,viewers:info.viewers,live:info.live,seconds,scoredSeconds:(stopped-started-20000)/1000,comparison:'author-text-and-emote-occurrences; 5s target, 15s late allowance',maxAbsReceiptDifferenceMs:delays.length?delays.reduce((max,value)=>Math.max(max,Math.abs(value)),0):null,firstComment:!!first,referenceTotal:inWindow.length,referencePlainText:plain.length,referenceEmoteMessages:inWindow.length-plain.length,emoteMatched,removedByModerators,matched,lateOccurrences,missing:eligible-matched,unmatchedKnownOccurrences,unexpectedOccurrences,giftEventsObserved,rate:eligible?matched/eligible:null,panelKick:rows.length,status:status.channels?.map(c=>({name:c.name,status:c.status})),missed};
 }catch(e){summary.error=e.message;process.exitCode=1;}
 finally{
+  clearInterval(heartbeat);
   if(socket){socket.onclose=null;socket.close();}
   console.log('SUMMARY',JSON.stringify(summary));
   await fs.writeFile(path.join(out,'summary.json'),JSON.stringify(summary,null,1));

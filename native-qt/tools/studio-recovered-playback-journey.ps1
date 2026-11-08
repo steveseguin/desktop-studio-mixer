@@ -4,7 +4,7 @@ $ErrorActionPreference='Stop'
 . "$PSScriptRoot/studio-ui-workflows.ps1" -SessionFile "$SessionFile" -FunctionsOnly -LeaveOpen
 $record=Get-Content (Join-Path $Out 'latest-record-crash.json') -Raw|ConvertFrom-Json
 $files=Get-Content (Join-Path $record.evidence 'recordings.json') -Raw|ConvertFrom-Json
-$Evidence=Join-Path $Out 'recovered-playback';New-Item -ItemType Directory $Evidence|Out-Null
+$Evidence=Join-Path $Out 'recovered-playback';if(Test-Path $Evidence){$Evidence+='-'+(Get-Date -Format yyyyMMdd-HHmmss)};New-Item -ItemType Directory $Evidence|Out-Null
 try{
     Focus 'Add scene';Click 'Add scene';SetText 'Scene name' 'Recovered video';Press 'OK'
     Click '+ Add source';ChooseSourceType 'Video / audio file';SetText 'Name' 'Recovered recording';SetText 'URL / file / text / color' $files.recovered;Press 'OK'

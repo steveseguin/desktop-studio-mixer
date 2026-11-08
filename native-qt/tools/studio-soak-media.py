@@ -96,8 +96,9 @@ checks.extend([
     {'name': 'Video packet cadence matches the expected frame rate',
      'ok': abs(effective_fps - args.expected_fps) < .05},
 ])
+clips = []
+expected_clips = 2 if duration > 120 else 1
 if result.returncode == 0 and duration > 120:
-    clips = []
     for label, start in [('first-minute', 0), ('last-minute', duration - 60)]:
         clip = out / (label + '.mkv')
         cut = ffmpeg(['-v', 'error', '-ss', str(start), '-i', args.file, '-t', '60',
@@ -106,20 +107,24 @@ if result.returncode == 0 and duration > 120:
             checks.append({'name': label + ' A/V sample extracts successfully', 'ok': False})
         else:
             clips.append(str(clip))
-    if clips:
-        analysis = subprocess.run([sys.executable, str(Path(__file__).with_name('studio-journey-media.py')),
-                                   '--ffmpeg', args.ffmpeg, *clips], capture_output=True,
-                                  creationflags=flags, timeout=300)
-        (out / 'av-analysis.log').write_text(analysis.stdout.decode(errors='replace') + analysis.stderr.decode(errors='replace'))
-        checks.append({'name': 'Both end samples complete pulse/frame analysis', 'ok': len(clips) == 2 and analysis.returncode == 0})
-        summary['avSamples'] = [json.loads(Path(c + '.analysis.json').read_text()) for c in clips if Path(c + '.analysis.json').exists()]
-        checks.append({'name': 'Both end samples produce analysis results', 'ok': len(summary['avSamples']) == 2})
-        for sample in summary['avSamples']:
-            checks.append({'name': sample['file'] + ' has readable pulse audio/video within 100 ms',
-                           'ok': sample['fullDecodeExit'] == 0 and not sample['decodeLog'].strip()
-                           and sample['videoFlashes'] > 2 and sample['audioPulses'] > 2
-                           and sample['maxAbsSyncOffsetMs'] is not None
-                           and sample['maxAbsSyncOffsetMs'] <= 100})
+elif result.returncode == 0:
+    # Short startup/reconnect recordings need the same sync qualification.
+    # Previously files of at most two minutes passed without any A/V check.
+    clips = [args.file]
+if clips:
+    analysis = subprocess.run([sys.executable, str(Path(__file__).with_name('studio-journey-media.py')),
+                               '--ffmpeg', args.ffmpeg, *clips], capture_output=True,
+                              creationflags=flags, timeout=300)
+    (out / 'av-analysis.log').write_text(analysis.stdout.decode(errors='replace') + analysis.stderr.decode(errors='replace'))
+    checks.append({'name': 'All required samples complete pulse/frame analysis', 'ok': len(clips) == expected_clips and analysis.returncode == 0})
+    summary['avSamples'] = [json.loads(Path(c + '.analysis.json').read_text()) for c in clips if Path(c + '.analysis.json').exists()]
+    checks.append({'name': 'All required samples produce analysis results', 'ok': len(summary['avSamples']) == expected_clips})
+    for sample in summary['avSamples']:
+        checks.append({'name': sample['file'] + ' has readable pulse audio/video within 100 ms',
+                       'ok': sample['fullDecodeExit'] == 0 and not sample['decodeLog'].strip()
+                       and sample['videoFlashes'] > 2 and sample['audioPulses'] > 2
+                       and sample['maxAbsSyncOffsetMs'] is not None
+                       and sample['maxAbsSyncOffsetMs'] <= 100})
 (out / 'results.json').write_text(json.dumps(summary, indent=2))
 print(json.dumps(summary, indent=2))
 sys.exit(1 if any(not c['ok'] for c in checks) else 0)

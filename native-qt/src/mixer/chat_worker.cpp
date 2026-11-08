@@ -127,6 +127,15 @@ struct Host {
     }
     void leave(QString uuid){auto i=peers.find(uuid);if(i==peers.end())return;auto old=i->second;for(auto &[other,p]:peers)if(other!=uuid){if(views(p,old))deliver(other,{{"action","view-connection"},{"UUID",uuid},{"value",false}});if(views(old,p))deliver(other,{{"action","push-connection"},{"UUID",uuid},{"value",false}});}peers.erase(uuid);}
     void leaveTab(int tab){QStringList ids;for(auto &[id,p]:peers)if(p.tab==tab)ids<<id;for(auto id:ids)leave(id);}
+    void closePage(int tab) {
+        auto p=page(tab);if(!p)return;
+        const bool capture=p->role=="capture"||p->role=="practice";
+        leaveTab(tab);pages.erase(tab);
+        // SSN uses tabs.onRemoved to retire its preferred YouTube source and
+        // per-tab caches. Without it, a replacement tab's comments are discarded.
+        if(capture)for(auto &[id,receiver]:pages)if(receiver->role=="engine")
+            receiver->post({{"kind","event"},{"name","tabs.onRemoved"},{"args",QJsonArray{tab,QJsonObject{{"windowId",1},{"isWindowClosing",false}}}}});
+    }
     void route(int from,QString frame,QString requestId,int to,QJsonValue message){
         auto p=page(to);if(!p||p->mainFrame.isEmpty()){reply(from,frame,requestId,{},"Receiving end does not exist");return;}
         auto token=QString::number(++sequence);pending[token]={from,frame,requestId,to,p->mainFrame};
@@ -513,7 +522,7 @@ void Host::configureChannels(const QJsonObject &c) {
     if(!environment||!ready||clearingAccounts)return;
     QSet<QString> wanted;for(const auto &v:channels)wanted.insert(v.toObject()["id"].toString());if(practice)wanted.insert("practice");
     std::vector<int> remove;for(auto &[id,p]:pages)if((p->role=="capture"||p->role=="practice"||p->role=="signin")&&!wanted.contains(p->channel))remove.push_back(id);
-    for(int id:remove){states.remove(page(id)->channel);leaveTab(id);pages.erase(id);}
+    for(int id:remove){states.remove(page(id)->channel);closePage(id);}
     QJsonArray incoming=channels;if(practice)incoming.append(QJsonObject{{"id","practice"},{"url","https://studio-chat.invalid/test-source.html"},{"platform","Twitch"}});
     for(const auto &v:incoming) {
         const auto ch=v.toObject();const auto key=ch["id"].toString();bool found=false;for(auto &[id,p]:pages)found|=(p->role=="capture"||p->role=="practice")&&p->channel==key;
@@ -647,7 +656,7 @@ QJsonObject Host::command(const QJsonObject &c) {
         if(!environment||!ready)return {{"error","Wait for chat to finish connecting before signing out."}};
         // Close site documents before clearing so an active page cannot restore
         // its old session from in-memory state while deletion is in flight.
-        std::vector<int> windows;for(auto &[id,p]:pages)if(p->role=="signin"||p->role=="capture")windows.push_back(id);for(int id:windows)pages.erase(id);
+        std::vector<int> windows;for(auto &[id,p]:pages)if(p->role=="signin"||p->role=="capture")windows.push_back(id);for(int id:windows)closePage(id);
         clearingAccounts=true;accountNotice="Signing out of chat accounts...";open("account-clear","about:blank");
         return {{"ok",true}};
     }

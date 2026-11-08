@@ -91,8 +91,9 @@ function SelectFirst { $items=@(Rows); if (!$items.Count) {throw 'No comments to
 function Rows { @( (Find 'Comments').FindAll([Windows.Automation.TreeScope]::Children,[Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::ListItem)) ) }
 function ChooseSourceType($name) {
     $combo=Find 'Source type' ([Windows.Automation.ControlType]::ComboBox)
+    $combo.SetFocus()
     $combo.GetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
-    if (!(WaitFor {try {$null=Find $name ([Windows.Automation.ControlType]::ListItem); return $true} catch {return $false}})) {throw "Source picker did not open: $name"}
+    if (!(WaitFor {try {return !(Find $name ([Windows.Automation.ControlType]::ListItem)).Current.IsOffscreen} catch {return $false}})) {throw "Source picker did not open: $name"}
     Click $name ([Windows.Automation.ControlType]::ListItem)
     if (!(WaitFor {$combo.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -eq $name})) {throw "Source picker did not select $name"}
 }
