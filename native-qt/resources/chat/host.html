@@ -32,6 +32,7 @@ addEventListener('message',e=>{
       const comment={id:m.id,tid:m.tid,type:m.type,
         chatname:text(m.chatname),chatmessage:body,
         hasDonation:donation,membership,event,meta:m.meta||{},textonly:true};
+      if(typeof m.chatimg==='string'&&m.chatimg.length<=2048&&m.chatimg.startsWith('https://'))comment.chatimg=m.chatimg;
       window.__engineSpike.rpc('host.comment',[comment]).catch(()=>{});
       // Retain a bounded plain-text diagnostic feed, not raw platform payloads
       // and another serialized DOM copy for a page that is never displayed.

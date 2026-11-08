@@ -70,13 +70,16 @@
     sendMessage(...args) {
       const cb = typeof args.at(-1)==='function' ? args.pop() : undefined;
       if (typeof args[0] === 'string') args.shift();
-      // Badges and avatars can embed whole images, enough to exceed the host's message limit. Send only what it reads.
+      // Embedded images can exceed the native message limit. Preserve a small
+      // avatar URL separately; never let an image discard the comment text.
       if (cfg.role === 'capture' && args[0]?.message) {
         const source=args[0].message;
         const message=Object.fromEntries(['chatname','chatmessage','hasDonation','membership','textonly','type','reply','initial','event'].filter(k => k in source).map(k => [k,source[k]]));
-        // Keep bounded gift identity/counts, without transporting avatars, badge
+        if(typeof source.chatimg==='string'&&source.chatimg.length<=2048&&source.chatimg.startsWith('https://'))message.chatimg=source.chatimg;
+        // Keep bounded gift identity/counts, without transporting embedded avatars, badge
         // images or arbitrary platform metadata through the native message pipe.
         if(source.meta)message.meta=Object.fromEntries(['tiktokGiftStreakId','tiktokGiftCount','giftName'].filter(k=>typeof source.meta[k]==='number'||typeof source.meta[k]==='string'&&source.meta[k].length<=256).map(k=>[k,source.meta[k]]));
+        if(JSON.stringify(message).length>24000)delete message.chatimg;
         args[0]={message};
       }
       return rpc('runtime.sendMessage',[args[0]],cb);

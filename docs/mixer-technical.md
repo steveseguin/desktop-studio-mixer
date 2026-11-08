@@ -48,6 +48,8 @@ These boundaries contain user-mode failures in those components; they are not a 
 
 Requires Windows x64, Visual Studio 2022 C++ tools/Windows SDK, CMake 3.24+, Ninja, and Qt 6 Widgets/Network/Concurrent. The script uses `VCPKG_ROOT`, or `C:/vcpkg` when unset.
 
+Portable/installer packaging also requires `qtimageformats[core,webp]:x64-windows` from the same vcpkg installation as Qt. Install it with `vcpkg install "qtimageformats[core,webp]:x64-windows"`. The package includes the WebP plugin, its runtime libraries and notices so profile photos work without development tools on the destination PC.
+
 ```powershell
 # Prepare FFmpeg for recording, RTMP/SRT and FFmpeg-dependent codecs:
 powershell -ExecutionPolicy Bypass -File native-qt/tools/fetch-ffmpeg-lgpl.ps1

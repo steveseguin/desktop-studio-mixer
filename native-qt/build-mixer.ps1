@@ -57,6 +57,7 @@ if ($Package -or $Installer) {
     $deploy = Join-Path $vcpkgRoot 'installed/x64-windows/tools/Qt6/bin/windeployqt.exe'
     & $deploy --release --no-translations --no-opengl-sw --compiler-runtime "$packageRoot/desktop-studio.exe"
     if ($LASTEXITCODE -ne 0) { throw 'Qt packaging failed.' }
+    & (Join-Path $PSScriptRoot 'tools/stage-image-codecs.ps1') -VcpkgRoot $vcpkgRoot -PackageRoot $packageRoot
     # The vcpkg Qt JPEG plugin dynamically links libjpeg-turbo. windeployqt
     # deploys the plugin but does not copy this non-Qt runtime dependency.
     $jpegPlugin = Join-Path $packageRoot 'imageformats/qjpeg.dll'

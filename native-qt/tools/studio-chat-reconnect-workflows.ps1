@@ -22,7 +22,9 @@ try{
   $youtube=@((Status).channels|Where-Object id -eq $youtube.id)|Select-Object -First 1
   Focus ('Remove channel: YouTube '+[char]0xb7+' '+$youtube.name);Keys ' '
   Check (@((Status).channels|Where-Object id -eq $youtube.id).Count -eq 0) "Cycle $cycle removes the old capture"
-  Click '+ Add';SetText 'Your channel link or name' $link;Press 'Add this channel'
+  Focus '+ Add';Click '+ Add'
+  if(!(WaitFor {try{return !(Find 'Your channel link or name').Current.IsOffscreen}catch{return $false}} 10)){throw 'The channel entry did not open'}
+  SetText 'Your channel link or name' $link;Press 'Add this channel'
   $youtube=@((Status).channels|Where-Object platform -eq 'YouTube')|Select-Object -First 1
   if(!$youtube){throw 'Replacement YouTube channel did not appear'}
   Check (WaitFor {(ChannelMessages $youtube.id).Count -gt 0} 90) "Cycle $cycle receives real comments from the replacement capture"

@@ -1,4 +1,5 @@
 #include "chat_panel.h"
+#include "chat_avatars.h"
 #include "studio_icons.h"
 #include "versus/ui/studio_preferences.h"
 #include <QButtonGroup>
@@ -18,6 +19,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QScrollArea>
@@ -64,8 +66,9 @@ protected:
     }
 };
 class ChatDelegate : public QStyledItemDelegate {
+    ChatAvatarCache *avatars_;
 public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    ChatDelegate(ChatAvatarCache *avatars,QObject *parent):QStyledItemDelegate(parent),avatars_(avatars){}
     QSize sizeHint(const QStyleOptionViewItem &o,const QModelIndex &) const override { return {280,std::max(60,o.fontMetrics.height()*3+10)}; }
     void paint(QPainter *p,const QStyleOptionViewItem &o,const QModelIndex &index) const override {
         const auto m=index.data(Qt::UserRole).toJsonObject();p->save();p->setClipRect(o.rect);p->setRenderHint(QPainter::Antialiasing);
@@ -75,6 +78,8 @@ public:
         QColor accent=type=="YouTube"?QColor("#ffb3a8"):type=="Twitch"?QColor("#d3bcff"):QColor("#8fe8e6");
         const auto avatar=QRect(o.rect.left()+8,o.rect.top()+9,28,28);p->setPen(Qt::NoPen);p->setBrush(accent);p->drawEllipse(avatar);
         auto font=o.font;font.setBold(true);p->setFont(font);p->setPen(QColor("#10202e"));p->drawText(avatar,Qt::AlignCenter,m["chatname"].toString().left(1).toUpper());
+        const auto picture=avatars_->picture(m["chatimg"].toString());
+        if(!picture.isNull()){p->save();QPainterPath circle;circle.addEllipse(avatar);p->setClipPath(circle,Qt::IntersectClip);p->setRenderHint(QPainter::SmoothPixmapTransform);p->drawPixmap(avatar,picture);p->restore();}
         auto r=o.rect.adjusted(44,5,-8,-5);const int line=o.fontMetrics.height();
         auto small=o.font;small.setPointSizeF(std::max(7.0,small.pointSizeF()-1));
         const auto amount=chatSupportLabel(m);const int platformWidth=QFontMetrics(small).horizontalAdvance(type)+8;
@@ -155,7 +160,8 @@ ChatPanel::ChatPanel(QWidget *parent) : QWidget(parent),engine(this) {
     }
     search_=new QLineEdit(this);search_->setPlaceholderText(studioText("Search"));search_->setAccessibleName(studioText("Search comments"));search_->setClearButtonEnabled(true);feedControls->addWidget(search_);
     connect(search_,&QLineEdit::textChanged,this,[this](QString text){filter_->query=text;filter_->refresh();});
-    list_=new QListView(this);list_->setObjectName("chatMessages");list_->setAccessibleName(studioText("Comments"));list_->setModel(filter_);list_->setItemDelegate(new ChatDelegate(list_));
+    list_=new QListView(this);list_->setObjectName("chatMessages");list_->setAccessibleName(studioText("Comments"));list_->setModel(filter_);
+    avatars_=new ChatAvatarCache(list_);avatars_->updated=[this]{list_->viewport()->update();};list_->setItemDelegate(new ChatDelegate(avatars_,list_));
     list_->setUniformItemSizes(true);list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);list_->setSelectionMode(QAbstractItemView::SingleSelection);
     list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);list_->setMinimumHeight(56);list_->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Ignored);
     auto listSlot=new QGridLayout;listSlot->setContentsMargins(0,0,0,0);listSlot->addWidget(list_,0,0);root->addLayout(listSlot,1);
@@ -259,7 +265,7 @@ bool ChatPanel::practice(bool enabled,bool acknowledged) {
 QJsonObject ChatPanel::state() const {
     QJsonArray channels;for(const auto &v:engine.settings.channels){auto c=v.toObject();const auto name=engine.health["names"].toObject()[c["id"].toString()].toString();if(!name.isEmpty())c["name"]=name;c["status"]=engine.health["channels"].toObject()[c["id"].toString()].toString("Connecting to chat");channels.append(c);}
     return {{"available",engine.packAvailable},{"ready",engine.health["ready"].toBool()},{"problem",engine.settingsError.isEmpty()?engine.health["error"]:QJsonValue(engine.settingsError)},
-        {"channels",channels},{"account",engine.health["account"]},{"practice",engine.settings.practice},{"count",engine.model.rowCount()},{"pending_comments",engine.model.pendingCount()},
+        {"channels",channels},{"account",engine.health["account"]},{"avatars",avatars_->status()},{"practice",engine.settings.practice},{"count",engine.model.rowCount()},{"pending_comments",engine.model.pendingCount()},
         {"selected",selected_},{"pending_show",waitingToken_},{"on_screen",composed_&&!privateBreak_&&layer.enabled&&!onAir_.isEmpty()},
         {"hidden_by_private_break",privateBreak_&&!onAir_.isEmpty()},{"on_air",onAir_},{"remaining_ms",remainingMs_},{"kept",pinned_},{"layer",layer.json()},
         {"oversized_messages",engine.health["oversizedMessages"].toInteger()},{"browser_pid",engine.health["browserPid"]},{"page_count",engine.health["pageCount"]},{"diagnostic",engine.health["diagnostic"]},{"resources",engine.health["resources"]},{"timing",QJsonObject{{"startup",engine.health["startup_timing"]},{"worker",engine.health["timing"]},{"frame_received_ms",frameReceivedMs_},{"composed_ms",composedMs_}}}};

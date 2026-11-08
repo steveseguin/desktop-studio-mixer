@@ -16,6 +16,7 @@ class QVBoxLayout;
 namespace versus::mixer {
 class ChatFilter;
 class ChatCard;
+class ChatAvatarCache;
 class ChatPanel : public QWidget {
     Q_OBJECT
 public:
@@ -35,6 +36,7 @@ public:
 private:
     ChatFilter *filter_;
     ChatCard *card_;
+    ChatAvatarCache *avatars_;
     QScrollArea *previewScroll_;
     QScrollArea *chipsScroll_;
     QListView *list_;

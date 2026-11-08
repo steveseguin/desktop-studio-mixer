@@ -59,7 +59,10 @@ std::string validateConfig(const Config &config) {
             return "The WHIP token contains invalid characters or is too long.";
     } else if (config.protocol == Protocol::Rtmp) {
         if (scheme != "rtmp" && scheme != "rtmps") return "RTMP needs an rtmp:// or rtmps:// server URL.";
-        if (url.path().isEmpty() || url.path() == "/") return "Include the RTMP application path in the server URL.";
+        // Some services (including Meshcast) publish at /<stream key> without
+        // a separate application segment. destinationUrl appends that key.
+        if ((url.path().isEmpty() || url.path() == "/") && QString::fromStdString(config.streamKey).trimmed().isEmpty())
+            return "Enter an RTMP application path or stream key.";
     } else if (isRtsp(config.protocol)) {
         if (scheme != "rtsp" && scheme != "rtspt") return "RTSP needs an rtsp:// publishing URL (rtspt:// is accepted for TCP).";
         if (scheme == "rtspt" && config.protocol == Protocol::RtspUdp) return "An rtspt:// URL requires RTSP over TCP.";

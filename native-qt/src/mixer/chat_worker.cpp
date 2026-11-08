@@ -185,6 +185,7 @@ struct Host {
                 const auto count=incomingMeta["tiktokGiftCount"].toDouble();if(std::isfinite(count)&&count>0&&count<=1e9)meta["tiktokGiftCount"]=count;
                 if(!meta.isEmpty())clean["meta"]=meta;
                 clean["chatmessage"]=comment;
+                const auto avatar=chatAvatarUrl(input["chatimg"].toString());if(!avatar.isEmpty())clean["chatimg"]=avatar;
                 clean["textonly"]=input["textonly"].toBool();
                 const auto practiceType=input["type"].toString("twitch");
                 clean["type"]=p.role=="practice"?(QStringList{"twitch","youtube","kick","tiktok","facebook","instagram","x","rumble"}.contains(practiceType)?practiceType:QString("twitch")):p.property("platform").toString().toLower();
@@ -202,6 +203,8 @@ struct Host {
                 if(!origin){fail("Unknown capture");return;}
                 if(origin->deletedIds.contains(payload["id"].toInteger())){ok();return;}
                 payload["capture_epoch"]=captureEpoch;
+                const auto avatar=chatAvatarUrl(payload["chatimg"].toString());
+                if(avatar.isEmpty())payload.remove("chatimg");else payload["chatimg"]=avatar;
                 payload["channel"]=origin->channel;
                 payload["practice"]=origin->role=="practice";
                 states[origin->channel]="Reading comments";lastComment[origin->channel]=QDateTime::currentMSecsSinceEpoch();
@@ -436,6 +439,16 @@ void Page::configure(){
         ComPtr<ICoreWebView2WebResourceRequest>req;a->get_Request(&req);LPWSTR raw=nullptr;req->get_Uri(&raw);auto uri=take(raw);QUrl u(uri);COREWEBVIEW2_WEB_RESOURCE_CONTEXT ctx;a->get_ResourceContext(&ctx);
         bool vdo=u.host()=="vdo.socialstream.ninja";bool local=u.host()=="socialstream.ninja"||u.host()=="studio-chat.invalid";
         bool blocked=u.host()=="io.socialstream.ninja"||u.host().endsWith(".vdo.ninja")||u.host()=="vdo.ninja"||vdo;
+        if(role=="capture"&&ctx==COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE&&!chatAvatarUrl(uri).isEmpty()) {
+            // A failed image makes YouTube replace its public avatar URL with a
+            // placeholder. Satisfy the hidden page with one transparent pixel;
+            // only visible native rows download the actual profile picture.
+            static const auto pixel=QByteArray::fromBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==");
+            ComPtr<IStream>stream;stream.Attach(SHCreateMemStream(reinterpret_cast<const BYTE*>(pixel.constData()),UINT(pixel.size())));
+            ComPtr<ICoreWebView2WebResourceResponse>response;
+            host.environment->CreateWebResourceResponse(stream.Get(),200,L"OK",L"Content-Type: image/png\r\nCache-Control: no-store",&response);
+            a->put_Response(response.Get());return S_OK;
+        }
         if(role=="capture") {
             blocked |= ctx==COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE||ctx==COREWEBVIEW2_WEB_RESOURCE_CONTEXT_MEDIA||ctx==COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FONT;
             for(const auto &domain:QStringList{"googlevideo.com","amazon-adsystem.com","scorecardresearch.com","doubleclick.net","googlesyndication.com","google-analytics.com","adsrvr.org","adnxs.com"})blocked|=u.host()==domain||u.host().endsWith('.'+domain);

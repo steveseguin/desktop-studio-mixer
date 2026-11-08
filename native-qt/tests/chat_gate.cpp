@@ -44,6 +44,17 @@ private slots:
         QVERIFY(chatUrlMatches("*://*.twitch.tv/*",QUrl("https://www.twitch.tv/a")));
         QVERIFY(!chatUrlMatches("*://*.twitch.tv/*",QUrl("https://twitch.tv.evil.test/a")));
     }
+    void avatarUrls() {
+        for(const auto &value:QStringList{"https://yt3.ggpht.com/profile=s64","https://static-cdn.jtvnw.net/user.png",
+            "https://files.kick.com/profile.jpg","https://api.socialstream.ninja/twitch/?username=public_viewer"})
+            QVERIFY2(!chatAvatarUrl(value).isEmpty(),qPrintable(value));
+        for(const auto &value:QStringList{"file:///C:/private.png","http://yt3.ggpht.com/p.png","https://127.0.0.1/p.png",
+            "https://localhost/p.png","https://[::1]/p.png","https://yt3.ggpht.com.evil.test/p.png",
+            "https://private@yt3.ggpht.com/p.png","https://yt3.ggpht.com:8443/p.png","https://yt3.ggpht.com/p.png#secret",
+            "data:image/png;base64,aGVsbG8=","https://api.socialstream.ninja/account", "https://api.socialstream.ninja/twitch/?username=a&token=b"})
+            QVERIFY2(chatAvatarUrl(value).isEmpty(),qPrintable(value));
+        QVERIFY(chatAvatarUrl("https://yt3.ggpht.com/"+QString(2048,'a')).isEmpty());
+    }
     void replyText() {
         QCOMPARE(chatCommentText({{"chatmessage","hello"}}),QString("hello"));
         QCOMPARE(chatCommentText({{"chatmessage","Replying to @Ann: long quote:  hi"},{"initial","Replying to @Ann: long quote"},{"reply","hi"}}),QString("@Ann hi"));

@@ -162,6 +162,8 @@ set(VERSUS_SOURCES
     src/mixer/chat_worker.cpp
     src/mixer/chat_panel.cpp
     src/mixer/chat_panel.h
+    src/mixer/chat_avatars.cpp
+    src/mixer/chat_avatars.h
     src/mixer/isolated_source.cpp
     src/mixer/encoder_worker.cpp
     src/mixer/guest_return.cpp

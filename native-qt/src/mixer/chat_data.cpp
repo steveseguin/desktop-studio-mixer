@@ -15,6 +15,24 @@
 #include <utility>
 
 namespace versus::mixer {
+QString chatAvatarUrl(const QString &value) {
+    if(value.isEmpty()||value.size()>2048)return {};
+    const QUrl url(value,QUrl::StrictMode);
+    if(!url.isValid()||url.scheme()!="https"||!url.userInfo().isEmpty()||url.port()!=-1||url.hasFragment())return {};
+    const auto host=url.host().toLower();
+    // Public platform image hosts only; never fetch arbitrary chat-provided URLs,
+    // embedded data, local files, loopback endpoints or sign-in URLs.
+    if(host=="api.socialstream.ninja") {
+        const QUrlQuery query(url);const auto items=query.queryItems();
+        if(url.path()!="/twitch/"||items.size()!=1||items[0].first!="username"||
+            !QRegularExpression("^[a-zA-Z0-9_]{1,25}$").match(items[0].second).hasMatch())return {};
+        return url.toString(QUrl::FullyEncoded);
+    }
+    for(const auto &domain:QStringList{"ggpht.com","googleusercontent.com","jtvnw.net","kick.com","kicdn.com",
+        "tiktokcdn.com","tiktokcdn-us.com","tiktokcdn-eu.com","cdninstagram.com","fbcdn.net","twimg.com","rumble.com","rmbl.ws"})
+        if(host==domain||host.endsWith('.'+domain))return url.toString(QUrl::FullyEncoded);
+    return {};
+}
 bool chatMatchesDeletion(const QJsonObject &message,const QJsonObject &deletion) {
     if(message.isEmpty()||deletion.value("capture_epoch").toString().isEmpty()||
         message.value("capture_epoch")!=deletion.value("capture_epoch")||message.value("channel")!=deletion.value("channel"))return false;

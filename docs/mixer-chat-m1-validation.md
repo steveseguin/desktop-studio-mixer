@@ -2,9 +2,21 @@
 
 Updated 2026-11-08. The latest qualification is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections describe their own original builds. Results distinguish packaged application workflows from code/build gates.
 
+## Profile photos and Meshcast RTMP, 2026-11-08
+
+Latest portable: `native-qt/dist/desktop-studio-avatars4-nov8/desktop-studio.exe`, SHA-256 `ea1ed443285e64720567249513e95715c1c0f577fd4c42e01a699665f430abf2`. Installer: `native-qt/dist/desktop-studio-0.9.4-avatars-nov8-setup.exe`. [The avatar and Meshcast report](studio-chat-avatars-2026-11-08.md) records artifact identities, screenshots, actual workflows and retained failures.
+
+The native chat feed displays actual YouTube, Twitch and Kick profile photos, including WebP images. Missing, malformed or unavailable photos retain initials and readable comments. Visible-row downloads and decoding run asynchronously, with four active jobs and a 4 MiB image cache. Hidden capture pages use a tiny local placeholder so YouTube preserves its avatar URL without downloading images into the capture browser. On-air templates retain their existing layout.
+
+The packaged avatar journey, network-failure fallback, 17-check reconnect/sign-out workflow and 77-check general UI journey passed. A five-minute independent Kick comparison matched all 1,557 eligible comments, including 437 containing emotes, without missing or late delivery in that window. Earlier intermittent losses remain open.
+
+The installer upgrade preserved the show and channels and displayed all three platforms' photos. Installed recording, damaged-pack isolation and uninstall passed; nine saved files survived removal byte for byte. Your workspace and existing Twitch sign-in were restored in the final portable, idle. The longer installed Twitch comparison received 114/114 eligible comments, but 63 missed the five-second target; latency remains open.
+
+RTMP now accepts a server root plus stream key. An earlier avatar candidate completed seven minutes of local recording and Meshcast publication; independent RTMP reception contained the actual picture, featured comment and pulse audio within 38 ms A/V alignment. Its video starts 354 ms after the audio, failing the strict whole-container frame-coverage check despite continuous subsequent 30 fps video. The browser WHEP route displayed picture but had silent audio, consistent with Meshcast's documented RTMP-to-WHEP limitation. See the report for those separate outcomes; this is not an all-platform release qualification or a new two-hour soak.
+
 ## Chat reconnect, real gifts and recording dialogs, 2026-11-08
 
-Latest portable: `native-qt/dist/desktop-studio-live-dialogs-nov8/desktop-studio.exe`, SHA-256 `992325d0f51c9c419d9daffe1dfb9dbe3784bf8c15fa76c76b03b90cc8048c15`. Installer: `native-qt/dist/desktop-studio-0.9.4-live-dialogs-nov8-setup.exe`. [The qualification report](studio-chat-qualification-2026-11-08.md) identifies the exact artifacts, completed workflows, retained failures, saved-output measurements and repository handoff.
+Portable for this earlier pass: `native-qt/dist/desktop-studio-live-dialogs-nov8/desktop-studio.exe`, SHA-256 `992325d0f51c9c419d9daffe1dfb9dbe3784bf8c15fa76c76b03b90cc8048c15`. Installer: `native-qt/dist/desktop-studio-0.9.4-live-dialogs-nov8-setup.exe`. [The qualification report](studio-chat-qualification-2026-11-08.md) identifies the exact artifacts, completed workflows, retained failures, saved-output measurements and repository handoff.
 
 Closing a chat capture now retires its tab in Social Stream's engine, fixing silent YouTube delivery failure after remove/re-add or sign-out. Saving a different active show is rejected before opening a chooser during recording. Windows file choosers now use Qt's timer-friendly dialogs. An earlier intermittent four-second picture stall did not reproduce consistently on the old executable; its root cause remains unresolved.
 
