@@ -72,9 +72,18 @@
       if (typeof args[0] === 'string') args.shift();
       // Embedded images can exceed the native message limit. Preserve a small
       // avatar URL separately; never let an image discard the comment text.
-      if (cfg.role === 'capture' && args[0]?.message) {
+      if (['capture', 'practice'].includes(cfg.role) && args[0]?.message) {
         const source=args[0].message;
         const message=Object.fromEntries(['chatname','chatmessage','hasDonation','membership','textonly','type','reply','initial','event'].filter(k => k in source).map(k => [k,source[k]]));
+        // Image-only posts still need a readable body in Studio's text cards.
+        // Otherwise a subscriber's GIF becomes "Membership update", and the
+        // same post from a non-subscriber disappears. Never fetch the image.
+        if (typeof source.chatmessage === 'string' && !source.chatmessage.trim() && typeof source.contentimg === 'string' && source.contentimg) {
+          const picture=Array.from(document.images).find(img => img.src === source.contentimg);
+          const description=picture?.getAttribute('alt')?.trim().slice(0,256);
+          message.chatmessage=description ? 'Image: '+description : 'Shared an image';
+          message.textonly=true;
+        }
         if(typeof source.chatimg==='string'&&source.chatimg.length<=2048&&source.chatimg.startsWith('https://'))message.chatimg=source.chatimg;
         // Keep bounded gift identity/counts, without transporting embedded avatars, badge
         // images or arbitrary platform metadata through the native message pipe.
@@ -108,6 +117,7 @@
     }});
   }
   window.__engineSpike={rpc,send,config:cfg,frame};
+  window.__engineSpike.stats=()=>({pending:pending.size,events:events.size,children:children.size});
   // Absence preserves the extension feature-detection path. Reads are observable;
   // no fake Electron capabilities are advertised.
   for (const name of ['ninjafy','electronApi']) if (!(name in window)) Object.defineProperty(window,name,{configurable:true,get(){log('optional-bridge-read',{name});return undefined;}});

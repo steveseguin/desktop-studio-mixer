@@ -24,12 +24,15 @@ try {
         @{kind='literal';type='youtube';chatmessage='Literal <b>gift</b> & thanks';hasDonation='EUR 12.50';membership='6 months'},
         @{kind='literalmetadata';type='youtube';chatmessage='Gift metadata stays literal';hasDonation='USD &lt;10';expectedDonation='USD <10';membership='Member &lt;b&gt;Gold&lt;/b&gt; &amp; fans';expectedMembership='Member <b>Gold</b> & fans'},
         @{kind='longlabel';type='youtube';chatmessage='The full membership detail remains readable';event='membermilestone';membership=('Membership '+('long '*22)+'END_LABEL')},
-        @{kind='subscriberchat';type='twitch';chatmessage='An ordinary comment from a subscriber';membership='SUBSCRIBER';thanks=$false}
+        @{kind='subscriberchat';type='twitch';chatmessage='An ordinary comment from a subscriber';membership='SUBSCRIBER';thanks=$false},
+        @{kind='imagepost';type='twitch';chatmessage='';contentimg='https://example.invalid/image.gif';expectedBody='Shared an image';thanks=$false},
+        @{kind='subscriberimage';type='twitch';chatmessage='';contentimg='https://example.invalid/image.gif';membership='SUBSCRIBER';expectedBody='Shared an image';thanks=$false},
+        @{kind='imagecaption';type='kick';chatmessage='Keep the original caption';contentimg='https://example.invalid/image.gif';thanks=$false}
     )
     foreach($fixture in $fixtures){
         Press 'All';SetText 'Search comments' '';Api @{command='chat.select';id=''}|Out-Null
         $name=$token+'-'+$fixture.kind;$message=@{chatname=$name;chatmessage=$fixture.chatmessage;type=$fixture.type}
-        foreach($key in @('hasDonation','membership','event')){if($fixture.ContainsKey($key)){$message[$key]=$fixture[$key]}}
+        foreach($key in @('hasDonation','membership','event','contentimg')){if($fixture.ContainsKey($key)){$message[$key]=$fixture[$key]}}
         Api @{command='chat.inject';message=$message}|Out-Null
         if(!(WaitFor {@(Fixture $name).Count -eq 1} 12)){Check $false ($fixture.kind+' reaches the panel');continue}
         $captured=@(Fixture $name)[0];$expectedBody=if($fixture.expectedBody){$fixture.expectedBody}else{$fixture.chatmessage}
@@ -45,7 +48,7 @@ try {
         Check (!(Status).on_screen) ($fixture.kind+' selection stays private')
         $preview=@((Find 'Private comment preview').FindAll([Windows.Automation.TreeScope]::Descendants,[Windows.Automation.Condition]::TrueCondition)|ForEach-Object{$_.Current.Name}) -join "`n"
         Check ((!$expectedDonation -or $preview.Contains($expectedDonation)) -and (!$expectedMembership -or $preview.Contains($expectedMembership))) ($fixture.kind+' private preview exposes the full support details')
-        Shot ($fixture.kind+'-private')
+        Focus 'Search comments';Shot ($fixture.kind+'-private')
         foreach($style in @('Bar','Bubble','Big')){
             Press $style;Press 'Show on screen'
             $shown=WaitFor {(Status).on_screen} 12

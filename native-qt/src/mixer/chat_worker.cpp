@@ -98,6 +98,9 @@ struct Host {
     QString captureBundle;
     std::unique_ptr<QLockFile> profileOwner;
     QJsonObject names,timing,startupTiming;
+    const bool resourceDiagnostics=qEnvironmentVariableIntValue("VIDEO_MIXER_CHAT_RESOURCE_DIAGNOSTICS")==1;
+    qint64 resourceDiagnosticAt=0;bool resourceDiagnosticPending=false;QJsonArray resourceProcesses;
+    void sampleResources();
     void setup(const QJsonObject &c);
     void configureChannels(const QJsonObject &c);
     void finishSignIn(int id);
@@ -546,8 +549,64 @@ void Host::configureChannels(const QJsonObject &c) {
         states[key]=ch["resolve"].toString().isEmpty()?"Connecting to chat":"Waiting for your stream";
     }
 }
+void Host::sampleResources() {
+    const auto now=QDateTime::currentMSecsSinceEpoch();
+    if(!resourceDiagnostics||now-resourceDiagnosticAt<30000)return;
+    resourceDiagnosticAt=now;
+    // Opt-in diagnostics for long recordings. These approximate JS/DOM counts
+    // and normal WebView2 process/frame metadata contain no message bodies,
+    // account storage, full URLs, response bodies or browser debugging session.
+    if(clearingAccounts||std::any_of(pages.begin(),pages.end(),[](const auto &entry){return entry.second->role=="signin";}))return;
+    for(auto &[id,p]:pages) {
+        if(!p->web||p->role=="signin"||p->role=="account-clear"||p->property("resourcePending").toBool())continue;
+        p->setProperty("resourcePending",true);
+        QPointer<Page> self(p.get());
+        const auto hr=p->web->ExecuteScript(L"({nodes:document.getElementsByTagName('*').length,heapUsed:performance.memory?.usedJSHeapSize||0,heapTotal:performance.memory?.totalJSHeapSize||0,resources:performance.getEntriesByType('resource').length,bridge:window.__engineSpike?.stats?.()})",
+            Callback<ICoreWebView2ExecuteScriptCompletedHandler>([self](HRESULT hr,LPCWSTR result)->HRESULT{
+                if(!self)return S_OK;self->setProperty("resourcePending",false);
+                if(SUCCEEDED(hr)&&result){
+                    const auto data=QJsonDocument::fromJson(QString::fromWCharArray(result).toUtf8()).object();QJsonObject safe,bridge;
+                    for(const auto *key:{"nodes","heapUsed","heapTotal","resources"})if(data[key].isDouble())safe[key]=data[key];
+                    const auto rawBridge=data["bridge"].toObject();for(const auto *key:{"pending","events","children"})if(rawBridge[key].isDouble())bridge[key]=rawBridge[key];
+                    safe["bridge"]=bridge;safe["sampledAt"]=QDateTime::currentMSecsSinceEpoch();self->setProperty("resourceStats",safe);
+                }
+                return S_OK;
+            }).Get());
+        if(FAILED(hr))p->setProperty("resourcePending",false);
+    }
+    ComPtr<ICoreWebView2Environment13> e13;if(!environment||FAILED(environment.As(&e13))||resourceDiagnosticPending)return;
+    resourceDiagnosticPending=true;
+    QPointer<QTimer> alive(&timer);
+    const auto hr=e13->GetProcessExtendedInfos(Callback<ICoreWebView2GetProcessExtendedInfosCompletedHandler>(
+        [this,alive](HRESULT hr,ICoreWebView2ProcessExtendedInfoCollection *all)->HRESULT{
+            if(!alive)return S_OK;
+            resourceDiagnosticPending=false;if(FAILED(hr)||!all)return S_OK;
+            QJsonArray rows;UINT32 count=0;all->get_Count(&count);
+            for(UINT32 i=0;i<std::min(count,UINT32(128));++i){
+                ComPtr<ICoreWebView2ProcessExtendedInfo> extended;ComPtr<ICoreWebView2ProcessInfo> info;
+                if(FAILED(all->GetValueAtIndex(i,&extended))||!extended||FAILED(extended->get_ProcessInfo(&info))||!info)continue;
+                INT32 pid=0;COREWEBVIEW2_PROCESS_KIND kind;info->get_ProcessId(&pid);info->get_Kind(&kind);
+                QJsonArray frames;ComPtr<ICoreWebView2FrameInfoCollection> collection;
+                if(SUCCEEDED(extended->get_AssociatedFrameInfos(&collection))&&collection){
+                    ComPtr<ICoreWebView2FrameInfoCollectionIterator> iterator;collection->GetIterator(&iterator);BOOL current=FALSE;
+                    while(iterator&&frames.size()<64&&SUCCEEDED(iterator->get_HasCurrent(&current))&&current){
+                        ComPtr<ICoreWebView2FrameInfo> info;if(FAILED(iterator->GetCurrent(&info))||!info)break;LPWSTR raw=nullptr;info->get_Source(&raw);const QUrl source(take(raw));
+                        // Resource diagnostics never retain query strings or account URLs.
+                        const auto host=source.host();QString role="external";
+                        if(host=="socialstream.ninja")role=source.path()=="/background.html"?"engine":source.path()=="/featured.html"?"overlay":"asset";
+                        else if(host=="studio-chat.invalid")role="host";
+                        frames.append(QJsonObject{{"host",host},{"role",role}});BOOL next=FALSE;iterator->MoveNext(&next);
+                    }
+                }
+                rows.append(QJsonObject{{"pid",pid},{"kind",int(kind)},{"frames",frames}});
+            }
+            resourceProcesses=rows;return S_OK;
+        }).Get());
+    if(FAILED(hr))resourceDiagnosticPending=false;
+}
 void Host::tick() {
     const auto now=QDateTime::currentMSecsSinceEpoch();
+    sampleResources();
     if(!ready && now-startedAt>20000 && error.isEmpty())error="Chat is unavailable. Restart Studio to try again.";
     for(auto &[id,p]:pages) {
         if(!p->web||p->terminal||p->role=="signin"||p->role=="account-clear")continue;
@@ -682,7 +741,9 @@ QJsonObject Host::command(const QJsonObject &c) {
         auto shownStates=states;const auto now=QDateTime::currentMSecsSinceEpoch();
         for(const auto &[channel,at]:lastComment)if(now-at>300000&&shownStates[channel].toString()=="Reading comments")shownStates[channel]="No new comments in 5 minutes";
         QString accountPlatform;for(auto &[id,p]:pages)if(p->role=="signin")accountPlatform=p->property("platform").toString();
-        return {{"ok",true},{"ready",ready&&practiceReady&&overlayReady},{"error",error},{"account",QJsonObject{{"open",!accountPlatform.isEmpty()},{"platform",accountPlatform},{"clearing",clearingAccounts},{"notice",accountNotice}}},{"oversizedMessages",oversizedMessages},{"channels",shownStates},{"names",names},{"timing",timing},{"startup_timing",startupTiming},{"messages",batch},{"renderedToken",renderedToken},{"pendingToken",pendingToken},{"browserPid",int(browserPid)},{"diagnostic",diagnostic},{"pageCount",int(pages.size())}};
+        QJsonArray resourcePages;
+        if(resourceDiagnostics)for(auto &[id,p]:pages)if(p->role!="signin"&&p->role!="account-clear")resourcePages.append(QJsonObject{{"tab",id},{"role",p->role},{"platform",p->property("platform").toString()},{"stats",p->property("resourceStats").toJsonObject()}});
+        return {{"ok",true},{"ready",ready&&practiceReady&&overlayReady},{"error",error},{"account",QJsonObject{{"open",!accountPlatform.isEmpty()},{"platform",accountPlatform},{"clearing",clearingAccounts},{"notice",accountNotice}}},{"oversizedMessages",oversizedMessages},{"channels",shownStates},{"names",names},{"timing",timing},{"startup_timing",startupTiming},{"messages",batch},{"renderedToken",renderedToken},{"pendingToken",pendingToken},{"browserPid",int(browserPid)},{"diagnostic",diagnostic},{"pageCount",int(pages.size())},{"pageResources",QJsonObject{{"processes",resourceProcesses},{"pages",resourcePages}}}};
     }
     if(op=="inject") {
         if(!practice||!ready)return {{"error","Practice chat is not ready."}};

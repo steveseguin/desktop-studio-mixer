@@ -2,9 +2,17 @@
 
 Updated 2026-11-08. The latest qualification is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections describe their own original builds. Results distinguish packaged application workflows from code/build gates.
 
+## Image-only comments and memory investigation, 2026-11-08
+
+Latest portable: `native-qt/dist/desktop-studio-avatars-image-final-nov8/desktop-studio.exe`, SHA-256 `739ab26501cf4c5ab3beffb8b29225e6c7f25027b63b806b77b9a68aec4466d0`. [The image-message report](studio-chat-image-messages-2026-11-08.md) records the exact workflows, recordings and remaining failures. No new installer is qualified in this pass.
+
+Image-only comments now retain their available description or show **Shared an image**, instead of disappearing or becoming a membership notice. All 101 packaged support/image checks passed, and a real Twitch GIF description reached Program during recording. Native profile photos remain separate from the text-only on-air card.
+
+The memory investigation positively associates substantial growth with the busy Kick renderer. Removing the network inspector, hiding artwork and a short low-memory-target retry did not establish a fix; those experiments were removed. Optional aggregate diagnostics are retained, off by default. Independent Twitch and Kick comparisons still have unmatched/altered comments. A continuous two-hour run on this final executable remains uncompleted; shorter recordings do not substitute for it.
+
 ## Profile photos and Meshcast RTMP, 2026-11-08
 
-Latest portable: `native-qt/dist/desktop-studio-avatars4-nov8/desktop-studio.exe`, SHA-256 `ea1ed443285e64720567249513e95715c1c0f577fd4c42e01a699665f430abf2`. Installer: `native-qt/dist/desktop-studio-0.9.4-avatars-nov8-setup.exe`. [The avatar and Meshcast report](studio-chat-avatars-2026-11-08.md) records artifact identities, screenshots, actual workflows and retained failures.
+Earlier portable: `native-qt/dist/desktop-studio-avatars4-nov8/desktop-studio.exe`, SHA-256 `ea1ed443285e64720567249513e95715c1c0f577fd4c42e01a699665f430abf2`. Installer: `native-qt/dist/desktop-studio-0.9.4-avatars-nov8-setup.exe`. [The avatar and Meshcast report](studio-chat-avatars-2026-11-08.md) records artifact identities, screenshots, actual workflows and retained failures.
 
 The native chat feed displays actual YouTube, Twitch and Kick profile photos, including WebP images. Missing, malformed or unavailable photos retain initials and readable comments. Visible-row downloads and decoding run asynchronously, with four active jobs and a 4 MiB image cache. Hidden capture pages use a tiny local placeholder so YouTube preserves its avatar URL without downloading images into the capture browser. On-air templates retain their existing layout.
 
