@@ -15,11 +15,21 @@
 #include <utility>
 
 namespace versus::mixer {
+QString chatAvatarProfileUrl(const QString &value) {
+    if(value.size()>2048)return {};
+    const QUrl url(value,QUrl::StrictMode);
+    if(!url.isValid()||url.scheme()!="https"||url.host()!="studio-chat.invalid"||
+        !url.userInfo().isEmpty()||url.port()!=-1||url.hasQuery()||url.hasFragment())return {};
+    const auto match=QRegularExpression("^/kick-avatar/([a-zA-Z0-9_-]{1,50})/([a-zA-Z0-9_-]{1,50})$").match(url.path());
+    if(!match.hasMatch())return {};
+    return "https://kick.com/channels/"+match.captured(1)+"/"+match.captured(2);
+}
 QString chatAvatarUrl(const QString &value) {
     if(value.isEmpty()||value.size()>2048)return {};
     const QUrl url(value,QUrl::StrictMode);
     if(!url.isValid()||url.scheme()!="https"||!url.userInfo().isEmpty()||url.port()!=-1||url.hasFragment())return {};
     const auto host=url.host().toLower();
+    if(host=="studio-chat.invalid")return chatAvatarProfileUrl(value).isEmpty()?QString():url.toString(QUrl::FullyEncoded);
     // Public platform image hosts only; never fetch arbitrary chat-provided URLs,
     // embedded data, local files, loopback endpoints or sign-in URLs.
     if(host=="api.socialstream.ninja") {

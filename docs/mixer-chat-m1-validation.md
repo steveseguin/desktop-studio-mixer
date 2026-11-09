@@ -1,6 +1,22 @@
 # Native chat integration: packaged validation
 
-Updated 2026-11-08. The latest qualification is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections describe their own original builds. Results distinguish packaged application workflows from code/build gates.
+Updated 2026-11-09. The latest qualification is in `C:\Users\Steve\code\video-mixer-chat-integration`; earlier sections describe their own original builds. Results distinguish packaged application workflows from code/build gates.
+
+## Busy chat, rich messages and profile loading, 2026-11-09
+
+Latest portable: `native-qt/dist/desktop-studio-avatars-capture2-nov9/desktop-studio.exe`, SHA-256 `630af287ef6da9288d696704e55707a2b67ab6e5c3c4d88e12fb47a1194fc852`. Installer: `native-qt/dist/desktop-studio-0.9.4-capture2-nov9-setup.exe`. [The capture report](studio-chat-capture-2026-11-09.md) records exact artifacts, independent live references, saved media and retained failures.
+
+Kick profile requests now resolve only visible native rows, with pacing and bounded cache/concurrency. A larger hidden browser viewport addresses substantial batch loss in Kick's virtual list. Short emote-heavy comments are compacted before crossing the native size boundary. Companion Social Stream changes remove Twitch clip-preview text and duplicated cheer amounts; real cheers and heavy emotes were exercised, but no live clip-link input occurred.
+
+The revised package passed 77 UI, 101 support/image, 14 account-navigation, 14 chat-worker recovery, 17 full-app crash/recovery and nine recovered-video playback checks. Screenshots and actual saved recordings were reviewed. These checks do not establish fresh credential/MFA sign-in or qualification of every platform. Three real platform-comment photo/feature workflows passed; the selected YouTube image was a platform default.
+
+Live comparisons remain mixed: Twitch's delayed window matched 19,481/19,482 exact occurrences, with the remaining input moderated nine milliseconds outside the predeclared exclusion. Its zero-delay window received all inputs but altered one of 828 with an extra `@you` prefix. YouTube matched 8/8 in a quiet interval. Kick matched 10,957/10,957 and 7,179/7,179 in two windows, while a separate window lost 380 inputs over 32 seconds. No lossless-capture claim is made. A real 500-KICK gift reached the panel, Program and recording; subsequent Saved retention failed and was reproduced independently after the rolling feed filled.
+
+The exact build completed 2 h 1 m 17 s of continuous recording. All 218,320 frames and full audio decode; frame timing, pulse continuity and first/last-minute A/V checks pass, with offsets within 45 ms. Two adjacent repeated frames and a longest near-static interval of 133 ms are retained. Over 723 resource samples, chat remained ready without a browser restart or resource-limit event; first/last two-minute private-memory means were 1,273/1,385 MiB. Short CPU observations averaged 4.71–5.56% of this 20-thread host, including concurrent Meshcast publication. Ten real KICK gifts matched their independent reference occurrences.
+
+Clean install, upgrade, damaged-pack isolation and uninstall workflows passed at ordinary-length QA destinations, including saved-recording analysis and byte-for-byte preservation of eleven upgrade-journey files and four clean-install files. A first baseline installation attempt failed at a 260-character file path; deep custom destinations remain unqualified. The independent ten-minute Meshcast recording has continuous picture/audio and sync within 47 ms, but its initial 766 ms video-start offset fails strict whole-container frame coverage. These retained failures are detailed in the report.
+
+The owner's seven scenes, eight sources, four channels and existing Twitch authentication were restored in the new portable, left open with output and recording idle. This is not fresh password/MFA validation. Saved-comment eviction, intermittent Kick loss, the unwanted Twitch prefix, real YouTube rollover and the other unqualified platforms remain open.
 
 ## Image-only comments and memory investigation, 2026-11-08
 

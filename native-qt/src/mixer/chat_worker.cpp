@@ -186,6 +186,8 @@ struct Host {
                 QJsonObject meta;const auto incomingMeta=input["meta"].toObject();
                 for(const auto *key:{"tiktokGiftStreakId","giftName"})if(incomingMeta[key].isString()&&incomingMeta[key].toString().size()<=256)meta[key]=incomingMeta[key];
                 const auto count=incomingMeta["tiktokGiftCount"].toDouble();if(std::isfinite(count)&&count>0&&count<=1e9)meta["tiktokGiftCount"]=count;
+                static const QRegularExpression kickId("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+                if(p.property("platform")=="Kick"&&kickId.match(incomingMeta["messageId"].toString()).hasMatch())meta["messageId"]=incomingMeta["messageId"];
                 if(!meta.isEmpty())clean["meta"]=meta;
                 clean["chatmessage"]=comment;
                 const auto avatar=chatAvatarUrl(input["chatimg"].toString());if(!avatar.isEmpty())clean["chatimg"]=avatar;
@@ -376,7 +378,11 @@ void Page::configure(){
     // cleanup. Hiding the controller suspends those frames even when the SSN
     // source reports document.visibilityState as visible. The owning QWidget
     // remains hidden; this does not open a capture window on the desktop.
-    RECT bounds{0,0,width(),height()};controller->put_Bounds(bounds);controller->put_IsVisible(role=="overlay" || role=="capture" ? TRUE : FALSE);
+    // Kick flushes busy chat in batches into a virtual list. Render enough of
+    // that list to retain a whole burst. Set the browser bounds directly: Windows
+    // clamps a hidden top-level QWidget to the desktop's available height.
+    const int captureHeight=role=="capture"&&QUrl(url).host()=="kick.com"?8192:height();
+    RECT bounds{0,0,width(),captureHeight};controller->put_Bounds(bounds);controller->put_IsVisible(role=="overlay" || role=="capture" ? TRUE : FALSE);
     if(role=="overlay"){ComPtr<ICoreWebView2Controller2> c2;controller.As(&c2);if(c2)c2->put_DefaultBackgroundColor({0,0,0,0});}
     UINT32 pid=0;web->get_BrowserProcessId(&pid);host.browserPid=pid;host.log("controller-ready",{{"tab",id},{"role",role},{"browserPid",int(pid)}});
     ComPtr<ICoreWebView2_3>w3;web.As(&w3);if(!w3||!host.check(w3->SetVirtualHostNameToFolderMapping(L"socialstream.ninja",host.root.toStdWString().c_str(),COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW),"mapping",id))return;
@@ -472,9 +478,10 @@ void Page::configure(){
     if(role=="capture") {
         script+=host.captureBundle;
         QUrl capture(url);if(capture.host()=="www.youtube.com")capture=QUrl("https://www.youtube.com/live_chat?is_popout=1&v=abcdefghijk");
+        const QString sourceParameters=capture.host()=="kick.com"?"fetch":"";
         for(const auto &v:host.manifest["content_scripts"].toArray()) {
             const auto entry=v.toObject();if(!chatScriptMatches(entry,capture)&&!chatScriptMatches(entry,QUrl(url)))continue;
-            script+="\nwindow.__chatSpike.register("+QString::fromUtf8(json(entry))+",function(){\n";
+            script+="\nwindow.__chatSpike.register("+QString::fromUtf8(json(entry))+",function("+sourceParameters+"){\n";
             for(const auto &file:entry["js"].toArray())script+=QString::fromUtf8(read(host.root+"/"+file.toString()))+"\n;\n";
             script+="\n});\n";
         }
@@ -561,12 +568,12 @@ void Host::sampleResources() {
         if(!p->web||p->role=="signin"||p->role=="account-clear"||p->property("resourcePending").toBool())continue;
         p->setProperty("resourcePending",true);
         QPointer<Page> self(p.get());
-        const auto hr=p->web->ExecuteScript(L"({nodes:document.getElementsByTagName('*').length,heapUsed:performance.memory?.usedJSHeapSize||0,heapTotal:performance.memory?.totalJSHeapSize||0,resources:performance.getEntriesByType('resource').length,bridge:window.__engineSpike?.stats?.()})",
+        const auto hr=p->web->ExecuteScript(L"({viewportHeight:innerHeight,chatHeight:document.getElementById('chatroom-messages')?.clientHeight||0,chatRows:document.querySelectorAll('#chatroom-messages [data-index]').length,nodes:document.getElementsByTagName('*').length,heapUsed:performance.memory?.usedJSHeapSize||0,heapTotal:performance.memory?.totalJSHeapSize||0,resources:performance.getEntriesByType('resource').length,bridge:window.__engineSpike?.stats?.()})",
             Callback<ICoreWebView2ExecuteScriptCompletedHandler>([self](HRESULT hr,LPCWSTR result)->HRESULT{
                 if(!self)return S_OK;self->setProperty("resourcePending",false);
                 if(SUCCEEDED(hr)&&result){
                     const auto data=QJsonDocument::fromJson(QString::fromWCharArray(result).toUtf8()).object();QJsonObject safe,bridge;
-                    for(const auto *key:{"nodes","heapUsed","heapTotal","resources"})if(data[key].isDouble())safe[key]=data[key];
+                    for(const auto *key:{"viewportHeight","chatHeight","chatRows","nodes","heapUsed","heapTotal","resources"})if(data[key].isDouble())safe[key]=data[key];
                     const auto rawBridge=data["bridge"].toObject();for(const auto *key:{"pending","events","children"})if(rawBridge[key].isDouble())bridge[key]=rawBridge[key];
                     safe["bridge"]=bridge;safe["sampledAt"]=QDateTime::currentMSecsSinceEpoch();self->setProperty("resourceStats",safe);
                 }

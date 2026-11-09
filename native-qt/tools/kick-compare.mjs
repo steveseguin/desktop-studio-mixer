@@ -13,6 +13,8 @@ import {discovery,health,request} from './mcp/studio-client.mjs';
 const flag=(name,fallback)=>{const i=process.argv.indexOf('--'+name);return i<0?fallback:process.argv[i+1];};
 const seconds=Number(flag('seconds',300));
 if(!Number.isFinite(seconds)||seconds<30)throw Error('Comparison requires at least 30 seconds');
+const pollMs=Number(flag('poll-ms',500));
+if(!Number.isFinite(pollMs)||pollMs<200||pollMs>3000)throw Error('Poll interval must be 200–3000 ms');
 const attached=flag('session')?JSON.parse((await fs.readFile(flag('session'),'utf8')).replace(/^\uFEFF/,'')):null;
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const exe=attached?.exe||process.env.VIDEO_MIXER_CHAT_EXE||path.join(root,'native-qt/dist/desktop-studio-portable/desktop-studio.exe');
@@ -48,7 +50,7 @@ try{
   if(!info)throw Error('could not read the chatroom id');
   if(!info.live)throw Error('Selected Kick channel is not live');
   console.log('channel',channel,JSON.stringify(info));
-  const truth=[],ids=new Set(),deleted=new Map(),banned=new Map();let subscribed=false,socketLost=false;
+  const truth=[],ids=new Set(),deleted=new Map(),banned=new Map(),moderationEvents=[];let subscribed=false,socketLost=false;
   socket=new WebSocket('wss://ws-us2.pusher.com/app/34bf7a0ff419a2a775b9?protocol=7&client=js&version=8.4.0&flash=false');
   const topic=`chatrooms.${info.id}.v2`;
   socket.onmessage=e=>{try{
@@ -58,9 +60,9 @@ try{
     if(m.event==='pusher:error')socketLost=true;
     if(m.event==='pusher_internal:subscription_succeeded'&&m.channel===topic)subscribed=true;
     if(m.channel!==topic)return;
-    if(/ChatMessageEvent/.test(m.event)){const d=JSON.parse(m.data);if(ids.has(d.id))return;ids.add(d.id);truth.push({at:Date.now(),id:d.id,user:d.sender?.username,text:d.content,badges:d.sender?.identity?.badges?.map(b=>b.type)});}
-    if(/MessageDeletedEvent/.test(m.event))deleted.set(JSON.parse(m.data).message?.id,Date.now());
-    if(/UserBannedEvent/.test(m.event))banned.set(JSON.parse(m.data).user?.username,Date.now());
+    if(/ChatMessageEvent/.test(m.event)){const d=JSON.parse(m.data);if(ids.has(d.id))return;ids.add(d.id);truth.push({at:Date.now(),id:d.id,user:d.sender?.username,text:d.content,type:d.type,metadata:d.metadata,badges:d.sender?.identity?.badges?.map(b=>b.type)});}
+    if(/MessageDeletedEvent/.test(m.event)){const id=JSON.parse(m.data).message?.id,at=Date.now();deleted.set(id,at);moderationEvents.push({kind:'delete',id,at});}
+    if(/UserBannedEvent/.test(m.event)){const user=JSON.parse(m.data).user?.username,at=Date.now();banned.set(user,at);moderationEvents.push({kind:'ban',user,at});}
   }catch{socketLost=true;}};
   socket.onclose=()=>{socketLost=true;};
   socket.onerror=()=>{socketLost=true;};
@@ -69,22 +71,36 @@ try{
   const first=await until(async()=>(await raw({command:'chat.messages'})).messages.some(m=>m.channel===added.channel.id),60000);
   // The panel keeps only its newest comments, so gather them during the run, and score only those that arrived during it.
   const seen=new Map();
-  const collect=async()=>{for(const m of (await raw({command:'chat.messages'})).messages)if(m.channel===added.channel.id&&!seen.has(m.id))seen.set(m.id,{...m,seenMs:Date.now()});};
+  let lastDiagnostic=0;
+  const collect=async()=>{
+    const feed=await raw({command:'chat.messages'});
+    for(const m of feed.messages)if(m.channel===added.channel.id&&!seen.has(m.id))seen.set(m.id,{...m,seenMs:Date.now()});
+    if(Date.now()-lastDiagnostic>=2000){
+      lastDiagnostic=Date.now();const state=await raw({command:'chat.status'});
+      const diagnostic={at:lastDiagnostic,bufferRows:feed.messages.length,pending:feed.pending,selected:!!state.selected,
+        ready:state.ready,browserPid:state.browser_pid,oversized:state.oversized_messages,resources:state.resources,
+        channels:state.channels?.map(c=>({id:c.id,platform:c.platform,status:c.status})),
+        pageResources:state.page_resources?.pages?.map(p=>({platform:p.platform,role:p.role,stats:p.stats}))};
+      await fs.appendFile(path.join(out,'diagnostics.jsonl'),JSON.stringify(diagnostic)+'\n');
+    }
+  };
   await collect();
   const initialIds=new Set(seen.keys());
   const started=Date.now();
-  while(Date.now()-started<seconds*1000){await delay(3000);await collect();}
+  while(Date.now()-started<seconds*1000){await delay(pollMs);await collect();}
   const referenceHeld=!socketLost;
   socket.onclose=null;socket.close();
   const stopped=Date.now();
   const rows=[...seen.values()].filter(r=>!initialIds.has(r.id));
-  await fs.writeFile(path.join(out,'window.json'),JSON.stringify({started,stopped,scoredFrom:started+5000,scoredUntil:stopped-15000,deleted:[...deleted],banned:[...banned]},null,2));
+  await fs.writeFile(path.join(out,'window.json'),JSON.stringify({started,stopped,scoredFrom:started+5000,scoredUntil:stopped-15000,deleted:[...deleted],banned:[...banned],moderationEvents},null,2));
   await fs.writeFile(path.join(out,'captured.json'),JSON.stringify(rows,null,1));
   await fs.writeFile(path.join(out,'truth.json'),JSON.stringify(truth,null,1));
-  // Kick gifts are separate platform events, absent from ChatMessageEvent.
-  // Retain them in the ledger, but do not label them unexpected chat messages.
-  const chatRows=rows.filter(r=>r.event!=='gift');
-  const giftEventsObserved=rows.length-chatRows.length;
+  // Gifts and reward notices are separate platform events. Keep them in the
+  // ledger, but score ordinary chat against ChatMessageEvent. A reward-labelled
+  // row with a native chat ID still belongs in the ordinary message comparison.
+  const chatRows=rows.filter(r=>r.event!=='gift'&&!(r.event==='reward'&&!r.meta?.messageId));
+  const nativeIdsCompared=chatRows.length>0&&chatRows.every(r=>/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(r.meta?.messageId||''));
+  const giftEventsObserved=rows.filter(r=>r.event==='gift').length;
   const inWindow=truth.filter(t=>t.at>=started+5000&&t.at<=stopped-15000);
   const key=(user,text)=>JSON.stringify([normal(user).toLowerCase(),normal(text)]);
   // Studio exposes emote alternative text. Decode only Kick's explicit emote
@@ -100,7 +116,7 @@ try{
   for(const tolerance of [5000,15000])for(const t of truth){
     const k=key(t.user,expectedText(t));referenceKeys.add(k);if(matchedIds.has(t.id))continue;
     const candidates=available.get(k)||[];
-    const index=candidates.findIndex(r=>Math.abs(r.seenMs-t.at)<=tolerance);
+    const index=candidates.findIndex(r=>(!nativeIdsCompared||r.meta.messageId.toLowerCase()===t.id.toLowerCase())&&Math.abs(r.seenMs-t.at)<=tolerance);
     if(index>=0){const[r]=candidates.splice(index,1);matchedIds.add(t.id);matchedRows.add(r.id);if(t.at>=started+5000&&t.at<=stopped-15000){delays.push(r.seenMs-t.at);if(tolerance>5000)lateOccurrences++;}}
   }
   // An unmatched copy of known text may be a duplicate or delivery delayed by
@@ -113,7 +129,7 @@ try{
   let matched=0,emoteMatched=0,removedByModerators=0;const missed=[],buckets={};
   // Moderators can remove a comment before the page shows it. Those are correct omissions, and are counted separately.
   const soonAfter=(at,t)=>at>=t.at&&at-t.at<=5000;
-  const removed=t=>soonAfter(deleted.get(t.id),t)||soonAfter(banned.get(t.user),t);
+  const removed=t=>moderationEvents.some(e=>soonAfter(e.at,t)&&(e.kind==='delete'?e.id===t.id:e.user===t.user));
   for(const t of inWindow){
     const hit=matchedIds.has(t.id),b=Math.floor((t.at-started)/30000);
     if(!hit&&removed(t)){removedByModerators++;continue;}
@@ -126,7 +142,7 @@ try{
   const stalled=Object.values(buckets).filter(([hit,miss])=>miss>=5&&hit===0).length;
   const eligible=inWindow.length-removedByModerators;
   if(!referenceHeld||!eligible||matched!==eligible||lateOccurrences||stalled||unmatchedKnownOccurrences||unexpectedOccurrences)process.exitCode=1;
-  summary={referenceHeld,stalled,channel,viewers:info.viewers,live:info.live,seconds,scoredSeconds:(stopped-started-20000)/1000,comparison:'author-text-and-emote-occurrences; 5s target, 15s late allowance',maxAbsReceiptDifferenceMs:delays.length?delays.reduce((max,value)=>Math.max(max,Math.abs(value)),0):null,firstComment:!!first,referenceTotal:inWindow.length,referencePlainText:plain.length,referenceEmoteMessages:inWindow.length-plain.length,emoteMatched,removedByModerators,matched,lateOccurrences,missing:eligible-matched,unmatchedKnownOccurrences,unexpectedOccurrences,giftEventsObserved,rate:eligible?matched/eligible:null,panelKick:rows.length,status:status.channels?.map(c=>({name:c.name,status:c.status})),missed};
+  summary={referenceHeld,stalled,channel,viewers:info.viewers,live:info.live,seconds,pollMs,scoredSeconds:(stopped-started-20000)/1000,nativeIdsCompared,comparison:(nativeIdsCompared?'native-id-author-text-and-emotes':'author-text-and-emote-occurrences')+'; 5s target, 15s late allowance',maxAbsReceiptDifferenceMs:delays.length?delays.reduce((max,value)=>Math.max(max,Math.abs(value)),0):null,firstComment:!!first,referenceTotal:inWindow.length,referencePlainText:plain.length,referenceEmoteMessages:inWindow.length-plain.length,emoteMatched,removedByModerators,matched,lateOccurrences,missing:eligible-matched,unmatchedKnownOccurrences,unexpectedOccurrences,giftEventsObserved,rate:eligible?matched/eligible:null,panelKick:rows.length,status:status.channels?.map(c=>({name:c.name,status:c.status})),missed};
 }catch(e){summary.error=e.message;process.exitCode=1;}
 finally{
   clearInterval(heartbeat);

@@ -75,6 +75,24 @@
       if (['capture', 'practice'].includes(cfg.role) && args[0]?.message) {
         const source=args[0].message;
         const message=Object.fromEntries(['chatname','chatmessage','hasDonation','membership','textonly','type','reply','initial','event'].filter(k => k in source).map(k => [k,source[k]]));
+        // A short emote message can contain many kilobytes of image markup.
+        // Compact rich bodies before the bounded native pipe; keep the visible
+        // text limit unchanged. Template content is inert, including its images.
+        const bodyFields=['chatmessage','reply','initial'];
+        if (!message.textonly && bodyFields.some(k => typeof message[k]==='string' && message[k].length>8000) &&
+            bodyFields.every(k => typeof message[k]!=='string' || message[k].length<=256000)) {
+          try {
+            const plain={};
+            for (const key of bodyFields) if (typeof message[key]==='string') {
+              const template=document.createElement('template');
+              template.innerHTML=message[key];
+              for (const img of template.content.querySelectorAll('img')) img.replaceWith(document.createTextNode(img.getAttribute('alt')||''));
+              for (const br of template.content.querySelectorAll('br')) br.replaceWith(document.createTextNode('\n'));
+              plain[key]=template.content.textContent;
+            }
+            Object.assign(message,plain,{textonly:true});
+          } catch (_) { /* The native size checks still reject uncompacted data. */ }
+        }
         // Image-only posts still need a readable body in Studio's text cards.
         // Otherwise a subscriber's GIF becomes "Membership update", and the
         // same post from a non-subscriber disappears. Never fetch the image.
@@ -88,6 +106,7 @@
         // Keep bounded gift identity/counts, without transporting embedded avatars, badge
         // images or arbitrary platform metadata through the native message pipe.
         if(source.meta)message.meta=Object.fromEntries(['tiktokGiftStreakId','tiktokGiftCount','giftName'].filter(k=>typeof source.meta[k]==='number'||typeof source.meta[k]==='string'&&source.meta[k].length<=256).map(k=>[k,source.meta[k]]));
+        if(source.type==='kick'&&typeof source.meta?.messageId==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(source.meta.messageId))message.meta.messageId=source.meta.messageId;
         if(JSON.stringify(message).length>24000)delete message.chatimg;
         args[0]={message};
       }

@@ -55,6 +55,19 @@ private slots:
             QVERIFY2(chatAvatarUrl(value).isEmpty(),qPrintable(value));
         QVERIFY(chatAvatarUrl("https://yt3.ggpht.com/"+QString(2048,'a')).isEmpty());
     }
+    void deferredKickAvatars() {
+        const QString reference="https://studio-chat.invalid/kick-avatar/channel_1/Viewer-2";
+        QCOMPARE(chatAvatarUrl(reference),reference);
+        QCOMPARE(chatAvatarProfileUrl(reference),QString("https://kick.com/channels/channel_1/Viewer-2"));
+        for(const auto &value:QStringList{"https://studio-chat.invalid/host.html",
+            "https://studio-chat.invalid/kick-avatar/a/b?token=x","https://studio-chat.invalid/kick-avatar/a/b#x",
+            "https://private@studio-chat.invalid/kick-avatar/a/b","https://studio-chat.invalid:8443/kick-avatar/a/b",
+            "https://studio-chat.invalid/kick-avatar/a/..","https://studio-chat.invalid/kick-avatar/a/b%2fc",
+            "https://studio-chat.invalid.evil.test/kick-avatar/a/b","http://studio-chat.invalid/kick-avatar/a/b"}) {
+            QVERIFY2(chatAvatarUrl(value).isEmpty(),qPrintable(value));
+            QVERIFY2(chatAvatarProfileUrl(value).isEmpty(),qPrintable(value));
+        }
+    }
     void replyText() {
         QCOMPARE(chatCommentText({{"chatmessage","hello"}}),QString("hello"));
         QCOMPARE(chatCommentText({{"chatmessage","Replying to @Ann: long quote:  hi"},{"initial","Replying to @Ann: long quote"},{"reply","hi"}}),QString("@Ann hi"));

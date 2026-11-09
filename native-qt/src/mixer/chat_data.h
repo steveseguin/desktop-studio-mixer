@@ -16,6 +16,7 @@ bool chatCaptureChannelMatches(const QUrl &configured, const QUrl &candidate);
 bool verifyChatPack(const QString &root);
 QString chatPlatformName(const QString &type);
 QString chatAvatarUrl(const QString &value);
+QString chatAvatarProfileUrl(const QString &value);
 QString chatPageStatus(const QJsonObject &probe);
 QString chatCommentText(const QJsonObject &captured);
 QString chatSupportLabel(const QJsonObject &message);

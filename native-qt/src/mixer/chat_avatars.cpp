@@ -2,12 +2,15 @@
 #include "chat_data.h"
 #include <QBuffer>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QImageReader>
+#include <QJsonDocument>
 #include <QNetworkReply>
 #include <QPointer>
 #include <QRunnable>
 #include <QThreadPool>
 #include <QTimer>
+#include <algorithm>
 #include <memory>
 
 namespace versus::mixer {
@@ -30,6 +33,8 @@ QImage decodeAvatar(QByteArray bytes) {
 }
 ChatAvatarCache::ChatAvatarCache(QObject *parent):QObject(parent),network_(this) {
     clock_.start();
+    profileWake_.setSingleShot(true);
+    connect(&profileWake_,&QTimer::timeout,this,[this]{if(updated)updated();});
     connect(&network_,&QNetworkAccessManager::authenticationRequired,this,
         [](QNetworkReply *reply,QAuthenticator *){reply->abort();});
 }
@@ -44,9 +49,23 @@ QPixmap ChatAvatarCache::picture(const QString &value) {
     if(const auto picture=pictures_.object(key))return *picture;
     if(const auto until=failures_.object(key)){if(*until>clock_.elapsed())return {};failures_.remove(key);}
     if(pending_.contains(key)||pending_.size()>=4)return {};
+    const auto profile=chatAvatarProfileUrl(key);
+    if(!profile.isEmpty()){
+        // Two profile lookups per second, even while a busy feed repaints. No
+        // queue of departed rows: a repaint retries only the currently visible ones.
+        const auto wait=nextProfileAt_-clock_.elapsed();
+        if(wait>0){if(!profileWake_.isActive())profileWake_.start(int(wait));return {};}
+        nextProfileAt_=clock_.elapsed()+500;
+    }
     pending_.insert(key);++requests_;
-    QNetworkRequest request{QUrl(key)};
-    request.setRawHeader("Accept","image/png,image/jpeg,image/webp,image/gif");
+    fetch(key,profile.isEmpty()?key:profile,!profile.isEmpty());
+    return {};
+}
+void ChatAvatarCache::fetch(const QString &key,const QString &url,bool profile) {
+    if(profile)++profileRequests_;
+    const qsizetype limit=profile?16*1024:MaxBytes;
+    QNetworkRequest request{QUrl(url)};
+    request.setRawHeader("Accept",profile?"application/json":"image/png,image/jpeg,image/webp,image/gif");
     request.setRawHeader("Accept-Encoding","identity");
     request.setRawHeader("User-Agent","Desktop-Studio/avatar");
     request.setRawHeader("Origin","https://socialstream.ninja");
@@ -57,25 +76,38 @@ QPixmap ChatAvatarCache::picture(const QString &value) {
     request.setMaximumRedirectsAllowed(3);request.setTransferTimeout(8000);
     auto *reply=network_.get(request);reply->setReadBufferSize(32*1024);
     auto bytes=std::make_shared<QByteArray>();auto rejected=std::make_shared<bool>(false);
-    const auto receive=[reply,bytes,rejected]{
+    const auto receive=[reply,bytes,rejected,limit]{
         if(*rejected)return;
-        bytes->append(reply->read(MaxBytes+1-bytes->size()));
-        if(bytes->size()>MaxBytes){*rejected=true;reply->abort();}
+        bytes->append(reply->read(limit+1-bytes->size()));
+        if(bytes->size()>limit){*rejected=true;reply->abort();}
     };
-    connect(reply,&QNetworkReply::redirected,this,[reply](const QUrl &url){
-        if(chatAvatarUrl(url.toString()).isEmpty())reply->abort();else reply->redirectAllowed();
+    connect(reply,&QNetworkReply::redirected,this,[reply,profile](const QUrl &url){
+        if(profile||chatAvatarUrl(url.toString()).isEmpty()||!chatAvatarProfileUrl(url.toString()).isEmpty())reply->abort();else reply->redirectAllowed();
     });
-    connect(reply,&QNetworkReply::metaDataChanged,this,[reply,rejected]{
-        if(reply->header(QNetworkRequest::ContentLengthHeader).toLongLong()>MaxBytes){*rejected=true;reply->abort();}
+    connect(reply,&QNetworkReply::metaDataChanged,this,[reply,rejected,limit]{
+        if(reply->header(QNetworkRequest::ContentLengthHeader).toLongLong()>limit){*rejected=true;reply->abort();}
     });
     connect(reply,&QIODevice::readyRead,this,receive);
     QTimer::singleShot(10000,reply,[reply]{reply->abort();});
-    connect(reply,&QNetworkReply::finished,this,[this,reply,key,bytes,rejected,receive]{
+    connect(reply,&QNetworkReply::finished,this,[this,reply,key,bytes,rejected,receive,profile]{
         receive();
+        const auto code=reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if(profile){const auto bucket=code>=100&&code<=599?QString::number(code):QString("network_error");profileResponses_[bucket]=profileResponses_[bucket].toDouble()+1;}
+        if(profile&&code==429){
+            const auto raw=reply->rawHeader("Retry-After");bool numeric=false;auto retry=raw.toLongLong(&numeric);
+            if(!numeric){const auto date=QDateTime::fromString(QString::fromLatin1(raw),Qt::RFC2822Date);retry=date.isValid()?QDateTime::currentDateTimeUtc().secsTo(date):60;}
+            const qint64 seconds=std::clamp<qint64>(retry,30,3600);
+            nextProfileAt_=clock_.elapsed()+seconds*1000;profileWake_.start(int(seconds*1000));
+        }
         const bool ok=!*rejected&&reply->error()==QNetworkReply::NoError&&
-            reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()==200;
+            code==200;
         reply->deleteLater();
         if(!ok){complete(key,{});return;}
+        if(profile){
+            const auto photo=chatAvatarUrl(QJsonDocument::fromJson(*bytes).object()["profilepic"].toString());
+            if(photo.isEmpty()||!chatAvatarProfileUrl(photo).isEmpty()){complete(key,{});return;}
+            fetch(key,photo,false);return;
+        }
         // Image decoding must not compete with the GUI's video/recording timers.
         const QPointer<ChatAvatarCache> owner(this);
         QThreadPool::globalInstance()->start(QRunnable::create([owner,key,bytes]{
@@ -85,7 +117,6 @@ QPixmap ChatAvatarCache::picture(const QString &value) {
             },Qt::QueuedConnection);
         }));
     });
-    return {};
 }
 void ChatAvatarCache::complete(const QString &key,const QImage &image) {
     pending_.remove(key);
@@ -96,6 +127,6 @@ void ChatAvatarCache::complete(const QString &key,const QImage &image) {
 }
 QJsonObject ChatAvatarCache::status() const {
     return {{"cached",pictures_.size()},{"cache_kib",pictures_.totalCost()},{"in_flight",pending_.size()},
-        {"requests",requests_},{"loaded",loaded_},{"failed",failed_}};
+        {"requests",requests_},{"loaded",loaded_},{"failed",failed_},{"profile_requests",profileRequests_},{"profile_responses",profileResponses_}};
 }
 }
