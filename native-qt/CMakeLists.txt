@@ -425,6 +425,14 @@ if(VERSUS_BUILD_TESTS)
 
     # Library target for testable code (without main.cpp)
     set(VERSUS_LIB_SOURCES
+        src/mixer/chat_data.cpp
+        src/mixer/chat_engine.cpp
+        src/mixer/chat_engine.h
+        src/mixer/chat_worker.cpp
+        src/mixer/chat_panel.cpp
+        src/mixer/chat_panel.h
+        src/mixer/chat_avatars.cpp
+        src/mixer/chat_avatars.h
         src/mixer/process_worker.cpp
         src/mixer/isolated_source.cpp
         src/mixer/encoder_worker.cpp

@@ -13,7 +13,7 @@ public:
     ~MediaSource();
     // The synchronous callback borrows a reusable decode buffer until it returns.
     void start(const QString &path, std::function<void(const video::CapturedFrame &)> frame,
-               std::function<void(audio::StreamChunk&&)> audio);
+               std::function<void(audio::StreamChunk&&)> audio, bool preserveInputChannels = false);
     void stop();
     void setPaused(bool paused) { if (!paused && ended_) seek(0); paused_ = paused; wake_.notify_all(); }
     void setLoop(bool loop) { loop_ = loop; }

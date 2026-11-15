@@ -93,14 +93,14 @@ audio::CaptureResult IsolatedSource::StartStreamCapture(uint32_t pid, audio::Win
     if (ok) { running_ = true; reader_ = std::thread([this] { consume(); }); }
     return {ok, true, 48000, 2, lastError()};
 }
-audio::CaptureResult IsolatedSource::StartInputDeviceStreamCapture(const std::string &locator, audio::WindowAudioCaptureCore::StreamCallback callback) {
-    audio_ = std::move(callback); const bool ok = begin({{"op", "start"}, {"locator", QString::fromStdString(locator)}});
+audio::CaptureResult IsolatedSource::StartInputDeviceStreamCapture(const std::string &locator, audio::WindowAudioCaptureCore::StreamCallback callback, bool preserveInputChannels) {
+    audio_ = std::move(callback); const bool ok = begin({{"op", "start"}, {"locator", QString::fromStdString(locator)}, {"preserveInputChannels", preserveInputChannels}});
     if (ok) { running_ = true; reader_ = std::thread([this] { consume(); }); }
     return {ok, false, 48000, 2, lastError()};
 }
-void IsolatedSource::start(const QString &path, std::function<void(video::CapturedFrame)> frame, audio::WindowAudioCaptureCore::StreamCallback audio) {
+void IsolatedSource::start(const QString &path, std::function<void(video::CapturedFrame)> frame, audio::WindowAudioCaptureCore::StreamCallback audio, bool preserveInputChannels) {
     frame_ = std::move(frame); audio_ = std::move(audio); running_ = true;
-    const QJsonObject command{{"op", "start"}, {"locator", path}, {"paused", paused_}, {"loop", loop_}};
+    const QJsonObject command{{"op", "start"}, {"locator", path}, {"paused", paused_}, {"loop", loop_}, {"preserveInputChannels", preserveInputChannels}};
     reader_ = std::thread([this, command] { if (begin(command)) consume(); else failed_ = true; });
 }
 void IsolatedSource::mediaCommand(const QJsonObject &command) {

@@ -24,6 +24,7 @@ class TestAudioFormatConverter : public QObject {
     void testCommonMicrophoneRatesAndChannelLayouts();
     void testOptInPhysicalInputLifecycleStress();
     void testInvalidFormatsRejected();
+    void testSixChannelsPreserveIdentityAcrossChunks();
     void testStreamingResamplingIsIndependentOfChunkBoundaries();
     void testStreamingResamplingIsIndependentOfChunkBoundaries_data();
 };
@@ -315,6 +316,30 @@ void TestAudioFormatConverter::testInvalidFormatsRejected() {
     invalid.channels = 1;
     invalid.samples = {0.1f};
     QVERIFY(versus::audio::normalizeAudioForOpus(invalid).empty());
+}
+
+void TestAudioFormatConverter::testSixChannelsPreserveIdentityAcrossChunks() {
+    for (uint32_t rate : {44100u, 48000u, 96000u}) {
+        versus::audio::StreamChunk input;
+        input.sampleRate = rate; input.channels = 6;
+        for (int frame = 0; frame < 997; ++frame)
+            for (int channel = 0; channel < 6; ++channel)
+                input.samples.push_back(channel * 0.1f + frame * 0.0001f);
+        versus::audio::AudioResamplerState wholeState, splitState;
+        auto expected = versus::audio::normalizeAudioForOpus(input, &wholeState, 6);
+        std::vector<float> actual;
+        for (size_t offset = 0; offset < input.samples.size(); offset += 6 * 17) {
+            auto chunk = input;
+            chunk.samples.assign(input.samples.begin() + offset,
+                input.samples.begin() + std::min(offset + 6 * 17, input.samples.size()));
+            auto converted = versus::audio::normalizeAudioForOpus(chunk, &splitState, 6);
+            actual.insert(actual.end(), converted.begin(), converted.end());
+        }
+        QCOMPARE(actual, expected); QVERIFY(!actual.empty());
+        for (size_t frame = 0; frame < actual.size() / 6; ++frame)
+            for (size_t channel = 0; channel < 6; ++channel)
+                QVERIFY(std::abs(actual[frame * 6 + channel] - actual[frame * 6] - channel * .1f) < .00001f);
+    }
 }
 
 QTEST_MAIN(TestAudioFormatConverter)

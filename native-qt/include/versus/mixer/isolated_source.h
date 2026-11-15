@@ -27,8 +27,8 @@ public:
     video::CameraSettings settings() const;
     std::future<video::CameraControlResult> setControl(const std::string &id, int value, bool automatic);
     audio::CaptureResult StartStreamCapture(uint32_t pid, audio::WindowAudioCaptureCore::StreamCallback callback, bool exclude = false);
-    audio::CaptureResult StartInputDeviceStreamCapture(const std::string &locator, audio::WindowAudioCaptureCore::StreamCallback callback);
-    void start(const QString &path, std::function<void(video::CapturedFrame)> frame, audio::WindowAudioCaptureCore::StreamCallback audio);
+    audio::CaptureResult StartInputDeviceStreamCapture(const std::string &locator, audio::WindowAudioCaptureCore::StreamCallback callback, bool preserveInputChannels = false);
+    void start(const QString &path, std::function<void(video::CapturedFrame)> frame, audio::WindowAudioCaptureCore::StreamCallback audio, bool preserveInputChannels = false);
     void setPaused(bool paused);
     void setLoop(bool loop);
     void restart();

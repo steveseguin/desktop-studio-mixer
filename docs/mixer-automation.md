@@ -74,6 +74,17 @@ Separate recordings stay active off-screen; see the README for routing details.
 Program alone. `audio_sources` and `separate_videos` identify the frozen recording
 plan, including each source file's path, status and active/busy flags.
 
+The experimental six-input mode adds `inputChannels:6` to `source.add` and
+`source.update` for microphone or media sources; the default is `2`. Changes
+reconnect the source and are rejected while recording. Source state reports
+`inputChannels`, `receivedChannels` and `inputStatus`. Read
+`recording.audio_choices` for available selection IDs: a normal source choice
+has `input:0`, and its six individual choices have `input:1` through `6`.
+Pass the desired choice IDs in `record.start.audioSources`; these use the same
+16-track allowance. See [six-channel input](mixer-six-channel-input.md) for
+format requirements and signal routing. The six individual choices preserve
+input identity independently of the source's stereo `channelMode` setting.
+
 `show.saveAs` saves and activates an absolute `.mixer.json` path. `show.open` adds
 `activate:true` for the same active-project behavior as the visible Open command;
 without it, the original import-into-workspace behavior is retained. `show.collect`

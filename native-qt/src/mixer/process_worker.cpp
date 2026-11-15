@@ -35,7 +35,7 @@ namespace versus::mixer {
 namespace {
 constexpr size_t BlobCapacity = 8192ull * 8192 * 4;
 constexpr size_t JsonCapacity = 65536;
-constexpr size_t AudioCapacity = 19200; // 200 ms of stereo 48 kHz
+constexpr size_t AudioCapacity = 192000 * 8 / 5; // At most 200 ms at the supported rate/channel ceiling.
 bool workerProcess = false;
 DWORD browserAggregateCpuRate() {
     return std::max<DWORD>(1,std::min<DWORD>(5000,80000/std::max<DWORD>(1,GetActiveProcessorCount(ALL_PROCESSOR_GROUPS))));
@@ -99,7 +99,7 @@ struct Shared {
 };
 unsigned char *blobData(Shared *s) { return reinterpret_cast<unsigned char*>(s)+sizeof(Shared); }
 unsigned char *pixelData(Shared *s) { return blobData(s)+s->blobCapacity; }
-constexpr uint32_t Magic = 0x44535431;
+constexpr uint32_t Magic = 0x44535432; // Larger multichannel PCM region; reject an incompatible worker.
 void close(HANDLE &handle) { if (handle) CloseHandle(handle); handle = nullptr; }
 bool lock(HANDLE mutex, DWORD timeout = 0) {
     const auto result = WaitForSingleObject(mutex, timeout);
@@ -511,8 +511,12 @@ int ProcessWorker::run(int argc, char **argv) {
         auto &s = *shared;
         if (s.sampleRate != chunk.sampleRate || s.channels != chunk.channels || s.audioSize > AudioCapacity) s.audioSize = 0;
         s.sampleRate = chunk.sampleRate; s.channels = chunk.channels;
-        const size_t count = std::min(chunk.samples.size(), AudioCapacity);
-        if (s.audioSize + count > AudioCapacity) s.audioSize = 0;
+        if (!chunk.channels || chunk.channels>8 || chunk.sampleRate<8000 || chunk.sampleRate>192000) { ReleaseMutex(handles[3]);return; }
+        // Keep the same 200 ms bound (19,200 floats for ordinary stereo),
+        // measured in frames so larger channel counts cannot truncate a packet.
+        const size_t capacity=std::min(AudioCapacity,size_t(chunk.sampleRate/5)*chunk.channels);
+        const size_t count=std::min(chunk.samples.size()/chunk.channels,capacity/chunk.channels)*chunk.channels;
+        if (s.audioSize + count > capacity) s.audioSize = 0;
         if (!s.audioSize) s.audioTimestamp = chunk.captureTime100ns;
         memcpy(s.audio+s.audioSize, chunk.samples.data()+chunk.samples.size()-count, count*sizeof(float)); s.audioSize += uint32_t(count);
         ReleaseMutex(handles[3]); SetEvent(handles[4]);
@@ -623,13 +627,17 @@ int ProcessWorker::run(int argc, char **argv) {
                 result["ok"] = spout->startCapture(locator, c["width"].toInt(), c["height"].toInt(), c["fps"].toInt()); state["active"] = result["ok"];
             } else if (op == "start" && kind == "audio") {
                 captureAudio = std::make_unique<audio::WindowAudioCaptureCore>();
-                const auto r = c.contains("pid") ? captureAudio->StartStreamCapture(uint32_t(c["pid"].toInteger()), audio, c["exclude"].toBool()) : captureAudio->StartInputDeviceStreamCapture(locator, audio);
+                auto r = c.contains("pid") ? captureAudio->StartStreamCapture(uint32_t(c["pid"].toInteger()), audio, c["exclude"].toBool()) : captureAudio->StartInputDeviceStreamCapture(locator, audio);
+                if (r.success && c["preserveInputChannels"].toBool() && r.channels>8) {
+                    captureAudio->StopCapture();r.success=false;
+                    r.error="Six-input mode supports device formats with 6 to 8 channels. Choose a supported format in Windows sound settings.";
+                }
                 result["ok"] = r.success; result["error"] = QString::fromStdString(r.error); state["active"] = r.success;
             } else if (op == "start" && kind == "media") {
                 media = std::make_unique<MediaSource>(); media->setLoop(c["loop"].toBool()); media->setPaused(c["paused"].toBool());
                 media->start(c["locator"].toString(), [&](const video::CapturedFrame &f) {
                     frameBytes(f, f.data.data(), f.data.size());
-                }, audio); result["ok"] = true; state["active"] = true;
+                }, audio, c["preserveInputChannels"].toBool()); result["ok"] = true; state["active"] = true;
             } else if (op == "media" && media) {
                 if (c["restart"].toBool()) media->restart();
                 if ((c.contains("seekMs") || c["restart"].toBool()) && lock(handles[3],100)) { shared->audioSize = 0; ReleaseMutex(handles[3]); }

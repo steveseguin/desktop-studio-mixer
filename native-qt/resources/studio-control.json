@@ -158,6 +158,7 @@
             "color"
           ]
         },
+        "inputChannels": {"type":"integer", "minimum":2, "maximum":6, "enum":[2,6], "description":"Default 2. Opt-in 6 preserves inputs 1-6 for microphone/audio interfaces and local media files in a 6 to 8 channel format. Recording choices are exposed in recording.audio_choices."},
         "name": {
           "type": "string",
           "minLength": 1,
@@ -203,6 +204,7 @@
           "minLength": 1,
           "maxLength": 64
         },
+        "inputChannels": {"type":"integer", "minimum":2, "maximum":6, "enum":[2,6], "description":"Microphone or media input mode; changes reconnect the source and require recording to be stopped."},
         "name": {
           "type": "string",
           "minLength": 1,

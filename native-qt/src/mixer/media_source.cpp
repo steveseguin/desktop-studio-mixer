@@ -15,11 +15,11 @@ namespace versus::mixer {
 MediaSource::~MediaSource() { stop(); }
 void MediaSource::stop() { running_ = false; wake_.notify_all(); if (worker_.joinable()) worker_.join(); }
 void MediaSource::start(const QString &path, std::function<void(const video::CapturedFrame &)> frame,
-                        std::function<void(audio::StreamChunk&&)> audio) {
+                        std::function<void(audio::StreamChunk&&)> audio, bool preserveInputChannels) {
     stop(); running_ = true; ended_ = false; hasVideo_ = false; seek_ = false;
     positionMs_ = 0; durationMs_ = 0;
     { std::lock_guard lock(mutex_); error_.clear(); }
-    worker_ = std::thread([this, path, frame, audio] {
+    worker_ = std::thread([this, path, frame, audio, preserveInputChannels] {
         const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         const HRESULT mf = MFStartup(MF_VERSION, MFSTARTUP_LITE);
         auto fail = [this](const QString &error) { std::lock_guard lock(mutex_); error_ = error; };
@@ -37,6 +37,7 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                 PropVariantClear(&duration);
                 reader->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
                 DWORD videoStream = DWORD(-1), audioStream = DWORD(-1); UINT32 width = 0, height = 0;
+                UINT32 audioChannels = 2;
                 LONG stride = 0;
                 for (DWORD index = 0; index < 32; ++index) {
                     ComPtr<IMFMediaType> native;
@@ -47,10 +48,12 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                     if (!isVideo && !isAudio) continue;
                     ComPtr<IMFMediaType> type; MFCreateMediaType(&type); type->SetGUID(MF_MT_MAJOR_TYPE, major);
                     type->SetGUID(MF_MT_SUBTYPE, isVideo ? MFVideoFormat_RGB32 : MFAudioFormat_Float);
+                    const UINT32 requestedChannels = isAudio && preserveInputChannels ? MFGetAttributeUINT32(native.Get(),MF_MT_AUDIO_NUM_CHANNELS,0) : 2;
                     if (isAudio) {
-                        type->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, 2); type->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, 48000);
-                        type->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 32); type->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, 8);
-                        type->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 384000);
+                        if (!requestedChannels || requestedChannels>8) { fail("Cannot preserve this file's audio channels (supported: 1-8).");continue; }
+                        type->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, requestedChannels); type->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, 48000);
+                        type->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 32); type->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, requestedChannels*4);
+                        type->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 48000*requestedChannels*4);
                     }
                     if (FAILED(reader->SetCurrentMediaType(index, nullptr, type.Get()))) continue;
                     reader->SetStreamSelection(index, TRUE);
@@ -58,7 +61,7 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                         videoStream = index; reader->GetCurrentMediaType(index, &type);
                         MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, &width, &height);
                         stride = LONG(MFGetAttributeUINT32(type.Get(), MF_MT_DEFAULT_STRIDE, width*4));
-                    } else audioStream = index;
+                    } else { audioStream = index;audioChannels=requestedChannels; }
                 }
                 if (videoStream == DWORD(-1) && audioStream == DWORD(-1)) fail("No supported video or audio track in this file.");
                 else if (width > 8192 || height > 8192) fail("Media dimensions exceed 8192 pixels.");
@@ -76,7 +79,8 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                     // read-ahead. Reuse only the first 30 ms of this same file
                     // across that boundary, then skip its decoded duplicate.
                     // The existing mixer queue keeps the samples on its clock.
-                    constexpr size_t LoopPrefixFrames = 1440; // stereo 48 kHz
+                    constexpr size_t LoopPrefixFrames = 1440; // 48 kHz, preserving channel slots.
+                    const size_t audioFrameBytes = audioChannels*sizeof(float);
                     std::vector<float> loopAudioPrefix;
                     size_t skipLoopAudioFrames = 0;
                     LONGLONG cue = 0;
@@ -185,11 +189,11 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                                         } else {
                                             nextLoopOrigin = origin + std::chrono::nanoseconds(cycleEnd*100);
                                             if (!loopAudioPrefix.empty()) {
-                                                audio::StreamChunk prefix; prefix.sampleRate = 48000; prefix.channels = 2;
+                                                audio::StreamChunk prefix; prefix.sampleRate = 48000; prefix.channels = audioChannels;
                                                 prefix.captureTime100ns = std::chrono::duration_cast<std::chrono::nanoseconds>(nextLoopOrigin.time_since_epoch()).count()/100;
                                                 prefix.samples = loopAudioPrefix;
                                                 audio(std::move(prefix));
-                                                skipLoopAudioFrames = loopAudioPrefix.size()/2;
+                                                skipLoopAudioFrames = loopAudioPrefix.size()/audioChannels;
                                             }
                                             loopPending = true;
                                         }
@@ -261,30 +265,30 @@ void MediaSource::start(const QString &path, std::function<void(const video::Cap
                                 frame(captured);
                                 if (previewPending) { previewPending = false; origin = Clock::now()-std::chrono::nanoseconds(std::max<LONGLONG>(0,pts)*100); }
                             }
-                        } else if (stream == audioStream && length%8 == 0) {
-                            const LONGLONG totalFrames = length/8;
+                        } else if (stream == audioStream && length%audioFrameBytes == 0) {
+                            const LONGLONG totalFrames = length/audioFrameBytes;
                             const LONGLONG firstFrame = std::clamp<LONGLONG>((std::max<LONGLONG>(0,cue)-pts)*48000/10000000, 0, totalFrames);
                             const LONGLONG endFrame = mediaEnd > 0
                                 ? std::clamp<LONGLONG>((mediaEnd-pts)*48000/10000000, firstFrame, totalFrames)
                                 : totalFrames;
                             const size_t keptFrames = size_t(endFrame-firstFrame);
-                            if (cycleAudioFrames == loopAudioPrefix.size()/2 && loopAudioPrefix.size()/2 < LoopPrefixFrames) {
-                                const auto cacheFrames = std::min(keptFrames, LoopPrefixFrames-loopAudioPrefix.size()/2);
+                            if (cycleAudioFrames == loopAudioPrefix.size()/audioChannels && loopAudioPrefix.size()/audioChannels < LoopPrefixFrames) {
+                                const auto cacheFrames = std::min(keptFrames, LoopPrefixFrames-loopAudioPrefix.size()/audioChannels);
                                 const auto offset = loopAudioPrefix.size();
-                                loopAudioPrefix.resize(offset+cacheFrames*2);
-                                if (cacheFrames) std::memcpy(loopAudioPrefix.data()+offset, bytes+size_t(firstFrame)*8, cacheFrames*8);
+                                loopAudioPrefix.resize(offset+cacheFrames*audioChannels);
+                                if (cacheFrames) std::memcpy(loopAudioPrefix.data()+offset, bytes+size_t(firstFrame)*audioFrameBytes, cacheFrames*audioFrameBytes);
                             }
                             // Some readers omit duration. PCM length still gives the
-                            // complete interval at our negotiated 48 kHz stereo rate.
-                            lastSampleEnd = std::max(lastSampleEnd, std::max<LONGLONG>(0, pts)+LONGLONG(length/8)*10000000/48000);
+                            // complete interval at our negotiated 48 kHz rate.
+                            lastSampleEnd = std::max(lastSampleEnd, std::max<LONGLONG>(0, pts)+LONGLONG(length/audioFrameBytes)*10000000/48000);
                             cycleAudioFrames += keptFrames;
                             lastSampleEnd = std::max(lastSampleEnd, LONGLONG(cycleAudioFrames*10000000/48000));
-                            audio::StreamChunk chunk; chunk.sampleRate = 48000; chunk.channels = 2; chunk.captureTime100ns = timestamp;
+                            audio::StreamChunk chunk; chunk.sampleRate = 48000; chunk.channels = audioChannels; chunk.captureTime100ns = timestamp;
                             const auto skipped = std::min(skipLoopAudioFrames, keptFrames);
                             skipLoopAudioFrames -= skipped;
                             if (keptFrames > skipped) {
-                                chunk.samples.resize((keptFrames-skipped)*2);
-                                std::memcpy(chunk.samples.data(), bytes+(size_t(firstFrame)+skipped)*8, (keptFrames-skipped)*8);
+                                chunk.samples.resize((keptFrames-skipped)*audioChannels);
+                                std::memcpy(chunk.samples.data(), bytes+(size_t(firstFrame)+skipped)*audioFrameBytes, (keptFrames-skipped)*audioFrameBytes);
                                 audio(std::move(chunk));
                             }
                         }

@@ -6,6 +6,7 @@
 #include "versus/mixer/gpu_compositor.h"
 #include "versus/mixer/local_outputs.h"
 #include "versus/mixer/audio_processor.h"
+#include "versus/mixer/six_channel_audio.h"
 #include "versus/mixer/guest_return.h"
 #include "versus/mixer/global_hotkeys.h"
 #include "versus/mixer/show_files.h"
@@ -18,6 +19,7 @@
 #include <QKeySequenceEdit>
 #include <QProcess>
 #include <QMenu>
+#include <optional>
 #include <QToolButton>
 #include "versus/video/video_encoder.h"
 #include <QThreadPool>
@@ -159,6 +161,8 @@ struct Source {
     std::atomic<float> gain{1}, peak{0};
     std::atomic<bool> noiseSuppression{false}, noiseGate{false}, compression{false};
     AudioProcessor processor;
+    std::atomic<int> inputChannels{2}, receivedChannels{0};
+    SixChannelAudio sixAudio; // audioMutex; used only by opt-in six-channel inputs.
     std::atomic<bool> muted{false}, followsScene{true}, onProgram{false};
     std::atomic<bool> programAudio{true};
     std::atomic<int> channelMode{0}; // stereo, mono mix, left to both, right to both
@@ -203,6 +207,15 @@ struct Source {
             kind == "browser" || kind == "guest" || kind == "wireless" || kind == "media";
     }
     bool hasVideo() const { return kind != "microphone" && kind != "desktop" && (kind != "media" || !media || media->hasVideo()); }
+    bool supportsSixChannels() const { return kind == "microphone" || kind == "media"; }
+    QString channelKey(int channel) const { return id+":channel:"+QString::number(channel+1); }
+    QString inputStatus() const {
+        if (inputChannels != 6) return {};
+        const int count=receivedChannels;
+        if (!count) return "Six-channel input: waiting for audio.";
+        if (count<6) return QString("Six-channel input requires at least 6 channels; this source supplies %1. Audio is silent.").arg(count);
+        return QString("Using inputs 1-6 (%1 supplied). Program and headphones use a stereo mix.").arg(count);
+    }
 };
 
 class Canvas : public QWidget {
@@ -291,6 +304,8 @@ struct MixerWidget::Impl {
     ProgramRecorder recorder;
     struct RecordingPlan {
         QStringList audioIds;
+        struct AudioRoute { QString source; int channel = -1; };
+        std::vector<AudioRoute> audioRoutes;
         struct Iso { QString id; std::shared_ptr<ProgramRecorder> recorder; QSize size; };
         std::vector<Iso> isos;
     };
@@ -541,8 +556,12 @@ struct MixerWidget::Impl {
         if (audioIds.size() > 16 || isoIds.size() > 4) return "Choose at most 16 separate audio tracks and four separate video recordings.";
         auto plan = std::make_shared<RecordingPlan>(); QStringList names;
         for (const auto &id : audioIds) {
-            auto item = source(id); if (!item || !item->hasAudio() || plan->audioIds.contains(id)) return "Choose unique existing audio sources.";
-            plan->audioIds.append(id); names.append(item->name);
+            auto item = source(id); int channel=-1;
+            if (!item) for (const auto &candidate:sources) if (candidate->inputChannels==6)
+                for (int n=0;n<6;++n) if (candidate->channelKey(n)==id) { item=candidate;channel=n; }
+            if (!item || !item->hasAudio() || plan->audioIds.contains(id)) return "Choose unique existing audio sources or input channels.";
+            plan->audioIds.append(id);plan->audioRoutes.push_back({item->id,channel});
+            names.append(channel<0 ? item->name : item->name+QString(" - Input %1").arg(channel+1));
         }
         for (const auto &id : isoIds) {
             auto item = source(id); if (!item || !item->hasVideo()) return "Choose existing video sources for separate recordings.";
@@ -580,6 +599,11 @@ struct MixerWidget::Impl {
         std::vector<std::pair<QString,QCheckBox*>> audio,video;
         for (const auto &item : sources) {
             if (item->hasAudio()) { auto *check = new QCheckBox(studioText("Separate audio track")); check->setObjectName("record_audio_"+item->id); check->setAccessibleName(item->name+" separate audio track"); check->setChecked(recordAudioSources.contains(item->id)); form->addRow(item->name,check); audio.emplace_back(item->id,check); }
+            if (item->inputChannels==6) for (int n=0;n<6;++n) {
+                const auto key=item->channelKey(n);auto *check=new QCheckBox(studioText("Separate input track"));
+                check->setObjectName("record_audio_"+key);check->setAccessibleName(item->name+QString(" input %1 separate audio track").arg(n+1));
+                check->setChecked(recordAudioSources.contains(key));form->addRow(item->name+QString(" - Input %1").arg(n+1),check);audio.emplace_back(key,check);
+            }
             if (item->hasVideo()) { auto *check = new QCheckBox(studioText("Separate video file")); check->setObjectName("record_video_"+item->id); check->setAccessibleName(item->name+" separate video file"); check->setChecked(recordIsoSources.contains(item->id)); form->addRow(item->name,check); video.emplace_back(item->id,check); }
         }
         auto *feedback = new QLabel(&dialog); layout->addWidget(feedback);
@@ -1420,6 +1444,7 @@ struct MixerWidget::Impl {
             auto *row = new QWidget(q); row->setObjectName("audioTrack_"+item->id);
             auto *layout = new QVBoxLayout(row); layout->setContentsMargins(8, 8, 8, 10); layout->setSpacing(6);
             auto *name = new QLabel(item->name, row);name->setTextFormat(Qt::PlainText);name->setWordWrap(true);name->setMinimumWidth(0);name->setSizePolicy(QSizePolicy::Ignored,QSizePolicy::Preferred);layout->addWidget(name);
+            if (item->inputChannels==6) { auto *note=new QLabel(item->inputStatus(),row);note->setObjectName("inputStatus_"+item->id);note->setWordWrap(true);layout->addWidget(note); }
             auto *meter = new AudioLevelMeter(row); meter->setObjectName("audioMeter_"+item->id);
             meter->setAccessibleName(item->name+" audio level (dBFS)"); layout->addWidget(meter);
             meters.emplace_back(item, meter);
@@ -1438,6 +1463,7 @@ struct MixerWidget::Impl {
             auto *channels = new QComboBox(row); channels->addItems({"Stereo", "Mono (L + R)", "Left to both", "Right to both"}); channels->setCurrentIndex(item->channelMode);
             channels->setObjectName("audio_channels_"+item->id); channels->setAccessibleName(item->name+" audio channels");
             channels->setToolTip(studioText("Choose Left or Right to both for an interface microphone heard in only one ear. Mono averages both channels. Applies to Program, guest returns and Listen.")); layout->addWidget(channels);
+            if (item->inputChannels==6) channels->setToolTip(studioText("Changes the stereo mix for Program and Listen. Individual input recording tracks stay separate; gain, mute, processing and privacy controls still apply."));
             QObject::connect(channels, &QComboBox::currentIndexChanged, q, [this,item](int mode) { item->channelMode = mode; changed(); });
             auto *effects = new QGridLayout;
             auto *noise = new QCheckBox(studioText("Noise filter"), row); noise->setChecked(item->noiseSuppression);effects->addWidget(noise,0,0,1,2);
@@ -1631,6 +1657,9 @@ struct MixerWidget::Impl {
         QCheckBox colorMetadata("Preserve original video color metadata"); colorMetadata.setObjectName("browserColorMetadata");
         colorMetadata.setToolTip(studioText("Enable if a WebRTC source's colors look wrong. On affected WebView2 versions this may use software decoding and more CPU."));
         QSpinBox audioDelay; audioDelay.setObjectName("sourceAudioDelay"); audioDelay.setRange(0, 500); audioDelay.setSuffix(" ms");
+        QComboBox inputChannels;inputChannels.setObjectName("sourceInputChannels");inputChannels.addItem("Stereo (default)",2);inputChannels.addItem("Six separate inputs (experimental)",6);
+        inputChannels.setCurrentIndex(existing && existing->inputChannels==6 ? 1 : 0);
+        inputChannels.setToolTip(studioText("Requires a 6 to 8 channel format from an audio interface or file. Inputs 1-6 become separate choices in Recording tracks. Program and headphones receive a stereo mix of inputs 1-6."));
         QSpinBox browserWidth, browserHeight;
         browserWidth.setObjectName("browserWidth"); browserWidth.setRange(160,3840); browserWidth.setValue(existing ? existing->browserWidth : Width);
         browserHeight.setObjectName("browserHeight"); browserHeight.setRange(120,3840); browserHeight.setValue(existing ? existing->browserHeight : Height);
@@ -1640,10 +1669,13 @@ struct MixerWidget::Impl {
         form->addRow(&refreshDevices);
         form->addRow("URL / file / text / color", &value); form->addRow(&browse); form->addRow(&transparent); form->addRow(&colorMetadata); form->addRow(&help);
         form->addRow("Audio delay", &audioDelay);
+        form->addRow("Input channels", &inputChannels);
         form->addRow("Browser width", &browserWidth); form->addRow("Browser height", &browserHeight);
         if (editing) form->addRow(new QLabel(studioText("Source changes apply to every scene, including Program."), &dialog));
         auto populate = [&] {
             const auto kind = type.currentData().toString(); device.clear();
+            form->setRowVisible(&inputChannels,kind=="microphone" || kind=="media");
+            if (kind!="microphone" && kind!="media") inputChannels.setCurrentIndex(0);
             transparent.setVisible(kind == "browser" || kind == "guest" || kind == "wireless" || kind == "chat");
             colorMetadata.setVisible(!transparent.isHidden());
             form->setRowVisible(&browserWidth, !transparent.isHidden()); form->setRowVisible(&browserHeight, !transparent.isHidden());
@@ -1696,17 +1728,21 @@ struct MixerWidget::Impl {
             if (kind == "media" && !QFileInfo(value.text()).isFile()) { validationError(studioText("Choose an existing local media file.")); return; }
             if (kind == "image" && !QFileInfo(value.text()).isFile()) { validationError(studioText("Choose an existing image file.")); return; }
             auto item = existing ? existing : std::make_shared<Source>();
+            const int channels=inputChannels.currentData().toInt();
+            if (existing && channels!=item->inputChannels && recordingBusy()) { validationError("Stop recording before changing input channels.");return; }
             const auto locator = device.isVisible() ? device.currentData().toString() : value.text().trimmed();
             // Labels and audio delay do not change the capture session. Keeping it
             // alive avoids dropping video/audio or rejoining a remote guest.
             const bool restart = existing && (reconnect || kind != item->kind ||
                 locator != item->locator || transparent.isChecked() != item->transparent || colorMetadata.isChecked() != item->preserveColorMetadata ||
-                browserWidth.value() != item->browserWidth || browserHeight.value() != item->browserHeight);
+                browserWidth.value() != item->browserWidth || browserHeight.value() != item->browserHeight || channels!=item->inputChannels);
             if (restart && device.isVisible() && device.currentData(Qt::UserRole+1).toBool()) {
                 validationError(studioText("The saved device is unavailable. Select an available device to reconnect.")); return;
             }
             if (restart) { item->browserRestarts.clear(); stopSource(item); }
             item->kind = kind; item->transparent = transparent.isChecked();
+            item->inputChannels=channels;
+            if (channels!=6) for (int n=0;n<6;++n) recordAudioSources.removeAll(item->channelKey(n));
             item->preserveColorMetadata = colorMetadata.isChecked();
             item->browserWidth = browserWidth.value(); item->browserHeight = browserHeight.value();
             item->audioDelayMs = audioDelay.value();
@@ -1781,7 +1817,12 @@ struct MixerWidget::Impl {
         auto audioChunk = [weak, valid](audio::StreamChunk &&chunk) {
             const auto item = weak.lock(); if (!item || !*valid) return;
             std::lock_guard lock(item->audioMutex);
-            auto normalized = audio::normalizeAudioForOpus(chunk, &item->resampler);
+            if (!*valid) return;
+            item->receivedChannels=int(chunk.channels);
+            if (item->inputChannels==6 && chunk.channels<6) {
+                item->samples.clear();item->delayedSamples.clear();item->appliedDelayMs=-1;item->sixAudio.reset();item->resampler={};return;
+            }
+            auto normalized = audio::normalizeAudioForOpus(chunk, &item->resampler,uint32_t(item->inputChannels.load()));
             // File picture and PCM share a presentation delay. Anchor the PCM
             // queue to its first sample's time, not its early decode arrival.
             // Browser delay is applied persistently in the mixer below; native
@@ -1790,7 +1831,7 @@ struct MixerWidget::Impl {
                 item->audioReadyAt = chunk.captureTime100ns+MediaPresentationDelay100ns;
             item->samples.insert(item->samples.end(), normalized.begin(), normalized.end());
             // Keep at most 200 ms. A stalled UI must not accumulate delayed audio.
-            while (item->samples.size() > 19200) item->samples.pop_front();
+            while (item->samples.size() > size_t(9600*item->inputChannels.load())) item->samples.pop_front();
         };
         if (item->kind == "window" || item->kind == "camera" || item->kind == "spout" || item->kind == "microphone" || item->kind == "desktop") {
             struct Captures {
@@ -1806,8 +1847,9 @@ struct MixerWidget::Impl {
             item->cleanup = completion->get_future().share();
             const int width = Width, height = Height, fps = canvasFps;
             const int cameraWidth = item->cameraWidth, cameraHeight = item->cameraHeight; const double cameraFps = item->cameraFps;
+            const bool preserveInputChannels = item->inputChannels==6;
             item->starting = true; const auto guard = QPointer<MixerWidget>(q);
-            QThreadPool::globalInstance()->start([this, guard, weak, valid, result, kind, locator, title, executable, cleanup, width, height, fps, cameraWidth, cameraHeight, cameraFps, imageFrame, audioChunk, completion]() mutable {
+            QThreadPool::globalInstance()->start([this, guard, weak, valid, result, kind, locator, title, executable, cleanup, width, height, fps, cameraWidth, cameraHeight, cameraFps, preserveInputChannels, imageFrame, audioChunk, completion]() mutable {
                 if (cleanup.valid()) cleanup.wait();
                 if (!*valid) { completion->set_value(); return; }
                 auto audioResult = [&](const audio::CaptureResult &value) { if (!value.success) result->error = "Audio unavailable: "+QString::fromStdString(value.error); };
@@ -1836,7 +1878,7 @@ struct MixerWidget::Impl {
                 } else {
                     result->audio = std::make_unique<IsolatedSource>("audio");
                     if (kind == "desktop") audioResult(result->audio->StartStreamCapture(static_cast<uint32_t>(QCoreApplication::applicationPid()), audioChunk, true));
-                    else audioResult(result->audio->StartInputDeviceStreamCapture(locator.toStdString(), audioChunk));
+                    else audioResult(result->audio->StartInputDeviceStreamCapture(locator.toStdString(), audioChunk, preserveInputChannels));
                 }
                 if (!*valid || !guard) { result.reset(); completion->set_value(); return; }
                 QMetaObject::invokeMethod(guard, [this, weak, valid, result, completion]() mutable {
@@ -1860,7 +1902,7 @@ struct MixerWidget::Impl {
             item->media = std::make_unique<IsolatedSource>("media"); item->media->setLoop(item->mediaLoop);
             item->media->onDiscontinuity([weak = std::weak_ptr<Source>(item)] {
                 if (auto source = weak.lock()) {
-                    { std::lock_guard lock(source->audioMutex); source->samples.clear(); source->delayedSamples.clear(); source->appliedDelayMs = -1; source->audioReadyAt = 0; }
+                    { std::lock_guard lock(source->audioMutex); source->samples.clear(); source->delayedSamples.clear(); source->appliedDelayMs = -1; source->audioReadyAt = 0; source->sixAudio.reset();source->resampler={}; }
                     { std::lock_guard lock(source->imageMutex); source->mediaFrames.clear(); }
                 }
             });
@@ -1877,7 +1919,7 @@ struct MixerWidget::Impl {
                 while (source->mediaFrames.size() > 6) source->mediaFrames.pop_front();
                 source->imageStraightAlpha = true; source->lastFrame = now100ns(); ++source->frames;
             });
-            item->media->setPaused(item->mediaPaused); item->media->start(item->locator, frame, audioChunk);
+            item->media->setPaused(item->mediaPaused); item->media->start(item->locator, frame, audioChunk,item->inputChannels==6);
         } else if (item->kind == "browser" || item->kind == "guest" || item->kind == "wireless" || item->kind == "chat") {
             if (!webUrl(item->locator)) { item->error = "Invalid browser URL."; return; }
             item->browser = new BrowserSource(item->id, QUrl(item->locator), true, item->transparent, false, item->preserveColorMetadata, QSize(item->browserWidth, item->browserHeight));
@@ -1992,7 +2034,7 @@ struct MixerWidget::Impl {
         item->cleanup = promise->get_future().share();
         QThreadPool::globalInstance()->start([retired, promise, prior]() mutable { if (prior.valid()) prior.wait(); retired.reset(); promise->set_value(); });
         delete item->browser.data();
-        { std::lock_guard lock(item->audioMutex); item->samples.clear(); item->delayedSamples.clear(); item->appliedDelayMs = -1; item->audioReadyAt = 0; item->resampler = {}; }
+        { std::lock_guard lock(item->audioMutex); item->samples.clear(); item->delayedSamples.clear(); item->appliedDelayMs = -1; item->audioReadyAt = 0; item->resampler = {};item->sixAudio.reset();item->receivedChannels=0; }
         { std::lock_guard lock(item->imageMutex); item->image = {}; item->mediaFrames.clear(); item->browserFrames.clear(); item->browserArrivals.clear(); item->browserRegular = false; item->browserPresentAt = 0; }
         item->error.clear(); item->peak = 0;
     }
@@ -2006,6 +2048,7 @@ struct MixerWidget::Impl {
         for (auto &scene : scenes) std::erase_if(scene.layers, [&](const auto &layer) { return layer.source == item->id; });
         { std::lock_guard lock(sourcesMutex); std::erase(sources, item); }
         recordAudioSources.removeAll(item->id); recordIsoSources.removeAll(item->id);
+        for (int n=0;n<6;++n) recordAudioSources.removeAll(item->channelKey(n));
         // Destroy capture owners on the UI thread, including WebView2's apartment.
         item->onProgram = false;
         if (auto output = item->guestReturn.exchange({})) QThreadPool::globalInstance()->start([output] { output->stop(); });
@@ -2392,7 +2435,10 @@ struct MixerWidget::Impl {
             captured.opaque = !frame.hasAlphaChannel();
             captured.data.assign(frame.constBits(), frame.constBits()+frame.sizeInBytes()); core->submitMixerVideo(std::move(captured));
         }
-        for (const auto &[weak, meter] : meters) if (auto item = weak.lock()) meter->setLevel(item->peak);
+        for (const auto &[weak, meter] : meters) if (auto item = weak.lock()) {
+            meter->setLevel(item->peak);
+            if (item->inputChannels==6) if (auto *label=q->findChild<QLabel*>("inputStatus_"+item->id)) label->setText(item->inputStatus());
+        }
         masterMeter->setLevel(masterPeak);
         Profile::instance().flush();
         if (healthClock.elapsed() >= 1000) {
@@ -2473,6 +2519,7 @@ struct MixerWidget::Impl {
                 const bool listen = item->monitored;
                 std::lock_guard lock(item->audioMutex);
                 if (item->audioReadyAt > chunk.captureTime100ns) continue;
+                if (item->inputChannels==6 && item->receivedChannels<6) { item->peak=0;continue; }
                 // Browser audio can stop delivering while its page navigates or
                 // pauses. A persistent delay survives those gaps; priming only
                 // the first PCM block would silently lose sync after an underrun.
@@ -2481,15 +2528,22 @@ struct MixerWidget::Impl {
                     item->delayedSamples.assign(static_cast<size_t>(delay)*96, 0);
                     item->appliedDelayMs = delay;
                 }
-                const auto count = std::min(item->samples.size(), chunk.samples.size());
                 std::array<float,960> processed{};
-                for (size_t i = 0; i < count; ++i) { processed[i] = item->samples.front(); item->samples.pop_front(); }
+                std::optional<SixChannelAudio::Block> six;
+                if (item->inputChannels==6) {
+                    six=item->sixAudio.process(item->samples,delay,item->noiseSuppression,item->noiseGate,item->compression);
+                    processed=six->stereo;
+                    for (const auto &input:six->input) for (float sample:input) peak=std::max(peak,std::abs(sample*sourceGain));
+                } else {
+                    const auto count = std::min(item->samples.size(), chunk.samples.size());
+                    for (size_t i = 0; i < count; ++i) { processed[i] = item->samples.front(); item->samples.pop_front(); }
+                }
                 const int channelMode = item->channelMode;
                 if (channelMode) for (size_t n=0; n<processed.size(); n+=2) {
                     const float mono = channelMode == 2 ? processed[n] : channelMode == 3 ? processed[n+1] : (processed[n]+processed[n+1])*.5f;
                     processed[n] = processed[n+1] = mono;
                 }
-                item->processor.process(processed, item->noiseSuppression, item->noiseGate, item->compression);
+                if (!six) item->processor.process(processed, item->noiseSuppression, item->noiseGate, item->compression);
                 std::vector<float> isolated;
                 if (separateAudio) isolated.resize(960);
                 for (size_t i = 0; i < chunk.samples.size(); ++i) {
@@ -2513,7 +2567,16 @@ struct MixerWidget::Impl {
                 if (separateAudio) {
                     float isolatedPeak = 0; for (float sample : isolated) isolatedPeak = std::max(isolatedPeak,std::abs(sample));
                     if (isolatedPeak > .98f) for (float &sample : isolated) sample *= .98f/isolatedPeak;
-                    const auto index = recording->audioIds.indexOf(item->id); if (index >= 0) audioTracks[index] = isolated;
+                    for (size_t index=0;index<recording->audioRoutes.size();++index) {
+                        const auto &selected=recording->audioRoutes[index];if (selected.source!=item->id) continue;
+                        if (selected.channel<0) audioTracks[index]=isolated;
+                        else if (six && !privateBreak && item->admitted && programAllowed && !talking) {
+                            const auto &input=six->delayed[size_t(selected.channel)];
+                            float inputPeak=0;for (float sample:input) inputPeak=std::max(inputPeak,std::abs(sample*sourceGain));
+                            const float gain=sourceGain*(inputPeak>.98f ? .98f/inputPeak : 1.f);
+                            for (size_t frame=0;frame<480;++frame) audioTracks[index][frame*2]=audioTracks[index][frame*2+1]=input[frame]*gain;
+                        }
+                    }
                     for (size_t n=0; n<recording->isos.size(); ++n) if (recording->isos[n].id == item->id) isoAudio[n] = isolated;
                 }
             }
@@ -2565,6 +2628,7 @@ struct MixerWidget::Impl {
             {"noiseSuppression", item->noiseSuppression.load()}, {"noiseGate", item->noiseGate.load()}, {"compression", item->compression.load()}, {"muted", item->muted.load()}, {"followsScene", item->followsScene.load()}, {"monitored", item->monitored.load()}, {"transparent", item->transparent}, {"audioDelayMs", item->audioDelayMs.load()},
             {"preserveColorMetadata", item->preserveColorMetadata},
             {"programAudio", item->programAudio.load()}, {"channelMode", item->channelMode.load()},
+            {"inputChannels", item->inputChannels.load()},
             {"browserWidth", item->browserWidth}, {"browserHeight", item->browserHeight},
             {"mediaRestartOnTake", item->mediaRestartOnTake},
             {"returnId", item->returnId}, {"returnMode", item->returnMode}, {"admitted", item->admitted.load()}, {"windowTitle", item->windowTitle}, {"windowExecutable", item->windowExecutable}, {"mediaLoop", item->mediaLoop}, {"mediaPaused", item->mediaPaused}, {"cameraWidth", item->cameraWidth}, {"cameraHeight", item->cameraHeight}, {"cameraFps", item->cameraFps}, {"cameraControls", item->cameraControls}});
@@ -2678,6 +2742,10 @@ struct MixerWidget::Impl {
             item->monitored = obj["monitored"].toBool(item->kind != "microphone"); item->transparent = obj["transparent"].toBool(item->kind == "chat");
             item->preserveColorMetadata = obj["preserveColorMetadata"].toBool();
             item->programAudio = obj["programAudio"].toBool(true); item->channelMode = std::clamp(obj["channelMode"].toInt(), 0, 3);
+            const auto channels=obj["inputChannels"];
+            if (!channels.isUndefined() && (!channels.isDouble() || (channels.toDouble()!=2 && channels.toDouble()!=6))) { message("Invalid input channel mode in show.");return false; }
+            item->inputChannels=channels.toInt(2);
+            if (item->inputChannels==6 && !item->supportsSixChannels()) { message("Six-channel input is supported for microphones and media files.");return false; }
             item->browserWidth = std::clamp(obj["browserWidth"].toInt(1280), 160, 3840); item->browserHeight = std::clamp(obj["browserHeight"].toInt(720), 120, 3840);
             const bool browserAudio = item->kind == "browser" || item->kind == "guest" || item->kind == "wireless";
             item->audioDelayMs = std::clamp(obj["audioDelayMs"].toInt(browserAudio ? 60 : 0), 0, 500);
@@ -2717,7 +2785,9 @@ struct MixerWidget::Impl {
         chatPanel->hideComment();chatPanel->layer=comments;chatPanel->refresh();
         loading = true;
         recordAudioSources.clear(); recordIsoSources.clear();
-        for (const auto &id : data["recordAudioSources"].toArray()) if (sourceIds.contains(id.toString()) && !recordAudioSources.contains(id.toString()) && recordAudioSources.size()<16) recordAudioSources.append(id.toString());
+        auto audioKeys=sourceIds;
+        for (const auto &item:incoming) if (item->inputChannels==6) for (int n=0;n<6;++n) audioKeys.insert(item->channelKey(n));
+        for (const auto &id : data["recordAudioSources"].toArray()) if (audioKeys.contains(id.toString()) && !recordAudioSources.contains(id.toString()) && recordAudioSources.size()<16) recordAudioSources.append(id.toString());
         for (const auto &id : data["recordIsoSources"].toArray()) if (sourceIds.contains(id.toString()) && !recordIsoSources.contains(id.toString()) && recordIsoSources.size()<4) recordIsoSources.append(id.toString());
         const int format = std::clamp(data["canvasFormat"].toInt(), 0, int(CanvasFormats.size())-1);
         canvasFormat->setCurrentIndex(format);
@@ -2809,6 +2879,7 @@ QJsonObject MixerWidget::controlState() const {
         {"has_audio", s->hasAudio()}, {"gain", s->gain.load()}, {"muted", s->muted.load()},
         {"followsScene", s->followsScene.load()}, {"monitored", s->monitored.load()},
         {"programAudio", s->programAudio.load()}, {"channelMode", s->channelMode.load()},
+        {"inputChannels", s->inputChannels.load()}, {"receivedChannels", s->receivedChannels.load()}, {"inputStatus",s->inputStatus()},
         {"browserWidth", s->browserWidth}, {"browserHeight", s->browserHeight},
         {"noiseSuppression", s->noiseSuppression.load()}, {"noiseGate", s->noiseGate.load()}, {"compression", s->compression.load()},
         {"audioDelayMs", s->audioDelayMs.load()}, {"peak", s->peak.load()}, {"on_program", s->onProgram.load()},
@@ -2821,6 +2892,11 @@ QJsonObject MixerWidget::controlState() const {
         {"positionMs",s->media ? qint64(s->media->positionMs()) : 0}, {"durationMs",s->media ? qint64(s->media->durationMs()) : 0}});
     QJsonArray monitorDevices;
     QJsonArray isoRecordings;
+    QJsonArray audioChoices;
+    for (const auto &s:i.sources) if (s->hasAudio()) {
+        audioChoices.append(QJsonObject{{"id",s->id},{"name",s->name},{"source",s->id},{"input",0}});
+        if (s->inputChannels==6) for (int n=0;n<6;++n) audioChoices.append(QJsonObject{{"id",s->channelKey(n)},{"name",s->name+QString(" - Input %1").arg(n+1)},{"source",s->id},{"input",n+1}});
+    }
     for (const auto &iso : i.recordingPlan.load()->isos) isoRecordings.append(QJsonObject{{"source",iso.id},{"active",iso.recorder->active()},{"busy",iso.recorder->busy()},{"status",iso.recorder->status()},{"path",iso.recorder->path()}});
     for (int n = 0; n < i.monitorDevice->count(); ++n) monitorDevices.append(QJsonObject{
         {"id", i.monitorDevice->itemData(n, Qt::UserRole+1).toString()}, {"name", i.monitorDevice->itemText(n)}, {"available", i.monitorDevice->itemData(n).toInt() >= -1}});
@@ -2831,7 +2907,7 @@ QJsonObject MixerWidget::controlState() const {
             {"format", i.canvasFormat->currentIndex()}, {"renderer", i.renderer->currentIndex() == 0 ? "gpu" : "cpu"},
             {"active_renderer", i.programRenderer}, {"renderer_error", i.compositorError}}},
         {"recording", QJsonObject{{"active", i.recordingActive()}, {"busy", i.recordingBusy()}, {"program_active",i.recorder.active()},
-            {"audio_sources",QJsonArray::fromStringList(i.recordingPlan.load()->audioIds)}, {"separate_videos",isoRecordings},
+            {"audio_sources",QJsonArray::fromStringList(i.recordingPlan.load()->audioIds)}, {"audio_choices",audioChoices}, {"separate_videos",isoRecordings},
             {"status", i.recorder.status()}, {"dropped_frames", qint64(i.recorder.dropped())}, {"repeated_frames", qint64(i.recorder.repeated())}, {"remaining_seconds_estimate",qint64(i.recorder.remainingSeconds())}, {"exporting",bool(i.exportProcess)}, {"export_status",i.exportStatus}}},
         {"monitor", QJsonObject{{"enabled", i.monitorEnable->isChecked()}, {"device", i.monitorDevice->currentData(Qt::UserRole+1).toString()}, {"gain", i.monitorGain.load()}, {"refreshing", i.monitorDevicesRefreshing}, {"devices", monitorDevices}}},
         {"private_break", i.privateBreak.load()}, {"microphones_muted", i.microphonesMuted.load()}, {"private_talkback", bool(i.privateTalkback || i.heldTalkback)},
@@ -2911,13 +2987,18 @@ QJsonObject MixerWidget::controlCommand(const QJsonObject &c) {
         const bool metadata = c.contains("preserveColorMetadata") ? c["preserveColorMetadata"].toBool() : s->preserveColorMetadata;
         const int browserWidth = c.contains("browserWidth") ? c["browserWidth"].toInt() : s->browserWidth;
         const int browserHeight = c.contains("browserHeight") ? c["browserHeight"].toInt() : s->browserHeight;
-        const bool restart = !add && (locator != s->locator || transparent != s->transparent || metadata != s->preserveColorMetadata || browserWidth != s->browserWidth || browserHeight != s->browserHeight);
+        const int inputChannels=c.contains("inputChannels") ? c["inputChannels"].toInt() : s->inputChannels.load();
+        if ((inputChannels!=2 && inputChannels!=6) || (inputChannels==6 && kind!="microphone" && kind!="media")) return fail("Six-channel input is supported for microphones and media files; use 2 or 6 channels.");
+        if (!add && inputChannels!=s->inputChannels && i.recordingBusy()) return fail("Stop recording before changing input channels");
+        const bool restart = !add && (locator != s->locator || transparent != s->transparent || metadata != s->preserveColorMetadata || browserWidth != s->browserWidth || browserHeight != s->browserHeight || inputChannels!=s->inputChannels);
         if (restart) { s->browserRestarts.clear(); i.stopSource(s); }
         if (add) s->kind = kind;
         if (locator != s->locator && kind == "window") { s->windowTitle.clear(); s->windowExecutable.clear(); }
         if (locator != s->locator && kind == "camera") s->cameraControls = {};
         s->locator = locator; s->transparent = transparent; s->preserveColorMetadata = metadata;
         s->browserWidth = browserWidth; s->browserHeight = browserHeight;
+        s->inputChannels=inputChannels;
+        if (inputChannels!=6) for (int n=0;n<6;++n) i.recordAudioSources.removeAll(s->channelKey(n));
         if (c.contains("name")) s->name = c["name"].toString().trimmed();
         if (kind == "color") s->color = QColor(locator);
         if (add) {

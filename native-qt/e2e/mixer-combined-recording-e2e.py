@@ -4,7 +4,7 @@ exec(Path(__file__).with_name('mixer-automation-e2e.py').read_text(encoding='utf
 import re
 duration=int(os.environ.get('STUDIO_COMBINED_SECONDS','600'))
 canvas_format=int(os.environ.get('STUDIO_COMBINED_FORMAT','0'));fps=60 if canvas_format in (2,3,6,7) else 30
-results={'requestedSeconds':duration,'canvasFormat':canvas_format,'executableSha256':hashlib.sha256((package/'desktop-studio.exe').read_bytes()).hexdigest(),'samples':[]}
+results={'passed':False,'requestedSeconds':duration,'canvasFormat':canvas_format,'executableSha256':hashlib.sha256((package/'desktop-studio.exe').read_bytes()).hexdigest(),'samples':[]}
 root=None;mtx=None;log=None
 
 def free_port():
@@ -108,14 +108,17 @@ try:
         privacy_rms=[]
         for path,indices in [(output,range(17))]+[(p,range(1)) for p in paths[1:]]:
             for index in indices:
-                raw=run([ffmpeg,'-v','error','-ss',str(privacy_times[0]),'-i',path,'-map',f'0:a:{index}','-t','0.5','-ac','1','-ar','48000','-f','f32le','-'],timeout=30)
+                # Decode before seeking: input-side seeking can start between
+                # AAC packets in source MKVs and return fewer samples even
+                # though the original recording is continuous and silent.
+                raw=run([ffmpeg,'-v','error','-i',path,'-ss',str(privacy_times[0]),'-map',f'0:a:{index}','-t','0.5','-ac','1','-ar','48000','-f','f32le','-'],timeout=30)
                 assert raw.returncode==0 and len(raw.stdout)==24000*4,(path,index,raw.stderr)
                 rms=float(np.sqrt(np.mean(np.frombuffer(raw.stdout,np.float32)**2)));assert rms<.0001,(path,index,rms)
                 privacy_rms.append(rms)
         results['privateBreakSilentAudioStreams']=len(privacy_rms)
     tones=[]
     for n in range(16):
-        raw=run([ffmpeg,'-v','error','-ss',str(duration-5),'-i',output,'-map',f'0:a:{n+1}','-t','1','-ac','1','-ar','48000','-f','f32le','-'],timeout=45)
+        raw=run([ffmpeg,'-v','error','-i',output,'-ss',str(duration-5),'-map',f'0:a:{n+1}','-t','1','-ac','1','-ar','48000','-f','f32le','-'],timeout=45)
         assert raw.returncode==0 and len(raw.stdout)==48000*4,(n,raw.stderr)
         samples=np.frombuffer(raw.stdout,np.float32)
         # Short windows tolerate independent WebAudio clock phase changes.
@@ -136,6 +139,11 @@ finally:
     if browser_server:browser_server.shutdown();browser_server.server_close()
     if mtx:mtx.terminate();mtx.wait(timeout=10)
     if log:log.close()
+    for key,value in saved.items():
+        if value is None:
+            try:winreg.DeleteValue(settings,key)
+            except FileNotFoundError:pass
+        else:winreg.SetValueEx(settings,key,0,value[1],value[0])
     winreg.CloseKey(settings)
     assert (hashlib.sha256(user_show.read_bytes()).hexdigest() if user_show.exists() else None)==original_hash
     (report/'combined-recording.json').write_text(json.dumps(results,indent=2));print(json.dumps(results.get('summary',{})),flush=True)

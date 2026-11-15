@@ -34,10 +34,13 @@ struct AudioResamplerState {
     uint64_t nextOutputNumerator = 0;
     float previousLeft = 0;
     float previousRight = 0;
+    uint32_t outputChannels = 2;
+    std::vector<float> previousFrame;
 };
 
 // Streaming callers must supply state; omit only for standalone buffer conversion.
 std::vector<float> normalizeAudioForOpus(const StreamChunk &chunk,
-                                        AudioResamplerState *state = nullptr);
+                                        AudioResamplerState *state = nullptr,
+                                        uint32_t outputChannels = 2);
 
 }  // namespace versus::audio

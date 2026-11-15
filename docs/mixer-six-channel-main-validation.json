@@ -1,0 +1,54 @@
+{
+  "date": "2026-11-15",
+  "scope": "Packaged main-checkout audio verification; physical interface and editor remain untested",
+  "executableSha256": "d6cdecd16cbcdabceaf49452e787ccef79da1c7eec575c1af8e5734cd1833829",
+  "sourceBaseCommit": "0009c08bf9078ec112ccee7b83e314800eebae08",
+  "audioChangesIncluded": true,
+  "sixInputCases": [
+    {
+      "fileSampleRate": 44100,
+      "nativeFileChannels": 6,
+      "recordedAudioTracks": 8,
+      "minimumTenMillisecondRms": 0.07975756376981735
+    },
+    {
+      "fileSampleRate": 48000,
+      "nativeFileChannels": 6,
+      "recordedAudioTracks": 8,
+      "minimumTenMillisecondRms": 0.07976877689361572
+    },
+    {
+      "fileSampleRate": 96000,
+      "nativeFileChannels": 6,
+      "recordedAudioTracks": 8,
+      "minimumTenMillisecondRms": 0.07977491617202759
+    },
+    {
+      "fileSampleRate": 48000,
+      "nativeFileChannels": 8,
+      "recordedAudioTracks": 8,
+      "minimumTenMillisecondRms": 0.07976792752742767
+    }
+  ],
+  "muteOnAirPrivateBreakPassed": true,
+  "inputModePersisted": true,
+  "insufficientInputHandled": true,
+  "stereoRecordingTrackCounts": [
+    8,
+    17,
+    8
+  ],
+  "streamingWorkerRestarts": 0,
+  "cleanExit": true,
+  "userShowUnchanged": true,
+  "reports": {
+    "sixInputs": "six-input-main-20261115/six-input.json",
+    "stereoRecordingAndStreaming": "six-input-main-stereo-20261115/multitrack-roundtrip.json"
+  },
+  "notQualified": [
+    "physical six-channel interface",
+    "editor import/edit/export",
+    "multi-hour endurance",
+    "six-channel Program transmission"
+  ]
+}
