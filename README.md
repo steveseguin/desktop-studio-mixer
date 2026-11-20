@@ -13,7 +13,7 @@ A Windows studio for live streams, podcasts, interviews and recordings. Mix came
 - **Scenes and sources:** windows/games, webcams, video, images, titles and transparent browser overlays with audio.
 - **Your workspace:** edit directly on one canvas, or stage scenes in Preview before taking them live. Landscape and portrait formats.
 - **Audio and guests:** track meters, mute/gain, headphone monitoring, VDO.Ninja guest invitations with mix-minus, wireless cameras and social chat overlays.
-- **Stream and record:** independent local recording alongside VDO.Ninja, RTMP/RTMPS, SRT or WHIP output. Advanced destinations include RTSP, UDP and RIST.
+- **Stream and record:** independent local recording alongside VDO.Ninja, RTMP/RTMPS, SRT or WHIP output. For post-production, [record up to 16 named stereo source tracks](docs/mixer-guide.md) alongside the Program mix in one MKV. Advanced streaming destinations include RTSP, UDP and RIST.
 - **Local control:** CLI, HTTP API and MCP, headless operation and built-in screenshots. Keyboard access, languages and themes.
 
 ## Get started
